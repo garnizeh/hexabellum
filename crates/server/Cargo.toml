@@ -2,6 +2,9 @@
 name = "hexabellum-server"
 version.workspace = true
 edition.workspace = true
+description = "Authoritative Tokio/Axum game server for Hexabellum"
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 hexabellum-protocol = { path = "../protocol" }
