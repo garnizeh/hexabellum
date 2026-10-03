@@ -1,1 +1,27 @@
-(empty)
+# Rust
+/target
+**/target/
+
+# WASM build output (regenerate with `make build-wasm`)
+web/src/wasm/pkg/
+
+# Node
+node_modules/
+web/dist/
+.vite/
+*.local
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs & temp
+*.log
+*.tmp

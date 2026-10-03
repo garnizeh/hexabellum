@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hexabellum - Phase 0</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      color: #eee;
+      font-family: 'Segoe UI', sans-serif;
+      overflow: hidden;
+    }
+    #game-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+    #hud {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    #round {
+      font-size: 18px;
+      font-weight: bold;
+      color: #4fc3f7;
+    }
+    #selection {
+      font-size: 14px;
+      color: #9fd8ff;
+    }
+    #end-turn {
+      padding: 12px 24px;
+      background: #0f3460;
+      color: #4fc3f7;
+      border: 2px solid #4fc3f7;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #end-turn:hover {
+      background: #4fc3f7;
+      color: #0a0a1a;
+    }
+    #instructions {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      font-size: 14px;
+      color: #888;
+    }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div id="round">Round 0</div>
+    <div id="selection"></div>
+    <button id="end-turn">End Turn</button>
+  </div>
+  <canvas id="game-canvas"></canvas>
+  <div id="instructions">
+    Click a blue unit to select → Click a hex to plan move → End Turn to resolve
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
