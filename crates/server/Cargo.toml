@@ -2,22 +2,25 @@
 name = "hexabellum-server"
 version.workspace = true
 edition.workspace = true
+description = "Authoritative Tokio/Axum game server for Hexabellum"
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 hexabellum-protocol = { path = "../protocol" }
 hexabellum-core = { path = "../core" }
 tokio = { workspace = true, features = ["full"] }
-axum = { version = "0.8.1", features = ["ws"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+axum = { version = "0.8.9", features = ["ws"] }
+tower-http = { version = "0.7.1", features = ["cors", "trace"] }
 tracing = { workspace = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
-dashmap = "6.1"
+dashmap = "6.2.1"
 blake3 = { workspace = true }
-futures-util = "0.3"
+futures-util = "0.3.34"
 
 [dev-dependencies]
-tokio-tungstenite = "0.29"
-reqwest = { version = "0.12", features = ["json"] }
+tokio-tungstenite = "0.30.0"
+reqwest = { version = "0.13.5", features = ["json"] }

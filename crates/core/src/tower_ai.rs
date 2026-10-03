@@ -1,6 +1,6 @@
 use crate::orders::{Action, UnitOrder};
 use crate::state::GameState;
-use crate::unit::{Unit, UnitId, UnitKind};
+use crate::unit::{Unit, UnitId};
 
 pub struct TowerAI;
 
@@ -18,11 +18,16 @@ impl TowerAI {
             }
         };
 
-        // Find enemies within firing perimeter
+        // Find enemies within firing perimeter with unobstructed line of sight
+        let blockers = state.map.vision_blockers();
         let enemies = state.enemy_units(tower.team);
         let in_range: Vec<&Unit> = enemies
             .into_iter()
-            .filter(|e| tower.pos.distance(&e.pos) <= tower.attack_range)
+            .filter(|e| {
+                let dist = tower.pos.distance(&e.pos);
+                dist <= tower.attack_range
+                    && (dist <= 1 || crate::vision::has_line_of_sight(&blockers, tower.pos, e.pos))
+            })
             .collect();
 
         if in_range.is_empty() {
@@ -33,22 +38,21 @@ impl TowerAI {
             };
         }
 
-        // Tower aggro priority: Minion > Hero > Structure (minions tank tower shots!)
-        let mut minions: Vec<&Unit> = in_range.iter().filter(|e| e.kind == UnitKind::Minion).copied().collect();
-        let mut heroes: Vec<&Unit> = in_range.iter().filter(|e| e.kind == UnitKind::Hero).copied().collect();
-        let mut structures: Vec<&Unit> = in_range.iter().filter(|e| e.kind.is_structure()).copied().collect();
-
-        let sort_fn = |a: &&Unit, b: &&Unit| {
+        // Tower aggro priority: Minion > Hero > Structure with (prio, dist, hp, unit_id) tie-breaking
+        let mut sorted = in_range;
+        sorted.sort_by(|a, b| {
+            let prio_a = crate::priority::evaluate_tower_target_priority(a);
+            let prio_b = crate::priority::evaluate_tower_target_priority(b);
             let dist_a = tower.pos.distance(&a.pos);
             let dist_b = tower.pos.distance(&b.pos);
-            dist_a.cmp(&dist_b).then_with(|| a.id.cmp(&b.id))
-        };
+            prio_a
+                .cmp(&prio_b)
+                .then_with(|| dist_a.cmp(&dist_b))
+                .then_with(|| a.hp.cmp(&b.hp))
+                .then_with(|| a.id.cmp(&b.id))
+        });
 
-        minions.sort_by(sort_fn);
-        heroes.sort_by(sort_fn);
-        structures.sort_by(sort_fn);
-
-        let target = minions.first().or(heroes.first()).or(structures.first()).copied();
+        let target = sorted.first().copied();
 
         if let Some(t) = target {
             UnitOrder {

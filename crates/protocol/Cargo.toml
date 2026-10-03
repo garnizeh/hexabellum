@@ -2,6 +2,9 @@
 name = "hexabellum-protocol"
 version.workspace = true
 edition.workspace = true
+description = "Shared wire protocol DTOs and event schemas for Hexabellum"
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 serde.workspace = true

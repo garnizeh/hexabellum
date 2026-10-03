@@ -11,7 +11,7 @@ export interface HexCoord {
   r: number;
 }
 
-export type UnitKind = 'Hero' | 'Minion' | 'Tower' | 'SpawnerTower' | 'Neutral';
+export type UnitKind = 'Hero' | 'Minion' | 'Tower' | 'Spawner' | 'SpawnerTower' | 'Neutral' | 'NeutralGuardian';
 
 export interface UnitData {
   id: number;
@@ -22,10 +22,15 @@ export interface UnitData {
   max_hp: number;
   ap: number;
   max_ap: number;
+  energy?: number;
+  max_energy?: number;
   initiative: number;
   attack_damage: number;
   attack_range: number;
   vision_range: number;
+  cooldowns?: Record<string, number>;
+  statuses?: { id: string; remaining_rounds: number; attack_damage_mod: number }[];
+  lane_id?: string | null;
   spawn_interval?: number;
   spawn_counter: number;
 }
@@ -43,6 +48,13 @@ export type GameEvent =
   | { type: 'UnitMoved'; unit_id: number; from: HexCoord; to: HexCoord; path: HexCoord[]; ap_spent: number }
   | { type: 'UnitAttacked'; attacker_id: number; target_id: number; damage: number; target_hp_remaining: number }
   | { type: 'TowerAttacked'; tower_id: number; target_id: number; damage: number; target_hp_remaining: number }
+  | { type: 'SpellCast'; caster_id: number; spell_id: string; target: any }
+  | { type: 'HealApplied'; caster_id: number; target_id: number; amount: number; target_hp_remaining: number }
+  | { type: 'StructureRepaired'; repairer_id: number; target_id: number; amount: number; target_hp_remaining: number }
+  | { type: 'StatusApplied'; unit_id: number; status_id: string; duration_rounds: number }
+  | { type: 'StatusExpired'; unit_id: number; status_id: string }
+  | { type: 'NeutralCampCleared'; camp_id: string; killer_team: number }
+  | { type: 'TeamBuffApplied'; team: number; buff_id: string; duration_rounds: number }
   | { type: 'UnitDied'; unit_id: number; unit_kind: UnitKind; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'FogUpdated'; team: number; visible_hexes: HexCoord[] }

@@ -303,6 +303,127 @@
       opacity: 1;
     }
 
+    /* Bottom Center Ability Dock */
+    #ability-dock {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 25;
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 10px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.65), 0 0 15px rgba(0, 210, 255, 0.12);
+      min-width: 380px;
+    }
+    .dock-hero-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(0, 210, 255, 0.18);
+      padding-bottom: 6px;
+    }
+    .dock-hero-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--primary);
+      letter-spacing: 0.5px;
+    }
+    .dock-resources {
+      display: flex;
+      gap: 8px;
+    }
+    .resource-badge {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .ap-badge {
+      background: rgba(255, 214, 0, 0.15);
+      border: 1px solid rgba(255, 214, 0, 0.4);
+      color: #ffd600;
+    }
+    .energy-badge {
+      background: rgba(0, 245, 255, 0.15);
+      border: 1px solid rgba(0, 245, 255, 0.4);
+      color: #00f5ff;
+    }
+    .dock-actions {
+      display: flex;
+      gap: 10px;
+    }
+    .dock-btn {
+      position: relative;
+      flex: 1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid var(--panel-border);
+      background: rgba(16, 24, 40, 0.85);
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+    }
+    .dock-btn:hover:not(:disabled) {
+      background: rgba(0, 210, 255, 0.2);
+      border-color: var(--primary);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 14px rgba(0, 210, 255, 0.3);
+    }
+    .dock-btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      border-color: rgba(255, 255, 255, 0.1);
+      transform: none;
+    }
+    .btn-hotkey {
+      font-size: 10px;
+      font-weight: 900;
+      color: var(--primary);
+      background: rgba(0, 210, 255, 0.15);
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 210, 255, 0.3);
+      line-height: 1.2;
+    }
+    .btn-name {
+      font-size: 12.5px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+    }
+    .btn-cost {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .cd-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 11, 20, 0.88);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 5;
+    }
+    .cd-text {
+      font-size: 20px;
+      font-weight: 900;
+      color: #ff3366;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
     /* Matchmaking Dialog Modal */
     #match-dialog-modal {
       position: fixed;
@@ -457,12 +578,50 @@
     <div class="stat-row"><span class="stat-label">Range:</span><span class="stat-val" id="insp-range">-</span></div>
   </div>
 
+  <!-- Bottom Center Tactical Ability Dock -->
+  <div id="ability-dock" class="ability-dock">
+    <div class="dock-hero-header">
+      <div id="dock-hero-title" class="dock-hero-title">NO HERO SELECTED</div>
+      <div class="dock-resources">
+        <div id="dock-ap-display" class="resource-badge ap-badge">AP: - / -</div>
+        <div id="dock-energy-display" class="resource-badge energy-badge">⚡ Energy: - / -</div>
+      </div>
+    </div>
+    <div class="dock-actions">
+      <!-- Q: Hero Ability -->
+      <button id="btn-ability-q" class="dock-btn ability-btn" disabled title="[Q] Cast Unique Hero Ability (Vanguard: Cleave, Ranger: Bolt, Warden: Mend)">
+        <span class="btn-hotkey">Q</span>
+        <span id="btn-ability-name" class="btn-name">ABILITY</span>
+        <span id="btn-ability-cost" class="btn-cost">⚡-</span>
+        <div id="btn-ability-cd-overlay" class="cd-overlay" style="display: none;">
+          <span id="btn-ability-cd-text" class="cd-text">0</span>
+        </div>
+      </button>
+
+      <!-- F: Structure Repair -->
+      <button id="btn-repair-f" class="dock-btn repair-btn" disabled title="[F] Repair Adjacent Allied Tower/Spawner (+20 HP, 1 AP)">
+        <span class="btn-hotkey">F</span>
+        <span class="btn-name">REPAIR</span>
+        <span class="btn-cost">1 AP</span>
+      </button>
+
+      <!-- A: Basic Attack -->
+      <button id="btn-attack-a" class="dock-btn attack-btn" disabled title="[A] Basic Attack (1 AP)">
+        <span class="btn-hotkey">A</span>
+        <span class="btn-name">ATTACK</span>
+        <span class="btn-cost">1 AP</span>
+      </button>
+    </div>
+  </div>
+
   <!-- Bottom Left Tactical Guide / Legend -->
   <div id="legend">
     <strong>Tactical Map Guide:</strong><br>
     🔵 <strong>Blue Circles</strong>: Team 0 Heroes &nbsp;|&nbsp; 🔴 <strong>Red Circles</strong>: Team 1 Heroes<br>
     🔺 <strong>Triangles</strong>: Minions (Push Lane) &nbsp;|&nbsp; 🏰 <strong>Squares</strong>: Defensive Towers (Auto-Fire)<br>
-    ⭐ <strong>Crystals</strong>: Spawner Towers (Base) &nbsp;|&nbsp; 🌫️ <strong>Dark Shroud</strong>: Fog of War
+    ⭐ <strong>Crystals</strong>: Base Spawners &nbsp;|&nbsp; 🦁 <strong>Amber Golems</strong>: Neutral Camps (+5 DMG Buff)<br>
+    🧱 <strong>Dense Walls</strong>: Block Move & LOS &nbsp;|&nbsp; 🟣 <strong>Smoke Pillars</strong>: Block LOS Only<br>
+    🪨 <strong>Low Boulders</strong>: Block Move Only &nbsp;|&nbsp; 🌫️ <strong>Dark Shroud</strong>: Fog of War
   </div>
 
   <!-- Matchmaking Selection Modal -->

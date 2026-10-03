@@ -1,16 +1,23 @@
+pub mod ability;
 pub mod ai;
 pub mod event;
 pub mod fog;
 pub mod hex;
+pub mod lane;
 pub mod minion_ai;
+pub mod neutral;
 pub mod orders;
+pub mod priority;
+pub mod repair;
+pub mod session;
 pub mod spawner;
 pub mod state;
-pub mod session;
+pub mod status;
 pub mod tower_ai;
 pub mod turn;
 pub mod tutorial;
 pub mod unit;
+pub mod vision;
 
 pub use session::{BattleConfig, BattleSession, Controller};
 pub use tutorial::*;

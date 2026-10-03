@@ -60,33 +60,33 @@ Phase 4 injects rich tactical decision-making, strategic objective control, and 
 
 ### Definition of Done (DoD)
 
-- [ ] `crates/core` defines `SpellDef`, `EffectDef`, `TargetingMode`, `StatusDef`, `StatusInstance`, and `StatModifier`.
-- [ ] `Unit` struct includes `energy`, `max_energy`, `energy_regen`, `cooldowns`, `statuses`, `lane_id`, `waypoint_index`, `aggro_range`, and `last_attacker`.
-- [ ] Vanguard possesses active ability **Cleave** (1 AP, 3 Energy, 3 Cooldown, Radius 1 AOE 15 damage).
-- [ ] Ranger possesses active ability **Bolt** (1 AP, 2 Energy, 2 Cooldown, Range 3, Enemy, requires LOS, 25 damage).
-- [ ] Warden possesses active ability **Mend** (1 AP, 2 Energy, 2 Cooldown, Range 2, Ally Hero, requires LOS, 20 heal).
-- [ ] Energy regenerates at round start (+1 up to `max_energy`); active cooldowns decrement at round start (`saturating_sub(1)`).
-- [ ] Status durations decrement at round start; expired statuses are removed and emit `StatusExpired` events.
-- [ ] Effective stats (`effective_attack_damage()`, `effective_vision_range()`, `effective_attack_range()`) dynamically incorporate active status modifiers.
-- [ ] `Obstacle` struct supports independent `blocks_movement: bool` and `blocks_vision: bool` flags.
-- [ ] `hex_line()` algorithm correctly computes cube-coordinate raycasting with epsilon offset (`1e-6`), preventing boundary vertex jitter.
-- [ ] `has_line_of_sight()` verifies that intermediate hexes between source and destination are free of vision-blocking obstacles.
-- [ ] Ranged basic attacks, tower bombardment, and spells with `requires_line_of_sight: true` are blocked when line of sight is obstructed.
-- [ ] Fog of war uses line-of-sight raycasting; hexes within radius but behind vision blockers remain concealed in darkness.
-- [ ] Server sanitizes `SnapshotDto` and `RoundResolved` event streams so that units, spells, and neutral camp states hidden by LOS are never leaked.
-- [ ] Heroes adjacent to damaged allied towers or spawners can execute `Action::Repair`, restoring 20 HP for 1 AP.
-- [ ] Structure repair rejects full-health structures, enemy structures, non-structure units, and non-adjacent units.
-- [ ] Two neutral camps exist at `(0, 3)` and `(0, -3)`, each containing a Neutral Guardian.
-- [ ] Neutral guardians attack enemies within aggro range (2 hexes) or retaliate against units that attack them.
-- [ ] If a guardian's target moves beyond 3 hexes from the camp origin or the guardian is pulled beyond 3 hexes, it leashes, becomes invulnerable, walks back to camp, and resets to 100% HP.
-- [ ] Slaying a neutral guardian emits `NeutralCampCleared` and awards living heroes on the killer's team a +5 attack damage buff for 5 rounds.
-- [ ] Minions follow central lane waypoints (`(-5, 0) -> (-3, 0) -> (0, 0) -> (3, 0) -> (5, 0)`), advancing waypoints when distance <= 1.
-- [ ] Minions utilize local detour pathfinding when their forward lane waypoint hex is obstructed by allied units.
-- [ ] Minion, tower, hero AI, and neutral targeting strictly enforce the deterministic priority matrix and tie-breaking hierarchy.
-- [ ] Server validates `Cast` and `Repair` orders upon WebSocket ingestion, rejecting orders with insufficient resources, active cooldowns, or missing LOS.
-- [ ] Browser client displays Ability Dock with AP/energy costs, cooldown counters, valid target range highlights, and red-slash LOS warnings.
-- [ ] Sequential animator renders distinct visual effects for Cleave (radial shockwave), Bolt (lightning beam), Mend (emerald halo), and Repair (golden wrench/sparks).
-- [ ] 50-round headless AI vs AI integration test with abilities, repair, neutrals, and LOS passes with 100% bitwise BLAKE3 hash determinism.
+- [x] `crates/core` defines `SpellDef`, `EffectDef`, `TargetingMode`, `StatusDef`, `StatusInstance`, and `StatModifier`.
+- [x] `Unit` struct includes `energy`, `max_energy`, `energy_regen`, `cooldowns`, `statuses`, `lane_id`, `waypoint_index`, `aggro_range`, and `last_attacker`.
+- [x] Vanguard possesses active ability **Cleave** (1 AP, 3 Energy, 3 Cooldown, Radius 1 AOE 15 damage).
+- [x] Ranger possesses active ability **Bolt** (1 AP, 2 Energy, 2 Cooldown, Range 3, Enemy, requires LOS, 25 damage).
+- [x] Warden possesses active ability **Mend** (1 AP, 2 Energy, 2 Cooldown, Range 2, Ally Hero, requires LOS, 20 heal).
+- [x] Energy regenerates at round start (+1 up to `max_energy`); active cooldowns decrement at round start (`saturating_sub(1)`).
+- [x] Status durations decrement at round start; expired statuses are removed and emit `StatusExpired` events.
+- [x] Effective stats (`effective_attack_damage()`, `effective_vision_range()`, `effective_attack_range()`) dynamically incorporate active status modifiers.
+- [x] `Obstacle` struct supports independent `blocks_movement: bool` and `blocks_vision: bool` flags.
+- [x] `hex_line()` algorithm correctly computes cube-coordinate raycasting with epsilon offset (`1e-6`), preventing boundary vertex jitter.
+- [x] `has_line_of_sight()` verifies that intermediate hexes between source and destination are free of vision-blocking obstacles.
+- [x] Ranged basic attacks, tower bombardment, and spells with `requires_line_of_sight: true` are blocked when line of sight is obstructed.
+- [x] Fog of war uses line-of-sight raycasting; hexes within radius but behind vision blockers remain concealed in darkness.
+- [x] Server sanitizes `SnapshotDto` and `RoundResolved` event streams so that units, spells, and neutral camp states hidden by LOS are never leaked.
+- [x] Heroes adjacent to damaged allied towers or spawners can execute `Action::Repair`, restoring 20 HP for 1 AP.
+- [x] Structure repair rejects full-health structures, enemy structures, non-structure units, and non-adjacent units.
+- [x] Two neutral camps exist at `(0, 3)` and `(0, -3)`, each containing a Neutral Guardian.
+- [x] Neutral guardians attack enemies within aggro range (2 hexes) or retaliate against units that attack them.
+- [x] If a guardian's target moves beyond 3 hexes from the camp origin or the guardian is pulled beyond 3 hexes, it leashes, becomes invulnerable, walks back to camp, and resets to 100% HP.
+- [x] Slaying a neutral guardian emits `NeutralCampCleared` and awards living heroes on the killer's team a +5 attack damage buff for 5 rounds.
+- [x] Minions follow central lane waypoints (`(-5, 0) -> (-3, 0) -> (0, 0) -> (3, 0) -> (5, 0)`), advancing waypoints when distance <= 1.
+- [x] Minions utilize local detour pathfinding when their forward lane waypoint hex is obstructed by allied units.
+- [x] Minion, tower, hero AI, and neutral targeting strictly enforce the deterministic priority matrix and tie-breaking hierarchy.
+- [x] Server validates `Cast` and `Repair` orders upon WebSocket ingestion, rejecting orders with insufficient resources, active cooldowns, or missing LOS.
+- [x] Browser client displays Ability Dock with AP/energy costs, cooldown counters, valid target range highlights, and red-slash LOS warnings.
+- [x] Sequential animator renders distinct visual effects for Cleave (radial shockwave), Bolt (lightning beam), Mend (emerald halo), and Repair (golden wrench/sparks).
+- [x] 50-round headless AI vs AI integration test with abilities, repair, neutrals, and LOS passes with 100% bitwise BLAKE3 hash determinism.
 
 ---
 

@@ -21,6 +21,8 @@ pub struct GameState {
     pub winner: Option<TeamId>,
     pub next_unit_id: UnitId,
     pub spawners_initialized: bool,
+    #[serde(default)]
+    pub neutral_camps: Vec<crate::neutral::NeutralCamp>,
 }
 
 impl GameState {
@@ -34,11 +36,12 @@ impl GameState {
             winner: None,
             next_unit_id: 1,
             spawners_initialized: false,
+            neutral_camps: Vec::new(),
         }
     }
 
     pub fn add_unit(&mut self, unit: Unit) {
-        if unit.kind == UnitKind::SpawnerTower {
+        if unit.kind == UnitKind::Spawner {
             self.spawners_initialized = true;
         }
         self.next_unit_id = self.next_unit_id.max(unit.id + 1);
@@ -115,7 +118,7 @@ impl GameState {
 
     pub fn team_has_spawner(&self, team: TeamId) -> bool {
         self.units.values().any(|u| {
-            u.team == team && u.is_alive() && u.kind == UnitKind::SpawnerTower
+            u.team == team && u.is_alive() && u.kind == UnitKind::Spawner
         })
     }
 

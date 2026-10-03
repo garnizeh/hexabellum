@@ -1,5 +1,7 @@
-use crate::hex::{HexCoord, HexMap};
+use crate::hex::HexCoord;
+use crate::hex::HexMap;
 use crate::unit::{TeamId, Unit, UnitId};
+use crate::vision::compute_team_los_fog;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -17,23 +19,23 @@ impl FogState {
         }
     }
 
-    /// Recompute visibility sets for all teams based on map walkability and living unit positions.
+    /// Recompute visibility sets for all teams based on Line of Sight raycasting.
     pub fn update(&mut self, map: &HexMap, units: &HashMap<UnitId, Unit>) {
+        let blockers = map.vision_blockers();
+        let unit_list: Vec<Unit> = units.values().cloned().collect();
         for team in 0..self.visible.len() {
-            self.visible[team].clear();
+            self.visible[team] = compute_team_los_fog(
+                &blockers,
+                map.radius,
+                &unit_list,
+                team as TeamId,
+            );
+        }
+    }
 
-            for unit in units.values() {
-                if unit.team != team as TeamId || !unit.is_alive() {
-                    continue;
-                }
-
-                // Add all walkable hexes within axial vision radius
-                for hex in unit.pos.spiral(unit.vision_range) {
-                    if map.is_walkable(&hex) {
-                        self.visible[team].insert(hex);
-                    }
-                }
-            }
+    pub fn set_team_visibility(&mut self, team: TeamId, hexes: HashSet<HexCoord>) {
+        if (team as usize) < self.visible.len() {
+            self.visible[team as usize] = hexes;
         }
     }
 

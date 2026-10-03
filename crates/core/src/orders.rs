@@ -1,3 +1,4 @@
+use crate::ability::{SpellId, SpellTarget};
 use crate::hex::HexCoord;
 use crate::unit::UnitId;
 use serde::{Deserialize, Serialize};
@@ -6,7 +7,16 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Wait,
-    Attack { target_id: UnitId },
+    Attack {
+        target_id: UnitId,
+    },
+    Cast {
+        spell_id: SpellId,
+        target: SpellTarget,
+    },
+    Repair {
+        target_id: UnitId,
+    },
 }
 
 /// A single unit's orders for the round.

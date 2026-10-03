@@ -71,13 +71,18 @@ impl BattleSession {
     pub fn new(match_id: String, config: BattleConfig) -> Self {
         let mut map = HexMap::new(config.map_radius);
 
-        // Standard Phase 2 obstacle pillars flanking central lane
-        map.obstacles.insert(HexCoord::new(0, 2));
-        map.obstacles.insert(HexCoord::new(0, -2));
-        map.obstacles.insert(HexCoord::new(1, 2));
-        map.obstacles.insert(HexCoord::new(-1, -2));
-        map.obstacles.insert(HexCoord::new(2, -3));
-        map.obstacles.insert(HexCoord::new(-2, 3));
+        // Phase 4 Terrain Topology
+        // Dense Stone Wall: (0, 2) & (0, -2) (blocks move, blocks vision)
+        map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
+        map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
+
+        // Smoke Pillar: (2, 2) & (-2, -2) (blocks vision only, allows movement)
+        map.add_obstacle(crate::vision::Obstacle::smoke(HexCoord::new(2, 2)));
+        map.add_obstacle(crate::vision::Obstacle::smoke(HexCoord::new(-2, -2)));
+
+        // Low Boulders: (0, 1) & (0, -1) (blocks move only, allows sight)
+        map.add_obstacle(crate::vision::Obstacle::boulder(HexCoord::new(0, 1)));
+        map.add_obstacle(crate::vision::Obstacle::boulder(HexCoord::new(0, -1)));
 
         let mut state = GameState::new(map);
         let mut controllers = HashMap::new();
@@ -90,10 +95,10 @@ impl BattleSession {
         state.add_unit(t0_spawner);
         state.add_unit(t0_tower);
 
-        // Team 0 Heroes
-        state.add_unit(Unit::new_hero(1, 0, HexCoord::new(-4, -1), 3));
-        state.add_unit(Unit::new_hero(2, 0, HexCoord::new(-4, 0), 2));
-        state.add_unit(Unit::new_hero(3, 0, HexCoord::new(-4, 1), 1));
+        // Team 0 Heroes: Vanguard, Ranger, Warden
+        state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-4, -1), 3));
+        state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-4, 0), 2));
+        state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-4, 1), 1));
         controllers.insert(1, Controller::Ai);
         controllers.insert(2, Controller::Ai);
         controllers.insert(3, Controller::Ai);
@@ -106,15 +111,34 @@ impl BattleSession {
         state.add_unit(t1_spawner);
         state.add_unit(t1_tower);
 
-        // Team 1 Heroes
-        state.add_unit(Unit::new_hero(4, 1, HexCoord::new(4, -1), 3));
-        state.add_unit(Unit::new_hero(5, 1, HexCoord::new(4, 0), 2));
-        state.add_unit(Unit::new_hero(6, 1, HexCoord::new(4, 1), 1));
+        // Team 1 Heroes: Vanguard, Ranger, Warden
+        state.add_unit(Unit::new_vanguard(4, 1, HexCoord::new(4, -1), 3));
+        state.add_unit(Unit::new_ranger(5, 1, HexCoord::new(4, 0), 2));
+        state.add_unit(Unit::new_warden(6, 1, HexCoord::new(4, 1), 1));
         controllers.insert(4, Controller::Ai);
         controllers.insert(5, Controller::Ai);
         controllers.insert(6, Controller::Ai);
 
-        state.next_unit_id = 30;
+        // Neutral Camps & Guardians
+        let guardian_alpha = Unit::new_neutral_guardian(31, HexCoord::new(0, 3));
+        let guardian_beta = Unit::new_neutral_guardian(32, HexCoord::new(0, -3));
+        controllers.insert(31, Controller::Automatic);
+        controllers.insert(32, Controller::Automatic);
+        state.add_unit(guardian_alpha);
+        state.add_unit(guardian_beta);
+
+        state.neutral_camps.push(crate::neutral::NeutralCamp::new(
+            "camp_alpha".to_string(),
+            HexCoord::new(0, 3),
+            31,
+        ));
+        state.neutral_camps.push(crate::neutral::NeutralCamp::new(
+            "camp_beta".to_string(),
+            HexCoord::new(0, -3),
+            32,
+        ));
+
+        state.next_unit_id = 35;
 
         // Initialize vision
         state.update_fog();
@@ -241,6 +265,187 @@ impl BattleSession {
                     }
                     Action::Attack { target_id }
                 }
+                ActionDto::Cast {
+                    spell_id,
+                    target: target_dto,
+                } => {
+                    let spell = match crate::ability::SpellCatalog::get(&spell_id) {
+                        Some(s) => s,
+                        None => {
+                            return Err(OrderSubmissionError {
+                                code: ProtocolErrorCode::InvalidMessage,
+                                unit_id: Some(dto.unit_id),
+                                reason: format!("Unknown spell '{}'", spell_id),
+                            });
+                        }
+                    };
+                    if unit.ap < spell.ap_cost {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InsufficientResources,
+                            unit_id: Some(dto.unit_id),
+                            reason: format!(
+                                "Insufficient AP for spell '{}' (costs {}, has {})",
+                                spell_id, spell.ap_cost, unit.ap
+                            ),
+                        });
+                    }
+                    if unit.energy < spell.energy_cost {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InsufficientResources,
+                            unit_id: Some(dto.unit_id),
+                            reason: format!(
+                                "Insufficient Energy for spell '{}' (costs {}, has {})",
+                                spell_id, spell.energy_cost, unit.energy
+                            ),
+                        });
+                    }
+                    if !unit.is_spell_ready(&spell_id) {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::CooldownActive,
+                            unit_id: Some(dto.unit_id),
+                            reason: format!("Spell '{}' is on cooldown", spell_id),
+                        });
+                    }
+                    let spell_target = match target_dto {
+                        hexabellum_protocol::SpellTargetDto::None => {
+                            if spell.targeting != crate::ability::TargetingMode::SelfOnly {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::InvalidTarget,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: "Spell requires a target".into(),
+                                });
+                            }
+                            crate::ability::SpellTarget::None
+                        }
+                        hexabellum_protocol::SpellTargetDto::Hex { hex } => {
+                            crate::ability::SpellTarget::Hex(HexCoord::new(hex.q, hex.r))
+                        }
+                        hexabellum_protocol::SpellTargetDto::Unit { unit_id: tid } => {
+                            let t = match self.state.get_unit(tid) {
+                                Some(u) if u.is_alive() => u,
+                                _ => {
+                                    return Err(OrderSubmissionError {
+                                        code: ProtocolErrorCode::InvalidTarget,
+                                        unit_id: Some(dto.unit_id),
+                                        reason: format!("Target unit #{} not found or dead", tid),
+                                    });
+                                }
+                            };
+                            if spell.targeting == crate::ability::TargetingMode::EnemyUnit
+                                && t.team == team
+                            {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::InvalidTarget,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: "Spell requires an enemy target".into(),
+                                });
+                            }
+                            if spell.targeting == crate::ability::TargetingMode::AllyUnit
+                                && t.team != team
+                            {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::InvalidTarget,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: "Spell requires an allied target".into(),
+                                });
+                            }
+                            let effective_caster_pos = move_target.unwrap_or(unit.pos);
+                            let dist = effective_caster_pos.distance(&t.pos);
+                            if dist < spell.min_range || dist > spell.range {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::InvalidTarget,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: format!(
+                                        "Target out of range (dist {}, range {})",
+                                        dist, spell.range
+                                    ),
+                                });
+                            }
+                            // Anti-maphack: enemy must be visible to player team
+                            if t.team != team && !self.state.fog.is_visible(team, &t.pos) {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::InvalidTarget,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: "Target is hidden in fog of war".into(),
+                                });
+                            }
+                            if spell.requires_line_of_sight
+                                && !crate::vision::has_line_of_sight(
+                                    &self.state.map.vision_blockers(),
+                                    effective_caster_pos,
+                                    t.pos,
+                                )
+                            {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::MissingLineOfSight,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: "Line of sight is obstructed by terrain".into(),
+                                });
+                            }
+                            crate::ability::SpellTarget::Unit(tid)
+                        }
+                    };
+                    Action::Cast {
+                        spell_id,
+                        target: spell_target,
+                    }
+                }
+                ActionDto::Repair { target_id } => {
+                    if !unit.is_hero() {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InvalidMessage,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Only Heroes can repair structures".into(),
+                        });
+                    }
+                    if unit.ap < crate::repair::REPAIR_AP_COST {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InsufficientResources,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Insufficient AP for repair".into(),
+                        });
+                    }
+                    let target = match self.state.get_unit(target_id) {
+                        Some(t) if t.is_alive() => t,
+                        _ => {
+                            return Err(OrderSubmissionError {
+                                code: ProtocolErrorCode::InvalidTarget,
+                                unit_id: Some(dto.unit_id),
+                                reason: format!("Repair target #{} is dead or not found", target_id),
+                            });
+                        }
+                    };
+                    if !target.is_structure() {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InvalidTarget,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Target is not a structure".into(),
+                        });
+                    }
+                    if target.team != team {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InvalidTarget,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Cannot repair enemy structures".into(),
+                        });
+                    }
+                    if target.hp >= target.max_hp {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InvalidTarget,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Structure is already at full health".into(),
+                        });
+                    }
+                    let effective_hero_pos = move_target.unwrap_or(unit.pos);
+                    if effective_hero_pos.distance(&target.pos) > crate::repair::REPAIR_RANGE {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InvalidTarget,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Hero must be adjacent to repair structure".into(),
+                        });
+                    }
+                    Action::Repair { target_id }
+                }
             };
 
             validated_orders.insert(
@@ -269,8 +474,8 @@ impl BattleSession {
     pub fn fill_missing_orders_with_ai(&mut self) {
         for team in [0, 1] {
             let team_orders = self.staged_orders.entry(team).or_default();
-            for unit in self.state.units.values() {
-                if unit.team == team && unit.is_alive() && unit.kind == UnitKind::Hero {
+            for unit in self.state.team_units(team) {
+                if unit.kind == UnitKind::Hero {
                     if !team_orders.contains_key(&unit.id) {
                         let fallback = GameAI::generate_fallback_order(&self.state, unit.id);
                         team_orders.insert(unit.id, fallback);
@@ -285,11 +490,18 @@ impl BattleSession {
         self.fill_missing_orders_with_ai();
 
         let mut combined_orders = TurnOrders::new();
-        for (_, orders) in self.staged_orders.drain() {
-            for (id, order) in orders {
-                combined_orders.set_order(id, order);
+        for team in [0, 1] {
+            if let Some(mut orders) = self.staged_orders.remove(&team) {
+                let mut unit_ids: Vec<UnitId> = orders.keys().copied().collect();
+                unit_ids.sort_unstable();
+                for id in unit_ids {
+                    if let Some(order) = orders.remove(&id) {
+                        combined_orders.set_order(id, order);
+                    }
+                }
             }
         }
+        self.staged_orders.clear();
 
         self.submitted_teams.clear();
         self.state.phase = Phase::Resolution;
@@ -468,6 +680,128 @@ impl BattleSession {
                 GameEvent::MatchEnded { winner } => {
                     sanitized.push(SanitizedGameEvent::MatchEnded { winner: *winner });
                 }
+                GameEvent::SpellCast {
+                    caster_id,
+                    spell_id,
+                    target,
+                } => {
+                    let caster_meta = get_unit_meta(caster_id);
+                    let caster_vis = caster_meta
+                        .map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    let target_vis = match target {
+                        crate::ability::SpellTarget::Unit(tid) => {
+                            let tm = get_unit_meta(tid);
+                            tm.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2))
+                        }
+                        crate::ability::SpellTarget::Hex(h) => visible_hexes.contains(h),
+                        crate::ability::SpellTarget::None => false,
+                    };
+
+                    if caster_vis || target_vis {
+                        let target_dto = match target {
+                            crate::ability::SpellTarget::None => {
+                                hexabellum_protocol::SpellTargetDto::None
+                            }
+                            crate::ability::SpellTarget::Hex(h) => {
+                                hexabellum_protocol::SpellTargetDto::Hex {
+                                    hex: HexDto::new(h.q, h.r),
+                                }
+                            }
+                            crate::ability::SpellTarget::Unit(tid) => {
+                                hexabellum_protocol::SpellTargetDto::Unit { unit_id: *tid }
+                            }
+                        };
+                        sanitized.push(SanitizedGameEvent::SpellCast {
+                            caster_id: *caster_id,
+                            spell_id: spell_id.clone(),
+                            target: target_dto,
+                        });
+                    }
+                }
+                GameEvent::HealApplied {
+                    caster_id,
+                    target_id,
+                    amount,
+                    target_hp_remaining,
+                } => {
+                    let c_meta = get_unit_meta(caster_id);
+                    let t_meta = get_unit_meta(target_id);
+                    let c_vis =
+                        c_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    let t_vis =
+                        t_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    if c_vis || t_vis {
+                        sanitized.push(SanitizedGameEvent::HealApplied {
+                            caster_id: *caster_id,
+                            target_id: *target_id,
+                            amount: *amount,
+                            target_hp_remaining: *target_hp_remaining,
+                        });
+                    }
+                }
+                GameEvent::StructureRepaired {
+                    repairer_id,
+                    target_id,
+                    amount,
+                    target_hp_remaining,
+                } => {
+                    let r_meta = get_unit_meta(repairer_id);
+                    let t_meta = get_unit_meta(target_id);
+                    let r_vis =
+                        r_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    let t_vis =
+                        t_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    if r_vis || t_vis {
+                        sanitized.push(SanitizedGameEvent::StructureRepaired {
+                            repairer_id: *repairer_id,
+                            target_id: *target_id,
+                            amount: *amount,
+                            target_hp_remaining: *target_hp_remaining,
+                        });
+                    }
+                }
+                GameEvent::StatusApplied {
+                    unit_id,
+                    status_id,
+                    duration_rounds,
+                } => {
+                    let meta = get_unit_meta(unit_id);
+                    let is_vis = meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    if is_vis {
+                        sanitized.push(SanitizedGameEvent::StatusApplied {
+                            unit_id: *unit_id,
+                            status_id: status_id.clone(),
+                            duration_rounds: *duration_rounds,
+                        });
+                    }
+                }
+                GameEvent::StatusExpired { unit_id, status_id } => {
+                    let meta = get_unit_meta(unit_id);
+                    let is_vis = meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    if is_vis {
+                        sanitized.push(SanitizedGameEvent::StatusExpired {
+                            unit_id: *unit_id,
+                            status_id: status_id.clone(),
+                        });
+                    }
+                }
+                GameEvent::NeutralCampCleared { camp_id, killer_team } => {
+                    sanitized.push(SanitizedGameEvent::NeutralCampCleared {
+                        camp_id: camp_id.clone(),
+                        killer_team: *killer_team,
+                    });
+                }
+                GameEvent::TeamBuffApplied {
+                    team: b_team,
+                    buff_id,
+                    duration_rounds,
+                } => {
+                    sanitized.push(SanitizedGameEvent::TeamBuffApplied {
+                        team: *b_team,
+                        buff_id: buff_id.clone(),
+                        duration_rounds: *duration_rounds,
+                    });
+                }
                 _ => {}
             }
         }
@@ -495,11 +829,29 @@ impl BattleSession {
                 max_hp: u.max_hp,
                 ap: u.ap,
                 max_ap: u.max_ap,
+                energy: u.energy,
+                max_energy: u.max_energy,
                 initiative: u.initiative,
                 attack_damage: u.attack_damage,
                 attack_range: u.attack_range,
                 vision_range: u.vision_range,
                 is_stationary: u.kind.is_stationary(),
+                cooldowns: u.cooldowns.clone(),
+                statuses: u
+                    .statuses
+                    .iter()
+                    .map(|s| hexabellum_protocol::StatusDto {
+                        id: s.def_id.clone(),
+                        remaining_rounds: s.remaining_rounds,
+                        attack_damage_mod: s
+                            .modifiers
+                            .iter()
+                            .filter(|m| m.stat == crate::status::StatKind::AttackDamage)
+                            .map(|m| m.value)
+                            .sum(),
+                    })
+                    .collect(),
+                lane_id: u.lane_id.clone(),
             })
             .collect();
 
@@ -515,7 +867,7 @@ impl BattleSession {
             .map
             .all_hexes()
             .iter()
-            .filter(|h| !self.state.map.obstacles.contains(h))
+            .filter(|h| !self.state.map.movement_blockers().contains(h))
             .map(|h| HexDto::new(h.q, h.r))
             .collect();
         walkable.sort_by_key(|h| (h.q, h.r));
@@ -523,8 +875,8 @@ impl BattleSession {
         let mut obstacles: Vec<HexDto> = self
             .state
             .map
-            .obstacles
-            .iter()
+            .movement_blockers()
+            .into_iter()
             .map(|h| HexDto::new(h.q, h.r))
             .collect();
         obstacles.sort_by_key(|h| (h.q, h.r));
@@ -534,6 +886,29 @@ impl BattleSession {
             .map(|h| HexDto::new(h.q, h.r))
             .collect();
         visible_hexes_dto.sort_by_key(|h| (h.q, h.r));
+
+        let neutral_camps: Vec<hexabellum_protocol::NeutralCampDto> = self
+            .state
+            .neutral_camps
+            .iter()
+            .map(|c| {
+                let is_alive = self
+                    .state
+                    .get_unit(c.guardian_id)
+                    .map(|u| u.is_alive())
+                    .unwrap_or(false);
+                hexabellum_protocol::NeutralCampDto {
+                    id: c.id.clone(),
+                    pos: HexDto::new(c.camp_pos.q, c.camp_pos.r),
+                    is_alive,
+                    guardian_unit_id: if is_alive {
+                        Some(c.guardian_id)
+                    } else {
+                        None
+                    },
+                }
+            })
+            .collect();
 
         SnapshotDto {
             match_id: self.match_id.clone(),
@@ -550,6 +925,7 @@ impl BattleSession {
             controlled_units,
             deadline_unix_ms,
             state_hash: self.state_hash(),
+            neutral_camps,
         }
     }
 
@@ -574,10 +950,24 @@ impl BattleSession {
                 hasher.update(&unit.max_hp.to_le_bytes());
                 hasher.update(&unit.ap.to_le_bytes());
                 hasher.update(&unit.max_ap.to_le_bytes());
+                hasher.update(&unit.energy.to_le_bytes());
+                hasher.update(&unit.max_energy.to_le_bytes());
                 hasher.update(&unit.attack_damage.to_le_bytes());
                 hasher.update(&unit.attack_range.to_le_bytes());
                 hasher.update(&unit.vision_range.to_le_bytes());
                 hasher.update(&unit.initiative.to_le_bytes());
+
+                let mut cd_keys: Vec<&String> = unit.cooldowns.keys().collect();
+                cd_keys.sort();
+                for k in cd_keys {
+                    hasher.update(k.as_bytes());
+                    hasher.update(&unit.cooldowns[k].to_le_bytes());
+                }
+
+                for s in &unit.statuses {
+                    hasher.update(s.def_id.as_bytes());
+                    hasher.update(&s.remaining_rounds.to_le_bytes());
+                }
             }
         }
 
@@ -717,5 +1107,89 @@ mod tests {
             .unwrap_err();
         assert_eq!(err_friendly.code, ProtocolErrorCode::InvalidTarget);
         assert_eq!(err_friendly.unit_id, Some(1));
+
+        // 5. Valid Cleave Cast order for Vanguard (1 AP, 3 Energy)
+        let cleave_order = OrderDto {
+            unit_id: 1,
+            move_target: None,
+            action: ActionDto::Cast {
+                spell_id: "cleave".to_string(),
+                target: hexabellum_protocol::SpellTargetDto::None,
+            },
+        };
+        let res_cleave = session.submit_player_orders(&player_p1, 0, 0, vec![cleave_order]);
+        assert!(res_cleave.is_ok());
+
+        // 6. Reject Cast if insufficient Energy
+        let mut session_no_energy = BattleSession::new("energy_test".into(), BattleConfig::default());
+        session_no_energy.assign_team_player(0, player_p1.clone());
+        session_no_energy.state.get_unit_mut(1).unwrap().energy = 0;
+        let err_energy = session_no_energy
+            .submit_player_orders(
+                &player_p1,
+                0,
+                0,
+                vec![OrderDto {
+                    unit_id: 1,
+                    move_target: None,
+                    action: ActionDto::Cast {
+                        spell_id: "cleave".to_string(),
+                        target: hexabellum_protocol::SpellTargetDto::None,
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(err_energy.code, ProtocolErrorCode::InsufficientResources);
+
+        // 7. Reject Cast if on cooldown
+        let mut session_cd = BattleSession::new("cd_test".into(), BattleConfig::default());
+        session_cd.assign_team_player(0, player_p1.clone());
+        session_cd.state.get_unit_mut(1).unwrap().cooldowns.insert("cleave".to_string(), 2);
+        let err_cd = session_cd
+            .submit_player_orders(
+                &player_p1,
+                0,
+                0,
+                vec![OrderDto {
+                    unit_id: 1,
+                    move_target: None,
+                    action: ActionDto::Cast {
+                        spell_id: "cleave".to_string(),
+                        target: hexabellum_protocol::SpellTargetDto::None,
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(err_cd.code, ProtocolErrorCode::CooldownActive);
+
+        // 8. Reject Repair if structure is already at full health
+        let err_full_repair = session
+            .submit_player_orders(
+                &player_p1,
+                0,
+                0,
+                vec![OrderDto {
+                    unit_id: 1,
+                    move_target: Some(HexDto::new(-4, 0)),
+                    action: ActionDto::Repair { target_id: 11 },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(err_full_repair.code, ProtocolErrorCode::InvalidTarget);
+        assert!(err_full_repair.reason.contains("full health"));
+
+        // 9. Accept Repair if structure is damaged and adjacent
+        session.state.get_unit_mut(11).unwrap().hp = 50;
+        let valid_repair = session.submit_player_orders(
+            &player_p1,
+            0,
+            0,
+            vec![OrderDto {
+                unit_id: 1,
+                move_target: Some(HexDto::new(-4, 0)),
+                action: ActionDto::Repair { target_id: 11 },
+            }],
+        );
+        assert!(valid_repair.is_ok());
     }
 }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub mod tutorial;
 pub use tutorial::*;
@@ -9,6 +10,7 @@ pub type ReconnectToken = String;
 pub type UnitId = u64;
 pub type TeamId = u8;
 pub type Round = u32;
+pub type SpellId = String;
 
 /// Axial hex coordinate DTO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -23,22 +25,50 @@ impl HexDto {
     }
 }
 
+/// Status effect DTO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatusDto {
+    pub id: String,
+    pub remaining_rounds: u32,
+    pub attack_damage_mod: i32,
+}
+
+/// Neutral camp DTO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NeutralCampDto {
+    pub id: String,
+    pub pos: HexDto,
+    pub is_alive: bool,
+    pub guardian_unit_id: Option<UnitId>,
+}
+
 /// Unit data transfer representation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitDto {
     pub id: UnitId,
-    pub kind: String, // "Hero", "Minion", "Tower", "Spawner"
+    pub kind: String, // "Hero", "Minion", "Tower", "Spawner", "NeutralGuardian"
     pub team: TeamId,
     pub pos: HexDto,
     pub hp: u32,
     pub max_hp: u32,
     pub ap: u32,
     pub max_ap: u32,
+    #[serde(default)]
+    pub energy: u32,
+    #[serde(default)]
+    pub max_energy: u32,
     pub initiative: u32,
     pub attack_damage: u32,
     pub attack_range: u32,
     pub vision_range: u32,
+    #[serde(default)]
     pub is_stationary: bool,
+    #[serde(default)]
+    pub cooldowns: HashMap<SpellId, u32>,
+    #[serde(default)]
+    pub statuses: Vec<StatusDto>,
+    #[serde(default)]
+    pub lane_id: Option<String>,
 }
 
 /// Arena terrain layout.
@@ -62,6 +92,17 @@ pub struct SnapshotDto {
     pub controlled_units: Vec<UnitId>,
     pub deadline_unix_ms: Option<u64>,
     pub state_hash: String,
+    #[serde(default)]
+    pub neutral_camps: Vec<NeutralCampDto>,
+}
+
+/// Spell target DTO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "payload")]
+pub enum SpellTargetDto {
+    None,
+    Unit { unit_id: UnitId },
+    Hex { hex: HexDto },
 }
 
 /// Order action type.
@@ -69,7 +110,16 @@ pub struct SnapshotDto {
 #[serde(tag = "type")]
 pub enum ActionDto {
     Wait,
-    Attack { target_id: UnitId },
+    Attack {
+        target_id: UnitId,
+    },
+    Cast {
+        spell_id: SpellId,
+        target: SpellTargetDto,
+    },
+    Repair {
+        target_id: UnitId,
+    },
 }
 
 /// Unit turn order submitted by player.
@@ -79,6 +129,8 @@ pub struct OrderDto {
     pub move_target: Option<HexDto>,
     pub action: ActionDto,
 }
+
+pub type UnitOrderDto = OrderDto;
 
 /// Fog-sanitized event emitted during round resolution.
 /// Ensures coordinates and hidden unit activities in fog are masked or omitted.
@@ -114,6 +166,41 @@ pub enum SanitizedGameEvent {
         damage: u32,
         target_hp_remaining: u32,
     },
+    SpellCast {
+        caster_id: UnitId,
+        spell_id: SpellId,
+        target: SpellTargetDto,
+    },
+    HealApplied {
+        caster_id: UnitId,
+        target_id: UnitId,
+        amount: u32,
+        target_hp_remaining: u32,
+    },
+    StructureRepaired {
+        repairer_id: UnitId,
+        target_id: UnitId,
+        amount: u32,
+        target_hp_remaining: u32,
+    },
+    StatusApplied {
+        unit_id: UnitId,
+        status_id: String,
+        duration_rounds: u32,
+    },
+    StatusExpired {
+        unit_id: UnitId,
+        status_id: String,
+    },
+    NeutralCampCleared {
+        camp_id: String,
+        killer_team: TeamId,
+    },
+    TeamBuffApplied {
+        team: TeamId,
+        buff_id: String,
+        duration_rounds: u32,
+    },
     UnitDied {
         unit_id: UnitId,
         unit_kind: String,
@@ -129,6 +216,8 @@ pub enum SanitizedGameEvent {
         winner: Option<TeamId>,
     },
 }
+
+pub type GameEventDto = SanitizedGameEvent;
 
 /// Upstream messages sent from browser client to server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +304,9 @@ pub enum ProtocolErrorCode {
     InvalidTarget,
     TimerExpired,
     InternalError,
+    InsufficientResources,
+    CooldownActive,
+    MissingLineOfSight,
 }
 
 #[cfg(test)]
@@ -262,16 +354,22 @@ mod tests {
                 max_hp: 100,
                 ap: 3,
                 max_ap: 3,
+                energy: 5,
+                max_energy: 5,
                 initiative: 3,
                 attack_damage: 20,
                 attack_range: 1,
                 vision_range: 3,
                 is_stationary: false,
+                cooldowns: HashMap::new(),
+                statuses: Vec::new(),
+                lane_id: None,
             }],
             visible_hexes: vec![HexDto::new(-4, -1)],
             controlled_units: vec![1],
             deadline_unix_ms: Some(1700000000000),
             state_hash: "abcd1234deadbeef".into(),
+            neutral_camps: Vec::new(),
         };
 
         let msg = ServerMessage::RoundStarted {
@@ -305,6 +403,23 @@ mod tests {
                 target_id: 6,
                 damage: 20,
                 target_hp_remaining: 80,
+            },
+            SanitizedGameEvent::SpellCast {
+                caster_id: 1,
+                spell_id: "bolt".into(),
+                target: SpellTargetDto::Unit { unit_id: 6 },
+            },
+            SanitizedGameEvent::HealApplied {
+                caster_id: 3,
+                target_id: 1,
+                amount: 20,
+                target_hp_remaining: 100,
+            },
+            SanitizedGameEvent::StructureRepaired {
+                repairer_id: 1,
+                target_id: 11,
+                amount: 20,
+                target_hp_remaining: 120,
             },
             SanitizedGameEvent::RoundEnded { round: 1 },
         ];

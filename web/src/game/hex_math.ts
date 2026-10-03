@@ -99,7 +99,8 @@ export function getAttackTargets(
   range: number,
   units: Record<number, UnitData>,
   ownTeam: number,
-  visibleHexes?: Set<string>
+  visibleHexes?: Set<string>,
+  visionBlockers?: Set<string>
 ): number[] {
   const targets: number[] = [];
   for (const [idStr, u] of Object.entries(units)) {
@@ -109,9 +110,167 @@ export function getAttackTargets(
       }
       const dist = axialDistance(from, u.pos);
       if (dist <= range) {
+        if (dist > 1 && visionBlockers && !hasLineOfSight(visionBlockers, from, u.pos)) {
+          continue;
+        }
         targets.push(Number(idStr));
       }
     }
   }
   return targets;
 }
+
+export function cubeRound(q: number, r: number, s: number): HexCoord {
+  let rq = Math.round(q);
+  let rr = Math.round(r);
+  const rs = Math.round(s);
+
+  const qDiff = Math.abs(rq - q);
+  const rDiff = Math.abs(rr - r);
+  const sDiff = Math.abs(rs - s);
+
+  if (qDiff > rDiff && qDiff > sDiff) {
+    rq = -rr - rs;
+  } else if (rDiff > sDiff) {
+    rr = -rq - rs;
+  }
+
+  return { q: rq, r: rr };
+}
+
+export function hexLine(a: HexCoord, b: HexCoord): HexCoord[] {
+  const n = axialDistance(a, b);
+  if (n === 0) return [a];
+
+  const results: HexCoord[] = [];
+  const aQ = a.q + 1e-6;
+  const aR = a.r + 1e-6;
+  const aS = -aQ - aR;
+
+  const bQ = b.q + 2e-6;
+  const bR = b.r + 2e-6;
+  const bS = -bQ - bR;
+
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const q = aQ + (bQ - aQ) * t;
+    const r = aR + (bR - aR) * t;
+    const s = aS + (bS - aS) * t;
+    results.push(cubeRound(q, r, s));
+  }
+
+  return results;
+}
+
+export function hasLineOfSight(
+  visionBlockers: Set<string>,
+  origin: HexCoord,
+  target: HexCoord
+): boolean {
+  const line = hexLine(origin, target);
+  for (let i = 1; i < line.length - 1; i++) {
+    if (visionBlockers.has(`${line[i].q},${line[i].r}`)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function getRepairTargets(
+  from: HexCoord,
+  units: Record<number, UnitData>,
+  ownTeam: number
+): number[] {
+  const targets: number[] = [];
+  for (const [idStr, u] of Object.entries(units)) {
+    if (u.team === ownTeam && u.hp > 0 && u.hp < u.max_hp) {
+      if (u.kind === 'Tower' || u.kind === 'Spawner' || u.kind === 'SpawnerTower') {
+        const dist = axialDistance(from, u.pos);
+        if (dist === 1) {
+          targets.push(Number(idStr));
+        }
+      }
+    }
+  }
+  return targets;
+}
+
+export interface SpellTargetingResult {
+  validUnitIds: number[];
+  obstructedUnitIds: number[];
+  isSelfOnly: boolean;
+}
+
+export function getSpellTargets(
+  caster: UnitData,
+  spellId: string,
+  units: Record<number, UnitData>,
+  visionBlockers: Set<string>,
+  visibleHexes?: Set<string>
+): SpellTargetingResult {
+  if (spellId === 'cleave') {
+    return {
+      validUnitIds: [caster.id],
+      obstructedUnitIds: [],
+      isSelfOnly: true,
+    };
+  }
+
+  if (spellId === 'bolt') {
+    const validUnitIds: number[] = [];
+    const obstructedUnitIds: number[] = [];
+    const range = 3;
+
+    for (const [idStr, u] of Object.entries(units)) {
+      if (u.team !== caster.team && u.hp > 0) {
+        if (visibleHexes && !visibleHexes.has(`${u.pos.q},${u.pos.r}`)) {
+          continue;
+        }
+        const dist = axialDistance(caster.pos, u.pos);
+        if (dist >= 1 && dist <= range) {
+          const id = Number(idStr);
+          if (hasLineOfSight(visionBlockers, caster.pos, u.pos)) {
+            validUnitIds.push(id);
+          } else {
+            obstructedUnitIds.push(id);
+          }
+        }
+      }
+    }
+
+    return {
+      validUnitIds,
+      obstructedUnitIds,
+      isSelfOnly: false,
+    };
+  }
+
+  if (spellId === 'mend') {
+    const validUnitIds: number[] = [];
+    const obstructedUnitIds: number[] = [];
+    const range = 2;
+
+    for (const [idStr, u] of Object.entries(units)) {
+      if (u.team === caster.team && u.hp > 0 && u.kind === 'Hero' && u.hp < u.max_hp) {
+        const dist = axialDistance(caster.pos, u.pos);
+        if (dist <= range) {
+          const id = Number(idStr);
+          if (dist === 0 || hasLineOfSight(visionBlockers, caster.pos, u.pos)) {
+            validUnitIds.push(id);
+          } else {
+            obstructedUnitIds.push(id);
+          }
+        }
+      }
+    }
+
+    return {
+      validUnitIds,
+      obstructedUnitIds,
+      isSelfOnly: false,
+    };
+  }
+
+  return { validUnitIds: [], obstructedUnitIds: [], isSelfOnly: false };
+}
+

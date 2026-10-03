@@ -1,8 +1,9 @@
+use crate::ability::SpellTarget;
 use crate::hex::HexCoord;
 use crate::unit::{TeamId, UnitId, UnitKind};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum GameEvent {
     RoundStarted {
@@ -37,6 +38,48 @@ pub enum GameEvent {
         target_id: UnitId,
         damage: u32,
         target_hp_remaining: u32,
+    },
+
+    SpellCast {
+        caster_id: UnitId,
+        spell_id: String,
+        target: SpellTarget,
+    },
+
+    HealApplied {
+        caster_id: UnitId,
+        target_id: UnitId,
+        amount: u32,
+        target_hp_remaining: u32,
+    },
+
+    StructureRepaired {
+        repairer_id: UnitId,
+        target_id: UnitId,
+        amount: u32,
+        target_hp_remaining: u32,
+    },
+
+    StatusApplied {
+        unit_id: UnitId,
+        status_id: String,
+        duration_rounds: u32,
+    },
+
+    StatusExpired {
+        unit_id: UnitId,
+        status_id: String,
+    },
+
+    NeutralCampCleared {
+        camp_id: String,
+        killer_team: TeamId,
+    },
+
+    TeamBuffApplied {
+        team: TeamId,
+        buff_id: String,
+        duration_rounds: u32,
     },
 
     UnitDied {
