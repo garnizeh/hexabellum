@@ -88,6 +88,13 @@ export function getMoveTargets(unitId: number): MoveTarget[] {
   );
 }
 
+export function findPath(fromQ: number, fromR: number, toQ: number, toR: number): HexCoord[] {
+  if (!game) throw new Error("Game not initialized");
+  return JSON.parse(game.find_path(fromQ, fromR, toQ, toR)).map(
+    ([q, r]: [number, number]) => ({ q, r })
+  );
+}
+
 export function getAttackTargets(unitId: number, fromQ: number, fromR: number): number[] {
   if (!game) throw new Error("Game not initialized");
   return JSON.parse(game.get_attack_targets(BigInt(unitId), fromQ, fromR));

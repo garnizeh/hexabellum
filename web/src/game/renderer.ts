@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { HexCoord, GameState, MoveTarget } from './bridge';
+import { HexCoord, GameState, MoveTarget, UnitData, UnitKind } from './bridge';
 
 export const HEX_SIZE = 30;
 
@@ -13,6 +13,7 @@ export class HexRenderer {
   private fxLayer = new PIXI.Container();
 
   private unitSprites = new Map<number, PIXI.Container>();
+  private selectionRing = new PIXI.Graphics();
 
   constructor(app: PIXI.Application) {
     this.app = app;
@@ -22,6 +23,8 @@ export class HexRenderer {
     this.app.stage.addChild(this.unitLayer);
     this.app.stage.addChild(this.fogLayer);
     this.app.stage.addChild(this.fxLayer);
+
+    this.overlayLayer.addChild(this.selectionRing);
   }
 
   hexToPixel(q: number, r: number): { x: number; y: number } {
@@ -89,110 +92,161 @@ export class HexRenderer {
 
     for (const [idStr, unit] of Object.entries(state.units)) {
       const id = Number(idStr);
-      const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
+      const sprite = this.createUnitSprite(unit);
+      this.unitLayer.addChild(sprite);
+      this.unitSprites.set(id, sprite);
+    }
+  }
 
-      const container = new PIXI.Container();
-      container.x = x;
-      container.y = y;
+  createUnitSprite(unit: UnitData): PIXI.Container {
+    const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
 
-      const g = new PIXI.Graphics();
-      const isPlayer = unit.team === 0;
-      const baseColor = isPlayer ? 0x00d2ff : 0xff3366;
+    const container = new PIXI.Container();
+    container.x = x;
+    container.y = y;
 
-      // Draw stylized representation based on UnitKind
-      switch (unit.kind) {
-        case 'Hero': {
-          g.circle(0, 0, HEX_SIZE * 0.52);
-          g.fill({ color: baseColor });
-          g.stroke({ color: 0xffffff, width: 2 });
-          // Inner core
-          g.circle(0, 0, HEX_SIZE * 0.2);
-          g.fill({ color: 0xffffff });
-          break;
-        }
-        case 'Minion': {
-          // Creep triangle pointing towards opponent base
-          const tip = isPlayer ? HEX_SIZE * 0.45 : -HEX_SIZE * 0.45;
-          g.poly([tip, 0, -tip * 0.7, -HEX_SIZE * 0.35, -tip * 0.7, HEX_SIZE * 0.35]);
-          g.fill({ color: baseColor });
-          g.stroke({ color: 0xffffff, width: 1.5 });
-          break;
-        }
-        case 'Tower': {
-          // Fortified turret square
-          const size = HEX_SIZE * 0.8;
-          g.rect(-size / 2, -size / 2, size, size);
-          g.fill({ color: baseColor });
-          g.stroke({ color: 0xffffff, width: 2.5 });
-          // Inner core
-          g.rect(-size / 4, -size / 4, size / 2, size / 2);
-          g.fill({ color: 0x111118 });
-          break;
-        }
-        case 'SpawnerTower': {
-          // Spire crystal diamond
-          g.poly([0, -HEX_SIZE * 0.6, HEX_SIZE * 0.5, 0, 0, HEX_SIZE * 0.6, -HEX_SIZE * 0.5, 0]);
-          g.fill({ color: isPlayer ? 0x7c4dff : 0xff9100 });
-          g.stroke({ color: 0xffffff, width: 2 });
-          break;
-        }
-        default:
-          g.circle(0, 0, HEX_SIZE * 0.4);
-          g.fill({ color: 0x888888 });
-          break;
+    const g = new PIXI.Graphics();
+    const isPlayer = unit.team === 0;
+    const baseColor = isPlayer ? 0x00d2ff : 0xff3366;
+
+    // Draw stylized representation based on UnitKind
+    switch (unit.kind) {
+      case 'Hero': {
+        g.circle(0, 0, HEX_SIZE * 0.52);
+        g.fill({ color: baseColor });
+        g.stroke({ color: 0xffffff, width: 2 });
+        // Inner core
+        g.circle(0, 0, HEX_SIZE * 0.2);
+        g.fill({ color: 0xffffff });
+        break;
+      }
+      case 'Minion': {
+        // Creep triangle pointing towards opponent base
+        const tip = isPlayer ? HEX_SIZE * 0.45 : -HEX_SIZE * 0.45;
+        g.poly([tip, 0, -tip * 0.7, -HEX_SIZE * 0.35, -tip * 0.7, HEX_SIZE * 0.35]);
+        g.fill({ color: baseColor });
+        g.stroke({ color: 0xffffff, width: 1.5 });
+        break;
+      }
+      case 'Tower': {
+        // Fortified turret square
+        const size = HEX_SIZE * 0.8;
+        g.rect(-size / 2, -size / 2, size, size);
+        g.fill({ color: baseColor });
+        g.stroke({ color: 0xffffff, width: 2.5 });
+        // Inner core
+        g.rect(-size / 4, -size / 4, size / 2, size / 2);
+        g.fill({ color: 0x111118 });
+        break;
+      }
+      case 'SpawnerTower': {
+        // Spire crystal diamond
+        g.poly([0, -HEX_SIZE * 0.6, HEX_SIZE * 0.5, 0, 0, HEX_SIZE * 0.6, -HEX_SIZE * 0.5, 0]);
+        g.fill({ color: isPlayer ? 0x7c4dff : 0xff9100 });
+        g.stroke({ color: 0xffffff, width: 2 });
+        break;
+      }
+      default:
+        g.circle(0, 0, HEX_SIZE * 0.4);
+        g.fill({ color: 0x888888 });
+        break;
+    }
+
+    // Spawner wave timer dots or Hero AP dots
+    if (unit.kind === 'SpawnerTower' && unit.spawn_interval) {
+      const dotsY = HEX_SIZE * 0.75;
+      for (let i = 0; i < unit.spawn_interval; i++) {
+        const dotX = (i - (unit.spawn_interval - 1) / 2) * 10;
+        g.circle(dotX, dotsY, 3);
+        g.fill({ color: i < unit.spawn_counter ? 0x7c4dff : 0x333344 });
+      }
+    } else if (unit.kind === 'Hero') {
+      const apY = HEX_SIZE * 0.75;
+      for (let i = 0; i < unit.max_ap; i++) {
+        const apX = (i - (unit.max_ap - 1) / 2) * 10;
+        g.circle(apX, apY, 3);
+        g.fill({ color: i < unit.ap ? 0xffd600 : 0x333344 });
       }
 
-      // HP Bar (Above unit)
-      const hpWidth = HEX_SIZE * 0.9;
-      const hpHeight = 5;
-      const hpX = -hpWidth / 2;
-      const hpY = -HEX_SIZE * 0.8;
-      const hpRatio = Math.max(0, Math.min(1, unit.hp / unit.max_hp));
+      // Initiative badge
+      const initText = new PIXI.Text({
+        text: `⚡${unit.initiative}`,
+        style: {
+          fontSize: 9,
+          fill: 0xffffff,
+          fontFamily: 'Outfit, sans-serif',
+          fontWeight: 'bold',
+        },
+      });
+      initText.anchor.set(0.5);
+      initText.y = 0;
+      container.addChild(initText);
+    }
 
-      g.rect(hpX, hpY, hpWidth, hpHeight);
-      g.fill({ color: 0x111118 });
+    container.addChild(g);
+
+    // Dedicated HP Bar Graphic
+    const hpBar = new PIXI.Graphics();
+    this.renderHpBar(hpBar, unit.hp, unit.max_hp);
+    container.addChild(hpBar);
+    (container as any).hpBar = hpBar;
+    (container as any).maxHp = unit.max_hp;
+
+    return container;
+  }
+
+  private renderHpBar(g: PIXI.Graphics, hp: number, maxHp: number): void {
+    g.clear();
+    const hpWidth = HEX_SIZE * 0.9;
+    const hpHeight = 5;
+    const hpX = -hpWidth / 2;
+    const hpY = -HEX_SIZE * 0.8;
+    const hpRatio = Math.max(0, Math.min(1, hp / maxHp));
+
+    g.rect(hpX, hpY, hpWidth, hpHeight);
+    g.fill({ color: 0x111118 });
+    if (hpRatio > 0) {
       g.rect(hpX, hpY, hpWidth * hpRatio, hpHeight);
       g.fill({ color: hpRatio > 0.5 ? 0x00e676 : hpRatio > 0.25 ? 0xffea00 : 0xff1744 });
-
-      // Spawner wave timer dots or Hero AP dots
-      if (unit.kind === 'SpawnerTower' && unit.spawn_interval) {
-        const dotsY = HEX_SIZE * 0.75;
-        for (let i = 0; i < unit.spawn_interval; i++) {
-          const dotX = (i - (unit.spawn_interval - 1) / 2) * 10;
-          g.circle(dotX, dotsY, 3);
-          g.fill({ color: i < unit.spawn_counter ? 0x7c4dff : 0x333344 });
-        }
-      } else if (unit.kind === 'Hero') {
-        const apY = HEX_SIZE * 0.75;
-        for (let i = 0; i < unit.max_ap; i++) {
-          const apX = (i - (unit.max_ap - 1) / 2) * 10;
-          g.circle(apX, apY, 3);
-          g.fill({ color: i < unit.ap ? 0xffd600 : 0x333344 });
-        }
-
-        // Initiative badge
-        const initText = new PIXI.Text({
-          text: `⚡${unit.initiative}`,
-          style: {
-            fontSize: 9,
-            fill: 0xffffff,
-            fontFamily: 'Outfit, sans-serif',
-            fontWeight: 'bold',
-          },
-        });
-        initText.anchor.set(0.5);
-        initText.y = 0;
-        container.addChild(initText);
-      }
-
-      container.addChild(g);
-      this.unitLayer.addChild(container);
-      this.unitSprites.set(id, container);
     }
+  }
+
+  updateUnitHp(unitId: number, hp: number, maxHp?: number): void {
+    const sprite = this.unitSprites.get(unitId);
+    if (!sprite) return;
+    const hpBar = (sprite as any).hpBar as PIXI.Graphics;
+    const mHp = maxHp ?? (sprite as any).maxHp ?? 100;
+    if (hpBar) {
+      this.renderHpBar(hpBar, hp, mHp);
+    }
+  }
+
+  spawnUnit(event: { unit_id: number; unit_kind: UnitKind; team: number; pos: HexCoord; spawner_id: number }): PIXI.Container {
+    const isMinion = event.unit_kind === 'Minion';
+    const unit: UnitData = {
+      id: event.unit_id,
+      kind: event.unit_kind,
+      team: event.team,
+      pos: event.pos,
+      hp: isMinion ? 30 : 100,
+      max_hp: isMinion ? 30 : 100,
+      ap: isMinion ? 2 : 3,
+      max_ap: isMinion ? 2 : 3,
+      initiative: isMinion ? 1 : 2,
+      attack_damage: isMinion ? 8 : 20,
+      attack_range: 1,
+      vision_range: isMinion ? 2 : 3,
+      spawn_counter: 0,
+    };
+    const sprite = this.createUnitSprite(unit);
+    this.unitLayer.addChild(sprite);
+    this.unitSprites.set(event.unit_id, sprite);
+    return sprite;
   }
 
   drawMoveTargets(targets: (MoveTarget | HexCoord)[]): void {
     this.overlayLayer.removeChildren();
+    this.overlayLayer.addChild(this.selectionRing);
     for (const target of targets) {
       const { x, y } = this.hexToPixel(target.q, target.r);
       const g = new PIXI.Graphics();
@@ -250,22 +304,27 @@ export class HexRenderer {
   }
 
   highlightUnit(unitId: number | null): void {
-    for (const [id, container] of this.unitSprites) {
-      const g = container.getChildAt(container.children.length - 1) as PIXI.Graphics;
-      if (g && typeof g.stroke === 'function') {
-        if (id === unitId) {
-          g.stroke({ color: 0xffd600, width: 3 });
-        }
-      }
+    this.selectionRing.clear();
+    if (unitId === null) return;
+
+    const sprite = this.unitSprites.get(unitId);
+    if (sprite) {
+      this.selectionRing.circle(sprite.x, sprite.y, HEX_SIZE * 0.68);
+      this.selectionRing.stroke({ color: 0xffd600, width: 2.5, alpha: 0.95 });
+      this.selectionRing.circle(sprite.x, sprite.y, HEX_SIZE * 0.78);
+      this.selectionRing.stroke({ color: 0xffd600, width: 1.5, alpha: 0.45 });
     }
   }
 
   clearMoveTargets(): void {
     this.overlayLayer.removeChildren();
+    this.overlayLayer.addChild(this.selectionRing);
   }
 
   clearOverlays(): void {
     this.overlayLayer.removeChildren();
+    this.overlayLayer.addChild(this.selectionRing);
+    this.selectionRing.clear();
     this.pathLayer.removeChildren();
   }
 

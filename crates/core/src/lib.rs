@@ -132,6 +132,15 @@ impl GameEngine {
         serde_json::to_string(&targets).unwrap()
     }
 
+    /// Find BFS path between two coordinates avoiding map obstacles.
+    pub fn find_path(&self, from_q: i32, from_r: i32, to_q: i32, to_r: i32) -> String {
+        let from = HexCoord::new(from_q, from_r);
+        let to = HexCoord::new(to_q, to_r);
+        let path = self.state.map.find_path(from, to).unwrap_or_default();
+        let coords: Vec<(i32, i32)> = path.into_iter().map(|h| (h.q, h.r)).collect();
+        serde_json::to_string(&coords).unwrap()
+    }
+
     /// Valid attack targets: must be in range AND visible through Fog of War.
     pub fn get_attack_targets(&self, unit_id: UnitId, from_q: i32, from_r: i32) -> String {
         let mut targets: Vec<UnitId> = if let Some(unit) = self.state.get_unit(unit_id) {

@@ -35,6 +35,10 @@ impl WasmGame {
         self.engine.get_move_targets(unit_id)
     }
 
+    pub fn find_path(&self, from_q: i32, from_r: i32, to_q: i32, to_r: i32) -> String {
+        self.engine.find_path(from_q, from_r, to_q, to_r)
+    }
+
     pub fn get_attack_targets(&self, unit_id: u64, from_q: i32, from_r: i32) -> String {
         self.engine.get_attack_targets(unit_id, from_q, from_r)
     }

@@ -88,7 +88,7 @@ export class Animator {
   }
 
   private animateAttack(
-    data: { target_id: number; damage: number; tower_id?: number; attacker_id?: number },
+    data: { target_id: number; damage: number; tower_id?: number; attacker_id?: number; target_hp_remaining?: number },
     onDone: () => void
   ): void {
     const targetSprite = this.renderer.getUnitSprite(data.target_id);
@@ -107,9 +107,31 @@ export class Animator {
         setTimeout(() => {
           this.renderer.getFxLayer().removeChild(beam);
         }, 180);
+      } else if (attackerSprite && !data.tower_id) {
+        // Melee Lunge Attack FX
+        const origX = attackerSprite.x;
+        const origY = attackerSprite.y;
+        const dx = targetSprite.x - origX;
+        const dy = targetSprite.y - origY;
+        const dist = Math.hypot(dx, dy) || 1;
+        const lungeDist = 16;
+        const lungeX = origX + (dx / dist) * lungeDist;
+        const lungeY = origY + (dy / dist) * lungeDist;
+
+        attackerSprite.x = lungeX;
+        attackerSprite.y = lungeY;
+        setTimeout(() => {
+          attackerSprite.x = origX;
+          attackerSprite.y = origY;
+        }, 120);
       }
 
-      // 2. Target Red Impact Flash
+      // 2. Update target HP bar dynamically
+      if (data.target_hp_remaining !== undefined) {
+        this.renderer.updateUnitHp(data.target_id, data.target_hp_remaining);
+      }
+
+      // 3. Target Red Impact Flash & Floating Damage Text
       const origAlpha = targetSprite.alpha;
       targetSprite.alpha = 0.4;
       this.showDamageText(targetSprite.x, targetSprite.y, data.damage);
@@ -151,11 +173,13 @@ export class Animator {
     requestAnimationFrame(animate);
   }
 
-  private animateSpawn(data: { unit_id: number }, onDone: () => void): void {
-    const sprite = this.renderer.getUnitSprite(data.unit_id);
+  private animateSpawn(
+    data: { unit_id: number; unit_kind: any; team: number; pos: HexCoord; spawner_id: number },
+    onDone: () => void
+  ): void {
+    let sprite = this.renderer.getUnitSprite(data.unit_id);
     if (!sprite) {
-      onDone();
-      return;
+      sprite = this.renderer.spawnUnit(data);
     }
 
     sprite.scale.set(0.1);

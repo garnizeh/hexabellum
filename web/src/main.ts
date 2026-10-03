@@ -54,18 +54,29 @@ async function main() {
 
     if (state.phase === 'MatchEnd') {
       const won = state.winner === 0;
-      const resultText = won ? 'VICTORY — ENEMY BASE DESTROYED' : 'DEFEAT — ALL HEROES ELIMINATED';
+      const isDraw = state.winner === null;
+      let resultText = '';
+      if (won) {
+        const enemySpawner = Object.values(state.units).find(u => u.team === 1 && u.kind === 'SpawnerTower' && u.hp > 0);
+        resultText = !enemySpawner ? 'VICTORY — ENEMY BASE DESTROYED' : 'VICTORY — ALL ENEMY HEROES ELIMINATED';
+      } else if (isDraw) {
+        resultText = 'DRAW — MUTUAL ANNIHILATION';
+      } else {
+        const playerSpawner = Object.values(state.units).find(u => u.team === 0 && u.kind === 'SpawnerTower' && u.hp > 0);
+        resultText = !playerSpawner ? 'DEFEAT — ALLIED BASE DESTROYED' : 'DEFEAT — ALL HEROES ELIMINATED';
+      }
+
       if (statusEl) {
         statusEl.textContent = resultText;
-        statusEl.style.color = won ? '#00e676' : '#ff1744';
+        statusEl.style.color = won ? '#00e676' : isDraw ? '#ffea00' : '#ff1744';
       }
       timer.stop();
       if (endTurnBtn) endTurnBtn.disabled = true;
       if (restartBtn) restartBtn.style.display = 'inline-block';
 
       if (gameOverModal && gameOverTitle) {
-        gameOverTitle.textContent = won ? 'VICTORY' : 'DEFEAT';
-        gameOverTitle.className = won ? 'victory' : 'defeat';
+        gameOverTitle.textContent = won ? 'VICTORY' : isDraw ? 'DRAW' : 'DEFEAT';
+        gameOverTitle.className = won ? 'victory' : isDraw ? '' : 'defeat';
         gameOverModal.style.display = 'flex';
       }
     } else {
@@ -101,6 +112,7 @@ async function main() {
   }
 
   const handleRestart = () => {
+    input.reset();
     restart();
     if (restartBtn) restartBtn.style.display = 'none';
     if (gameOverModal) gameOverModal.style.display = 'none';
