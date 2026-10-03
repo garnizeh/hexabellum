@@ -81,6 +81,8 @@ export class ObjectiveChecklist {
     this.titleEl.textContent = lessonTitle;
     this.progressBadge.textContent = `Step ${stepIndex + 1}/${totalSteps}`;
     this.taskTextEl.textContent = taskText;
+    this.taskTextEl.style.textDecoration = 'none';
+    this.taskTextEl.style.color = '';
 
     this.checkIconEl.className = 'task-status-ring pulsing';
   }

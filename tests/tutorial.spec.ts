@@ -21,6 +21,7 @@ test.describe('Hexabellum Tutorial Level & Mode Selection FTUE', () => {
     await expect(modeModal.locator('.mode-card-tutorial')).toBeVisible();
     await expect(modeModal.locator('.mode-card-arena')).toBeVisible();
     await expect(modeModal.locator('.mode-hub-title')).toHaveText('HEXABELLUM — PORTAL DA CONVERGÊNCIA');
+    await page.screenshot({ path: 'tests/screenshot_mode_selection.png' });
 
     // 3. Launch Archmage Trial Tutorial
     const btnStartTutorial = page.locator('#btn-hub-start-tutorial');
@@ -31,6 +32,7 @@ test.describe('Hexabellum Tutorial Level & Mode Selection FTUE', () => {
     const wizardCard = page.locator('.wizard-card');
     await expect(wizardCard).toBeVisible({ timeout: 5000 });
     await expect(page.locator('.wizard-name')).toHaveText('Archmage of Convergence');
+    await page.screenshot({ path: 'tests/screenshot_tutorial_archmage.png' });
 
     // Verify Objective checklist dock is pinned
     const dock = page.locator('#tutorial-objective-dock');
@@ -72,6 +74,7 @@ test.describe('Hexabellum Tutorial Level & Mode Selection FTUE', () => {
     // 2. Objective Step 2: Move 1 hex East to (1, 0)
     const taskText = page.locator('.task-text');
     await expect(taskText).toHaveText('Move 1 hex East to coordinate (1, 0)');
+    await page.screenshot({ path: 'tests/screenshot_tutorial_movement.png' });
 
     const canvas = page.locator('#game-canvas');
     await expect(canvas).toBeVisible();
@@ -103,6 +106,7 @@ test.describe('Hexabellum Tutorial Level & Mode Selection FTUE', () => {
     // Soft-fail explanation should appear with Archmage lore
     await expect(wizardCard).toHaveClass(/card-soft-fail/, { timeout: 5000 });
     await expect(page.locator('.wizard-text')).toContainText('stone resists');
+    await page.screenshot({ path: 'tests/screenshot_tutorial_softfail.png' });
 
     expect(errors).toEqual([]);
   });

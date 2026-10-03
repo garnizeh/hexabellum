@@ -390,9 +390,31 @@ async function main() {
 
   const startTutorialMode = (lessonId: string = 'lesson_00_intro') => {
     timer.stop();
+    modeModal.hideFtueBanner();
+
     if (endTurnBtn) endTurnBtn.style.display = 'none';
     if (restartBtn) restartBtn.style.display = 'none';
     if (gameOverModal) gameOverModal.style.display = 'none';
+
+    // Hide overlapping arena UI elements during tutorial
+    const legendEl = document.getElementById('legend');
+    if (legendEl) legendEl.style.display = 'none';
+    const connPillEl = document.getElementById('conn-pill');
+    if (connPillEl) connPillEl.style.display = 'none';
+    const matchIdEl = document.getElementById('match-id-display');
+    if (matchIdEl) matchIdEl.style.display = 'none';
+    const copyBtnEl = document.getElementById('copy-match-btn');
+    if (copyBtnEl) copyBtnEl.style.display = 'none';
+    const matchMenuBtn = document.getElementById('btn-open-matchmaking');
+    if (matchMenuBtn) matchMenuBtn.style.display = 'none';
+    const oppStatusEl = document.getElementById('opponent-status');
+    if (oppStatusEl) oppStatusEl.style.display = 'none';
+
+    if (timerEl) {
+      timerEl.textContent = '∞';
+      timerEl.title = 'Timer Paused — No time limit in Archmage Trial';
+    }
+
     if (btnToggleTutorial) {
       btnToggleTutorial.textContent = '⚔️ Exit Tutorial';
       btnToggleTutorial.style.color = '#ffea00';
@@ -409,6 +431,18 @@ async function main() {
   };
 
   const exitTutorialMode = () => {
+    // Restore standard arena UI elements
+    const legendEl = document.getElementById('legend');
+    if (legendEl) legendEl.style.display = 'block';
+    const connPillEl = document.getElementById('conn-pill');
+    if (connPillEl) connPillEl.style.display = 'inline-flex';
+    const matchMenuBtn = document.getElementById('btn-open-matchmaking');
+    if (matchMenuBtn) matchMenuBtn.style.display = 'inline-block';
+    if (isOnline) {
+      const matchIdEl = document.getElementById('match-id-display');
+      if (matchIdEl) matchIdEl.style.display = 'inline';
+    }
+
     if (btnToggleTutorial) {
       btnToggleTutorial.textContent = '🎓 Tutorial';
       btnToggleTutorial.style.color = '#00e676';
