@@ -502,6 +502,7 @@ name = "hexabellum-wasm"
 version = "0.3.0"
 dependencies = [
  "hexabellum-core",
+ "hexabellum-protocol",
  "serde_json",
  "wasm-bindgen",
 ]
