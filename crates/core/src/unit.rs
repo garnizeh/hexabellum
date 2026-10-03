@@ -86,6 +86,10 @@ pub struct Unit {
     #[serde(default)]
     pub statuses: Vec<StatusInstance>,
 
+    // Hero Archetype Identifier (e.g. "vanguard", "ranger", "warden", "sniper", "berserker")
+    #[serde(default)]
+    pub hero_id: Option<String>,
+
     // Lane Waypoint Navigation
     #[serde(default)]
     pub lane_id: Option<LaneId>,
@@ -134,6 +138,7 @@ impl Unit {
             energy_regen: 1,
             cooldowns: HashMap::new(),
             statuses: Vec::new(),
+            hero_id: None,
             lane_id: None,
             waypoint_index: None,
             aggro_range: 3,
@@ -159,7 +164,7 @@ impl Unit {
             ap: 3,
             max_ap: 3,
             initiative,
-            attack_damage: 20,
+            attack_damage: 18,
             attack_range: 1,
             vision_range: 3,
             energy: 5,
@@ -167,6 +172,7 @@ impl Unit {
             energy_regen: 1,
             cooldowns,
             statuses: Vec::new(),
+            hero_id: Some("vanguard".to_string()),
             lane_id: None,
             waypoint_index: None,
             aggro_range: 3,
@@ -200,6 +206,7 @@ impl Unit {
             energy_regen: 1,
             cooldowns,
             statuses: Vec::new(),
+            hero_id: Some("ranger".to_string()),
             lane_id: None,
             waypoint_index: None,
             aggro_range: 4,
@@ -233,6 +240,75 @@ impl Unit {
             energy_regen: 1,
             cooldowns,
             statuses: Vec::new(),
+            hero_id: Some("warden".to_string()),
+            lane_id: None,
+            waypoint_index: None,
+            aggro_range: 3,
+            last_attacker: None,
+            spawn_interval: None,
+            spawn_counter: 0,
+            lane_direction: LaneDirection::None,
+        }
+    }
+
+    /// Create Sniper (Artillery Marksman)
+    pub fn new_sniper(id: UnitId, team: TeamId, pos: HexCoord, initiative: u32) -> Self {
+        let mut cooldowns = HashMap::new();
+        cooldowns.insert("longshot".to_string(), 0);
+
+        Self {
+            id,
+            kind: UnitKind::Hero,
+            team,
+            pos,
+            hp: 80,
+            max_hp: 80,
+            ap: 3,
+            max_ap: 3,
+            initiative,
+            attack_damage: 14,
+            attack_range: 3,
+            vision_range: 5,
+            energy: 5,
+            max_energy: 5,
+            energy_regen: 1,
+            cooldowns,
+            statuses: Vec::new(),
+            hero_id: Some("sniper".to_string()),
+            lane_id: None,
+            waypoint_index: None,
+            aggro_range: 4,
+            last_attacker: None,
+            spawn_interval: None,
+            spawn_counter: 0,
+            lane_direction: LaneDirection::None,
+        }
+    }
+
+    /// Create Berserker (Bruiser Diver)
+    pub fn new_berserker(id: UnitId, team: TeamId, pos: HexCoord, initiative: u32) -> Self {
+        let mut cooldowns = HashMap::new();
+        cooldowns.insert("fury".to_string(), 0);
+
+        Self {
+            id,
+            kind: UnitKind::Hero,
+            team,
+            pos,
+            hp: 120,
+            max_hp: 120,
+            ap: 3,
+            max_ap: 3,
+            initiative,
+            attack_damage: 20,
+            attack_range: 1,
+            vision_range: 3,
+            energy: 5,
+            max_energy: 5,
+            energy_regen: 1,
+            cooldowns,
+            statuses: Vec::new(),
+            hero_id: Some("berserker".to_string()),
             lane_id: None,
             waypoint_index: None,
             aggro_range: 3,
@@ -263,6 +339,7 @@ impl Unit {
             energy_regen: 0,
             cooldowns: HashMap::new(),
             statuses: Vec::new(),
+            hero_id: None,
             lane_id: None,
             waypoint_index: None,
             aggro_range: 2,
@@ -293,6 +370,7 @@ impl Unit {
             energy_regen: 0,
             cooldowns: HashMap::new(),
             statuses: Vec::new(),
+            hero_id: None,
             lane_id: Some("mid".to_string()),
             waypoint_index: Some(if team == TEAM_0 { 0 } else { 4 }),
             aggro_range: 2,
@@ -323,6 +401,7 @@ impl Unit {
             energy_regen: 0,
             cooldowns: HashMap::new(),
             statuses: Vec::new(),
+            hero_id: None,
             lane_id: None,
             waypoint_index: None,
             aggro_range: 3,
@@ -353,6 +432,7 @@ impl Unit {
             energy_regen: 0,
             cooldowns: HashMap::new(),
             statuses: Vec::new(),
+            hero_id: None,
             lane_id: None,
             waypoint_index: None,
             aggro_range: 0,

@@ -82,6 +82,7 @@ async fn handle_socket(
     handle
         .send(MatchCommand::PlayerConnect {
             player_id: player_id.clone(),
+            display_name: None,
             reconnect_token,
             sender: tx.clone(),
         })
@@ -95,6 +96,27 @@ async fn handle_socket(
         match msg {
             Message::Text(text) => match serde_json::from_str::<ClientMessage>(&text) {
                 Ok(client_msg) => match client_msg {
+                    ClientMessage::SelectHero { hero_def_id } => {
+                        h.send(MatchCommand::SelectHero {
+                            player_id: p_id.clone(),
+                            hero_def_id,
+                        })
+                        .await;
+                    }
+                    ClientMessage::SetReady { ready } => {
+                        h.send(MatchCommand::SetReady {
+                            player_id: p_id.clone(),
+                            ready,
+                        })
+                        .await;
+                    }
+                    ClientMessage::CancelOrders { round } => {
+                        h.send(MatchCommand::CancelOrders {
+                            player_id: p_id.clone(),
+                            round,
+                        })
+                        .await;
+                    }
                     ClientMessage::SubmitOrders { round, orders } => {
                         h.send(MatchCommand::SubmitOrders {
                             player_id: p_id.clone(),
@@ -120,12 +142,22 @@ async fn handle_socket(
                     ClientMessage::Hello { player_id: hello_pid, reconnect_token: token } => {
                         h.send(MatchCommand::PlayerConnect {
                             player_id: hello_pid,
+                            display_name: None,
                             reconnect_token: token,
                             sender: tx.clone(),
                         })
                         .await;
                     }
-                    ClientMessage::JoinMatch { .. } => {}
+                    ClientMessage::JoinMatch { player_id: join_pid, display_name, reconnect_token: token, .. } => {
+                        let target_pid = join_pid.unwrap_or_else(|| p_id.clone());
+                        h.send(MatchCommand::PlayerConnect {
+                            player_id: target_pid,
+                            display_name,
+                            reconnect_token: token,
+                            sender: tx.clone(),
+                        })
+                        .await;
+                    }
                 },
                 Err(err) => {
                     debug!("Failed to parse client message: {:?}", err);

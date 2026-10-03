@@ -53,3 +53,15 @@ pub fn neutral_camp_damage_buff_def() -> StatusDef {
         }],
     }
 }
+
+pub fn fury_buff_def() -> StatusDef {
+    StatusDef {
+        id: "fury_buff".to_string(),
+        duration_rounds: 2,
+        modifiers: vec![StatModifier {
+            stat: StatKind::AttackDamage,
+            value: 8,
+        }],
+    }
+}
+

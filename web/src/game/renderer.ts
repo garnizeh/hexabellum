@@ -1,10 +1,12 @@
 import * as PIXI from 'pixi.js';
 import { HexCoord, GameState, MoveTarget, UnitData, UnitKind } from './bridge';
+import { CameraController } from './camera';
 
 export const HEX_SIZE = 30;
 
 export class HexRenderer {
   private app: PIXI.Application;
+  private worldContainer = new PIXI.Container();
   private hexLayer = new PIXI.Container();
   private obstacleLayer = new PIXI.Container();
   private overlayLayer = new PIXI.Container();
@@ -17,32 +19,107 @@ export class HexRenderer {
   private selectionRing = new PIXI.Graphics();
   private raycastLine = new PIXI.Graphics();
   private playerTeam: number = 0;
+  private camera: CameraController;
 
   constructor(app: PIXI.Application) {
     this.app = app;
-    this.app.stage.addChild(this.hexLayer);
-    this.app.stage.addChild(this.obstacleLayer);
-    this.app.stage.addChild(this.overlayLayer);
-    this.app.stage.addChild(this.pathLayer);
-    this.app.stage.addChild(this.unitLayer);
-    this.app.stage.addChild(this.fogLayer);
-    this.app.stage.addChild(this.fxLayer);
+
+    // Attach world container to stage to allow unified pan/zoom
+    this.app.stage.addChild(this.worldContainer);
+    this.worldContainer.addChild(this.hexLayer);
+    this.worldContainer.addChild(this.obstacleLayer);
+    this.worldContainer.addChild(this.overlayLayer);
+    this.worldContainer.addChild(this.pathLayer);
+    this.worldContainer.addChild(this.unitLayer);
+    this.worldContainer.addChild(this.fogLayer);
+    this.worldContainer.addChild(this.fxLayer);
 
     this.overlayLayer.addChild(this.selectionRing);
     this.overlayLayer.addChild(this.raycastLine);
+
+    // Initial position: center world at screen center
+    const sw = this.app.screen.width;
+    const sh = this.app.screen.height;
+    this.worldContainer.position.set(sw / 2, sh / 2);
+
+    this.camera = new CameraController(
+      this.worldContainer,
+      this.app.canvas as HTMLCanvasElement
+    );
+  }
+
+  getCamera(): CameraController {
+    return this.camera;
   }
 
   setPlayerTeam(team: number): void {
     this.playerTeam = team;
   }
 
+  /**
+   * Converts axial hex coordinates (q, r) to local world pixel coordinates inside worldContainer.
+   */
   hexToPixel(q: number, r: number): { x: number; y: number } {
     const x = HEX_SIZE * (Math.sqrt(3) * q + (Math.sqrt(3) / 2) * r);
     const y = HEX_SIZE * (3 / 2) * r;
+    return { x, y };
+  }
+
+  /**
+   * Converts screen (canvas client) coordinates to worldContainer coordinates considering zoom and pan.
+   */
+  screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
+    const zoom = this.worldContainer.scale.x;
     return {
-      x: x + this.app.screen.width / 2,
-      y: y + this.app.screen.height / 2,
+      x: (screenX - this.worldContainer.x) / zoom,
+      y: (screenY - this.worldContainer.y) / zoom,
     };
+  }
+
+  /**
+   * Converts world coordinates to rounded axial hex coordinate (q, r).
+   */
+  worldToHex(worldX: number, worldY: number): { q: number; r: number } {
+    const q = ((Math.sqrt(3) / 3) * worldX - (1 / 3) * worldY) / HEX_SIZE;
+    const r = ((2 / 3) * worldY) / HEX_SIZE;
+    return this.hexRound(q, r);
+  }
+
+  /**
+   * Converts screen (canvas client) coordinates to rounded axial hex coordinate (q, r).
+   */
+  screenToHex(screenX: number, screenY: number): { q: number; r: number } {
+    const w = this.screenToWorld(screenX, screenY);
+    return this.worldToHex(w.x, w.y);
+  }
+
+  private hexRound(q: number, r: number): { q: number; r: number } {
+    const s = -q - r;
+    let rq = Math.round(q);
+    let rr = Math.round(r);
+    const rs = Math.round(s);
+
+    const qDiff = Math.abs(rq - q);
+    const rDiff = Math.abs(rr - r);
+    const sDiff = Math.abs(rs - s);
+
+    if (qDiff > rDiff && qDiff > sDiff) {
+      rq = -rr - rs;
+    } else if (rDiff > sDiff) {
+      rr = -rq - rs;
+    }
+    return { q: rq, r: rr };
+  }
+
+  centerOnHex(q: number, r: number): void {
+    const pos = this.hexToPixel(q, r);
+    this.camera.centerOn(
+      pos.x,
+      pos.y,
+      this.app.screen.width,
+      this.app.screen.height,
+      true
+    );
   }
 
   drawMap(hexes: HexCoord[], obstacles: HexCoord[]): void {
@@ -50,11 +127,11 @@ export class HexRenderer {
     this.obstacleLayer.removeChildren();
     const obstacleSet = new Set(obstacles.map(h => `${h.q},${h.r}`));
 
-    // Known Phase 4 terrain positions
-    const walls = new Set(['0,2', '0,-2']);
+    // Known terrain positions (Radius 8 arena features)
+    const walls = new Set(['0,2', '0,-2', '-2,-3', '2,-3', '-3,2', '3,-2']);
     const smokePillars = new Set(['2,2', '-2,-2']);
     const boulders = new Set(['0,1', '0,-1']);
-    const shrines = new Set(['0,3', '0,-3']);
+    const shrines = new Set(['0,4', '0,-4', '0,3', '0,-3']);
 
     for (const hex of hexes) {
       const { x, y } = this.hexToPixel(hex.q, hex.r);
@@ -112,7 +189,7 @@ export class HexRenderer {
         const isLane = hex.r === 0;
         g.fill({ color: isLane ? 0x162438 : 0x101726 });
         g.stroke({ color: isLane ? 0x253b5c : 0x1a2638, width: 1 });
-        if (isLane && Math.abs(hex.q) <= 5) {
+        if (isLane && Math.abs(hex.q) <= 6) {
           // Subtle lane center path dot
           g.circle(x, y, 2.5);
           g.fill({ color: 0x38bdf8, alpha: 0.35 });
@@ -200,11 +277,25 @@ export class HexRenderer {
         g.circle(0, 0, HEX_SIZE * 0.54);
         g.fill({ color: baseColor });
         g.stroke({ color: isFriendly ? 0xffffff : 0xffb3c6, width: isFriendly ? 2.5 : 1.5 });
-        // Inner hero badge icon
+
+        // Archetype specific insignia
         if (unit.max_hp === 140 || unit.cooldowns?.cleave !== undefined) {
           // Vanguard: Frontline Shield
           g.poly([0, -8, 7, -3, 5, 6, 0, 9, -5, 6, -7, -3]);
           g.fill({ color: 0xffffff });
+        } else if (unit.cooldowns?.longshot !== undefined || unit.attack_range >= 3 || unit.max_hp === 80) {
+          // Sniper: Precision Crosshair Reticle with Laser Dot
+          g.circle(0, 0, 7.5);
+          g.stroke({ color: 0xffffff, width: 1.5 });
+          g.moveTo(-10, 0); g.lineTo(10, 0); g.stroke({ color: 0xffffff, width: 1.5 });
+          g.moveTo(0, -10); g.lineTo(0, 10); g.stroke({ color: 0xffffff, width: 1.5 });
+          g.circle(0, 0, 1.8);
+          g.fill({ color: 0xff1744 });
+        } else if (unit.cooldowns?.fury !== undefined || (unit.max_hp === 120 && unit.attack_range === 1)) {
+          // Berserker: Crossed Rage Blades
+          g.poly([-6, -7, -4, -8, 6, 7, 4, 8]); g.fill({ color: 0xffffff });
+          g.poly([6, -7, 4, -8, -6, 7, -4, 8]); g.fill({ color: 0xffffff });
+          g.circle(0, 0, 2.5); g.fill({ color: 0xff3366 });
         } else if (unit.attack_range >= 2 || unit.cooldowns?.bolt !== undefined) {
           // Ranger: Crosshair
           g.circle(0, 0, 7);
@@ -490,6 +581,10 @@ export class HexRenderer {
 
   getStage(): PIXI.Container {
     return this.app.stage;
+  }
+
+  getWorldContainer(): PIXI.Container {
+    return this.worldContainer;
   }
 
   getFxLayer(): PIXI.Container {

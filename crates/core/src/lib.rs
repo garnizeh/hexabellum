@@ -1,7 +1,9 @@
 pub mod ability;
 pub mod ai;
+pub mod controller;
 pub mod event;
 pub mod fog;
+pub mod hero_defs;
 pub mod hex;
 pub mod lane;
 pub mod minion_ai;
@@ -19,7 +21,9 @@ pub mod tutorial;
 pub mod unit;
 pub mod vision;
 
-pub use session::{BattleConfig, BattleSession, Controller};
+pub use controller::{Controller, ControllerMap, PlayerId};
+pub use hero_defs::{HeroDef, HeroDefId};
+pub use session::{build_sanitized_snapshot, BattleConfig, BattleSession};
 pub use tutorial::*;
 
 use crate::hex::{HexCoord, HexMap};

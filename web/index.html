@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./src/ui/tutorial.css">
+  <link rel="stylesheet" href="./src/ui/phase5.css">
   <style>
     :root {
       --bg: #090b14;
@@ -611,6 +612,20 @@
         <span class="btn-name">ATTACK</span>
         <span class="btn-cost">1 AP</span>
       </button>
+
+      <!-- Space: Wait / Hold Position -->
+      <button id="btn-wait-space" class="dock-btn wait-btn" disabled title="[Space] Wait / Hold Position (Queue Pass)">
+        <span class="btn-hotkey">Space</span>
+        <span class="btn-name">WAIT</span>
+        <span class="btn-cost">Pass</span>
+      </button>
+
+      <!-- Center My Hero -->
+      <button id="btn-center-hero" class="dock-btn center-btn" title="[Space] Snap Camera to My Hero">
+        <span class="btn-hotkey">CAM</span>
+        <span class="btn-name">CENTER</span>
+        <span class="btn-cost">Hero</span>
+      </button>
     </div>
   </div>
 
@@ -630,6 +645,9 @@
       <h2>HEXABELLUM ARENA</h2>
       <p>Select match mode to deploy into tactical combat.</p>
       <div class="modal-btn-group">
+        <button id="btn-start-5v5" class="modal-btn" style="background: linear-gradient(135deg, #7c3aed, #6366f1); color: #fff;">
+          ⚔️ 5v5 Multiplayer Match (10 Players · Draft)
+        </button>
         <button id="btn-start-pvai" class="modal-btn btn-pvai">🤖 Play vs Server AI (PvAI)</button>
         <button id="btn-start-pvp" class="modal-btn btn-pvp">⚔️ Host 1v1 PvP Match</button>
         <div class="join-row">

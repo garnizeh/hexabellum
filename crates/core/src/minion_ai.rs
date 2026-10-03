@@ -100,7 +100,7 @@ impl MinionAI {
         unit: &Unit,
         occupied: &HashSet<HexCoord>,
     ) -> UnitOrder {
-        let lane = crate::lane::LaneDef::central_lane();
+        let lane = crate::lane::LaneDef::for_radius(state.map.radius);
         let goal_pos = if let Some(idx) = unit.waypoint_index {
             lane.waypoints.get(idx).copied().unwrap_or_else(|| {
                 let goal_q = if unit.team == 0 {

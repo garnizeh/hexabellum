@@ -21,6 +21,27 @@ impl LaneDef {
         }
     }
 
+    pub fn central_lane_r8() -> Self {
+        Self {
+            id: "mid".to_string(),
+            waypoints: vec![
+                HexCoord::new(-7, 0), // Node 0: Base 0
+                HexCoord::new(-4, 0), // Node 1: Lane Entry
+                HexCoord::new(0, 0),  // Node 2: Mid Choke
+                HexCoord::new(4, 0),  // Node 3: Lane Exit
+                HexCoord::new(7, 0),  // Node 4: Base 1
+            ],
+        }
+    }
+
+    pub fn for_radius(radius: u32) -> Self {
+        if radius >= 8 {
+            Self::central_lane_r8()
+        } else {
+            Self::central_lane()
+        }
+    }
+
     pub fn start_waypoint_index_for_team(&self, team: TeamId) -> usize {
         if team == TEAM_0 {
             0

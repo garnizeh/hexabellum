@@ -43,7 +43,7 @@ impl TurnProcessor {
         events.extend(spawn_events);
 
         // Update lane waypoints for all living minions
-        let lane = LaneDef::central_lane();
+        let lane = LaneDef::for_radius(state.map.radius);
         for unit in state.units.values_mut() {
             if unit.is_alive() && unit.kind == UnitKind::Minion {
                 lane.update_minion_waypoint(unit);
@@ -94,7 +94,7 @@ impl TurnProcessor {
         events.extend(spawn_events);
 
         // Update lane waypoints for all living minions
-        let lane = LaneDef::central_lane();
+        let lane = LaneDef::for_radius(state.map.radius);
         for unit in state.units.values_mut() {
             if unit.is_alive() && unit.kind == UnitKind::Minion {
                 lane.update_minion_waypoint(unit);
@@ -542,6 +542,21 @@ impl TurnProcessor {
                                     }
                                 }
                             }
+                        }
+                    } else if effect.kind == EffectKind::ApplyStatus {
+                        if let Some(ref status_def) = effect.status {
+                            units[caster_idx]
+                                .statuses
+                                .retain(|s| s.def_id != status_def.id);
+                            units[caster_idx]
+                                .statuses
+                                .push(crate::status::StatusInstance::from_def(status_def));
+
+                            events.push(GameEvent::StatusApplied {
+                                unit_id: caster_id,
+                                status_id: status_def.id.clone(),
+                                duration_rounds: status_def.duration_rounds,
+                            });
                         }
                     }
                 }
@@ -1243,6 +1258,18 @@ impl TurnProcessor {
                                     }
                                 }
                             }
+                        }
+                    } else if effect.kind == EffectKind::ApplyStatus {
+                        if let Some(ref status_def) = effect.status {
+                            let caster = state.get_unit_mut(caster_id).unwrap();
+                            caster.statuses.retain(|s| s.def_id != status_def.id);
+                            caster.statuses.push(crate::status::StatusInstance::from_def(status_def));
+
+                            events.push(GameEvent::StatusApplied {
+                                unit_id: caster_id,
+                                status_id: status_def.id.clone(),
+                                duration_rounds: status_def.duration_rounds,
+                            });
                         }
                     }
                 }

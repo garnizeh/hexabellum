@@ -79,6 +79,7 @@ fn test_repair_mechanics_and_ap_consumption() {
         id: 10,
         kind: UnitKind::Tower,
         team: 0,
+        hero_id: None,
         pos: HexCoord::new(-3, 0),
         hp: 100,
         max_hp: 150,
@@ -155,7 +156,7 @@ fn test_neutral_camp_aggro_leash_and_team_buff() {
     camp.handle_guardian_death(0, &mut units, &mut events);
 
     let hero_buffed = units.iter().find(|u| u.id == 1).unwrap();
-    assert_eq!(hero_buffed.effective_attack_damage(), 25); // 20 + 5 buff
+    assert_eq!(hero_buffed.effective_attack_damage(), 23); // 18 + 5 buff
 }
 
 /// 5.5 Test: Lane Waypoint Minion Progression
@@ -166,6 +167,7 @@ fn test_lane_waypoint_minion_navigation() {
         id: 100,
         kind: UnitKind::Minion,
         team: 0,
+        hero_id: None,
         pos: HexCoord::new(-5, 0),
         hp: 40,
         max_hp: 40,

@@ -14,9 +14,12 @@ export class AbilityDock {
   private abilityCdText: HTMLElement | null;
   private repairBtn: HTMLButtonElement | null;
   private attackBtn: HTMLButtonElement | null;
+  private waitBtn: HTMLButtonElement | null;
+  private centerBtn: HTMLButtonElement | null;
 
   private input: InputHandler | null = null;
   private session: ClientSession | null = null;
+  private onCenterHeroRequest: (() => void) | null = null;
 
   constructor() {
     this.dockEl = document.getElementById('ability-dock');
@@ -30,6 +33,8 @@ export class AbilityDock {
     this.abilityCdText = document.getElementById('btn-ability-cd-text');
     this.repairBtn = document.getElementById('btn-repair-f') as HTMLButtonElement;
     this.attackBtn = document.getElementById('btn-attack-a') as HTMLButtonElement;
+    this.waitBtn = document.getElementById('btn-wait-space') as HTMLButtonElement;
+    this.centerBtn = document.getElementById('btn-center-hero') as HTMLButtonElement;
 
     this.setupListeners();
   }
@@ -40,6 +45,10 @@ export class AbilityDock {
 
   setSession(session: ClientSession | null): void {
     this.session = session;
+  }
+
+  setOnCenterHero(cb: () => void): void {
+    this.onCenterHeroRequest = cb;
   }
 
   private setupListeners(): void {
@@ -54,6 +63,14 @@ export class AbilityDock {
     this.attackBtn?.addEventListener('click', () => {
       this.input?.triggerAttackMode();
     });
+
+    this.waitBtn?.addEventListener('click', () => {
+      this.input?.triggerWaitOrder();
+    });
+
+    this.centerBtn?.addEventListener('click', () => {
+      this.onCenterHeroRequest?.();
+    });
   }
 
   update(unit: UnitData | null): void {
@@ -66,6 +83,7 @@ export class AbilityDock {
       if (this.abilityBtn) this.abilityBtn.disabled = true;
       if (this.repairBtn) this.repairBtn.disabled = true;
       if (this.attackBtn) this.attackBtn.disabled = true;
+      if (this.waitBtn) this.waitBtn.disabled = true;
       if (this.abilityCdOverlay) this.abilityCdOverlay.style.display = 'none';
       return;
     }
@@ -118,6 +136,11 @@ export class AbilityDock {
     if (this.attackBtn) {
       this.attackBtn.disabled = unit.ap < 1;
     }
+
+    // Wait (Space)
+    if (this.waitBtn) {
+      this.waitBtn.disabled = false;
+    }
   }
 
   private getHeroSpell(unit: UnitData): {
@@ -134,6 +157,24 @@ export class AbilityDock {
         spellId: 'cleave',
         spellName: 'CLEAVE',
         energyCost: 3,
+      };
+    }
+    if (unit.cooldowns?.longshot !== undefined || unit.attack_range >= 3 || unit.max_hp === 80) {
+      return {
+        heroClass: 'SNIPER',
+        role: 'Artillery Marksman',
+        spellId: 'longshot',
+        spellName: 'LONGSHOT',
+        energyCost: 3,
+      };
+    }
+    if (unit.cooldowns?.fury !== undefined || (unit.max_hp === 120 && unit.attack_range === 1)) {
+      return {
+        heroClass: 'BERSERKER',
+        role: 'Melee Rage Bruiser',
+        spellId: 'fury',
+        spellName: 'FURY',
+        energyCost: 2,
       };
     }
     if (unit.attack_range >= 2 || unit.cooldowns?.bolt !== undefined) {
