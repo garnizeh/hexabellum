@@ -114,7 +114,7 @@ impl TurnProcessor {
             // no longer "on loan" to anyone: any later mover that was told it
             // could land there once this unit stepped aside must now treat it
             // as a normal occupied (and blocking) hex.
-            pending.remove(&unit_id);
+            pending_movers.remove(&unit_id);
             let unit_events = Self::process_unit(
                 state,
                 &snapshot,
