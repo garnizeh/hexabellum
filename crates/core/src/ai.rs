@@ -23,7 +23,7 @@ impl GameAI {
                 UnitKind::Hero => Self::generate_hero_order(state, unit.id, &occupied),
                 UnitKind::Minion => MinionAI::generate_order(state, unit.id, &occupied),
                 UnitKind::Tower => TowerAI::generate_order(state, unit.id),
-                UnitKind::SpawnerTower | UnitKind::Neutral => UnitOrder {
+                UnitKind::Spawner | UnitKind::NeutralGuardian => UnitOrder {
                     unit_id: unit.id,
                     move_target: None,
                     action: Action::Wait,

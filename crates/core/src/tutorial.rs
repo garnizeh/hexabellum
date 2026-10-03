@@ -76,10 +76,10 @@ impl TutorialScenarioRunner {
             let kind = match preset.kind.as_str() {
                 "Minion" => UnitKind::Minion,
                 "Tower" => UnitKind::Tower,
-                "Spawner" => UnitKind::SpawnerTower,
+                "Spawner" => UnitKind::Spawner,
                 "Hero" => UnitKind::Hero,
                 "Dummy" if preset.team == 1 => UnitKind::Hero,
-                _ => UnitKind::Neutral,
+                _ => UnitKind::NeutralGuardian,
             };
             let mut unit = Unit {
                 id: preset.id,
@@ -94,6 +94,15 @@ impl TutorialScenarioRunner {
                 attack_damage: preset.attack_damage,
                 attack_range: 1,
                 vision_range: 3,
+                energy: 0,
+                max_energy: 0,
+                energy_regen: 0,
+                cooldowns: std::collections::HashMap::new(),
+                statuses: Vec::new(),
+                lane_id: None,
+                waypoint_index: None,
+                aggro_range: 2,
+                last_attacker: None,
                 spawn_interval: None,
                 spawn_counter: 0,
                 lane_direction: LaneDirection::None,
@@ -231,6 +240,24 @@ impl TutorialScenarioRunner {
                         return Err(self.make_error(
                             "ERR_ACTION_NOT_ALLOWED",
                             "Waiting is not permitted in this step",
+                            step,
+                        ));
+                    }
+                }
+                Action::Cast { .. } => {
+                    if !gate.allowed_actions.iter().any(|a| a.eq_ignore_ascii_case("cast")) {
+                        return Err(self.make_error(
+                            "ERR_ACTION_NOT_ALLOWED",
+                            "Casting is not permitted in this step",
+                            step,
+                        ));
+                    }
+                }
+                Action::Repair { .. } => {
+                    if !gate.allowed_actions.iter().any(|a| a.eq_ignore_ascii_case("repair")) {
+                        return Err(self.make_error(
+                            "ERR_ACTION_NOT_ALLOWED",
+                            "Repairing is not permitted in this step",
                             step,
                         ));
                     }

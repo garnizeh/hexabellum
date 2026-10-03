@@ -84,6 +84,8 @@ pub struct HexMap {
     pub radius: u32,
     #[serde(default)]
     pub obstacles: HashSet<HexCoord>,
+    #[serde(default)]
+    pub obstacle_defs: Vec<crate::vision::Obstacle>,
 }
 
 impl HexMap {
@@ -91,7 +93,42 @@ impl HexMap {
         Self {
             radius,
             obstacles: HashSet::new(),
+            obstacle_defs: Vec::new(),
         }
+    }
+
+    /// Add an obstacle definition to the map.
+    pub fn add_obstacle(&mut self, obs: crate::vision::Obstacle) {
+        if obs.blocks_movement {
+            self.obstacles.insert(obs.coords);
+        }
+        self.obstacle_defs.push(obs);
+    }
+
+    /// Set of coordinates that block vision.
+    pub fn vision_blockers(&self) -> HashSet<HexCoord> {
+        let mut set = HashSet::new();
+        if self.obstacle_defs.is_empty() {
+            set.extend(&self.obstacles);
+        } else {
+            for obs in &self.obstacle_defs {
+                if obs.blocks_vision {
+                    set.insert(obs.coords);
+                }
+            }
+        }
+        set
+    }
+
+    /// Set of coordinates that block movement.
+    pub fn movement_blockers(&self) -> HashSet<HexCoord> {
+        let mut set = self.obstacles.clone();
+        for obs in &self.obstacle_defs {
+            if obs.blocks_movement {
+                set.insert(obs.coords);
+            }
+        }
+        set
     }
 
     /// Get all walkable hexes.
@@ -103,7 +140,7 @@ impl HexMap {
     /// Check if a hex is walkable.
     pub fn is_walkable(&self, coord: &HexCoord) -> bool {
         let center = HexCoord::new(0, 0);
-        center.distance(coord) <= self.radius && !self.obstacles.contains(coord)
+        coord.distance(&center) <= self.radius && !self.movement_blockers().contains(coord)
     }
 
     /// Find the shortest walkable path from start to goal (BFS over the

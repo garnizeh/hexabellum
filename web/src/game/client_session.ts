@@ -4,9 +4,17 @@ import {
   OrderDto,
   SanitizedGameEvent,
   ProtocolErrorCode,
+  SpellTargetDto,
 } from './types';
 import { GameState, UnitData, HexCoord, UnitKind } from './bridge';
-import { findPath as hexFindPath, getMoveTargets as hexGetMoveTargets, getAttackTargets as hexGetAttackTargets } from './hex_math';
+import {
+  findPath as hexFindPath,
+  getMoveTargets as hexGetMoveTargets,
+  getAttackTargets as hexGetAttackTargets,
+  getRepairTargets as hexGetRepairTargets,
+  getSpellTargets as hexGetSpellTargets,
+  SpellTargetingResult,
+} from './hex_math';
 
 export function snapshotToGameState(snapshot: SnapshotDto): GameState {
   const units: Record<number, UnitData> = {};
@@ -25,6 +33,11 @@ export function snapshotToGameState(snapshot: SnapshotDto): GameState {
       attack_range: u.attack_range,
       vision_range: u.vision_range,
       spawn_counter: 0,
+      energy: u.energy ?? 0,
+      max_energy: u.max_energy ?? 0,
+      cooldowns: u.cooldowns ?? {},
+      statuses: u.statuses ?? [],
+      lane_id: u.lane_id,
     };
   }
 
@@ -187,6 +200,52 @@ export class ClientSession {
     return true;
   }
 
+  stageCastOrder(unitId: number, spellId: string, target: SpellTargetDto): boolean {
+    if (!this.currentSnapshot) return false;
+    const unit = this.currentSnapshot.units.find(u => u.id === unitId);
+    if (!unit || unit.hp === 0) return false;
+
+    const existing = this.stagedOrders.get(unitId);
+    let moveCost = 0;
+    if (existing?.move_target) {
+      const path = this.findPath(unit.pos.q, unit.pos.r, existing.move_target.q, existing.move_target.r);
+      moveCost = path.length > 1 ? path.length - 1 : 0;
+    }
+    if (moveCost + 1 > unit.ap) {
+      return false;
+    }
+
+    this.stagedOrders.set(unitId, {
+      unit_id: unitId,
+      move_target: existing?.move_target ?? null,
+      action: { type: 'Cast', spell_id: spellId, target },
+    });
+    return true;
+  }
+
+  stageRepairOrder(unitId: number, targetId: number): boolean {
+    if (!this.currentSnapshot) return false;
+    const unit = this.currentSnapshot.units.find(u => u.id === unitId);
+    if (!unit || unit.hp === 0) return false;
+
+    const existing = this.stagedOrders.get(unitId);
+    let moveCost = 0;
+    if (existing?.move_target) {
+      const path = this.findPath(unit.pos.q, unit.pos.r, existing.move_target.q, existing.move_target.r);
+      moveCost = path.length > 1 ? path.length - 1 : 0;
+    }
+    if (moveCost + 1 > unit.ap) {
+      return false;
+    }
+
+    this.stagedOrders.set(unitId, {
+      unit_id: unitId,
+      move_target: existing?.move_target ?? null,
+      action: { type: 'Repair', target_id: targetId },
+    });
+    return true;
+  }
+
   stageWaitOrder(unitId: number): boolean {
     const existing = this.stagedOrders.get(unitId);
     this.stagedOrders.set(unitId, {
@@ -205,6 +264,11 @@ export class ClientSession {
     if (!this.currentSnapshot) return;
     const orders: OrderDto[] = Array.from(this.stagedOrders.values());
     this.net.submitOrders(this.currentSnapshot.round, orders);
+  }
+
+  getVisionBlockers(): Set<string> {
+    // Walls at (0, 2) & (0, -2); Smoke pillars at (2, 2) & (-2, -2)
+    return new Set(['0,2', '0,-2', '2,2', '-2,-2']);
   }
 
   getMoveTargets(unitId: number): { q: number; r: number; cost: number }[] {
@@ -243,7 +307,68 @@ export class ClientSession {
 
     const state = snapshotToGameState(this.currentSnapshot);
     const visibleHexes = new Set(this.currentSnapshot.visible_hexes.map(h => `${h.q},${h.r}`));
-    return hexGetAttackTargets({ q: fromQ, r: fromR }, unit.attack_range, state.units, this.currentTeam, visibleHexes);
+    return hexGetAttackTargets(
+      { q: fromQ, r: fromR },
+      unit.attack_range,
+      state.units,
+      this.currentTeam,
+      visibleHexes,
+      this.getVisionBlockers()
+    );
+  }
+
+  getRepairTargets(unitId: number, fromQ: number, fromR: number): number[] {
+    if (!this.currentSnapshot) return [];
+    const unit = this.currentSnapshot.units.find(u => u.id === unitId);
+    if (!unit || unit.hp === 0) return [];
+
+    let moveCost = 0;
+    if (unit.pos.q !== fromQ || unit.pos.r !== fromR) {
+      const path = this.findPath(unit.pos.q, unit.pos.r, fromQ, fromR);
+      moveCost = path.length > 1 ? path.length - 1 : 0;
+    }
+    if (moveCost + 1 > unit.ap) return [];
+
+    const state = snapshotToGameState(this.currentSnapshot);
+    return hexGetRepairTargets({ q: fromQ, r: fromR }, state.units, this.currentTeam);
+  }
+
+  getSpellTargets(
+    unitId: number,
+    spellId: string,
+    fromQ: number,
+    fromR: number
+  ): SpellTargetingResult {
+    if (!this.currentSnapshot) {
+      return { validUnitIds: [], obstructedUnitIds: [], isSelfOnly: false };
+    }
+    const unit = this.currentSnapshot.units.find(u => u.id === unitId);
+    if (!unit || unit.hp === 0) {
+      return { validUnitIds: [], obstructedUnitIds: [], isSelfOnly: false };
+    }
+
+    let moveCost = 0;
+    if (unit.pos.q !== fromQ || unit.pos.r !== fromR) {
+      const path = this.findPath(unit.pos.q, unit.pos.r, fromQ, fromR);
+      moveCost = path.length > 1 ? path.length - 1 : 0;
+    }
+    if (moveCost + 1 > unit.ap) {
+      return { validUnitIds: [], obstructedUnitIds: [], isSelfOnly: false };
+    }
+
+    const state = snapshotToGameState(this.currentSnapshot);
+    const casterData: UnitData = {
+      ...state.units[unitId],
+      pos: { q: fromQ, r: fromR },
+    };
+    const visibleHexes = new Set(this.currentSnapshot.visible_hexes.map(h => `${h.q},${h.r}`));
+    return hexGetSpellTargets(
+      casterData,
+      spellId,
+      state.units,
+      this.getVisionBlockers(),
+      visibleHexes
+    );
   }
 
   private setupNetworkCallbacks(): void {

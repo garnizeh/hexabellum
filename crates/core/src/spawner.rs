@@ -15,7 +15,7 @@ impl SpawnerSystem {
         let mut spawner_ids: Vec<UnitId> = state
             .units
             .values()
-            .filter(|u| u.kind == UnitKind::SpawnerTower && u.is_alive())
+            .filter(|u| u.kind == UnitKind::Spawner && u.is_alive())
             .map(|u| u.id)
             .collect();
         spawner_ids.sort_unstable();

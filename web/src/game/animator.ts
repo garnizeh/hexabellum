@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { HexRenderer } from './renderer';
+import { HexRenderer, HEX_SIZE } from './renderer';
 import { GameEvent, HexCoord } from './bridge';
 
 export class Animator {
@@ -34,6 +34,21 @@ export class Animator {
       case 'UnitAttacked':
       case 'TowerAttacked':
         this.animateAttack(event, () => this.playNext());
+        break;
+      case 'SpellCast':
+        this.animateSpellCast(event, () => this.playNext());
+        break;
+      case 'HealApplied':
+        this.animateHeal(event, () => this.playNext());
+        break;
+      case 'StructureRepaired':
+        this.animateRepair(event, () => this.playNext());
+        break;
+      case 'TeamBuffApplied':
+        this.animateTeamBuff(event, () => this.playNext());
+        break;
+      case 'NeutralCampCleared':
+        this.animateCampCleared(event, () => this.playNext());
         break;
       case 'UnitDied':
         this.animateDeath(event, () => this.playNext());
@@ -96,7 +111,6 @@ export class Animator {
     const attackerSprite = attackerId ? this.renderer.getUnitSprite(attackerId) : null;
 
     if (targetSprite) {
-      // 1. Tower Laser Beam FX
       if (data.tower_id && attackerSprite) {
         const beam = new PIXI.Graphics();
         beam.moveTo(attackerSprite.x, attackerSprite.y);
@@ -108,7 +122,6 @@ export class Animator {
           this.renderer.getFxLayer().removeChild(beam);
         }, 180);
       } else if (attackerSprite && !data.tower_id) {
-        // Melee Lunge Attack FX
         const origX = attackerSprite.x;
         const origY = attackerSprite.y;
         const dx = targetSprite.x - origX;
@@ -126,12 +139,10 @@ export class Animator {
         }, 120);
       }
 
-      // 2. Update target HP bar dynamically
       if (data.target_hp_remaining !== undefined) {
         this.renderer.updateUnitHp(data.target_id, data.target_hp_remaining);
       }
 
-      // 3. Target Red Impact Flash & Floating Damage Text
       const origAlpha = targetSprite.alpha;
       targetSprite.alpha = 0.4;
       this.showDamageText(targetSprite.x, targetSprite.y, data.damage);
@@ -143,6 +154,151 @@ export class Animator {
     } else {
       onDone();
     }
+  }
+
+  private animateSpellCast(
+    data: { caster_id: number; spell_id: string; target: any },
+    onDone: () => void
+  ): void {
+    const casterSprite = this.renderer.getUnitSprite(data.caster_id);
+    if (!casterSprite) {
+      onDone();
+      return;
+    }
+
+    if (data.spell_id === 'cleave') {
+      // Vanguard Cleave: Golden whirlwind shockwave ring (radius 1)
+      const ring = new PIXI.Graphics();
+      this.renderer.getFxLayer().addChild(ring);
+
+      const startTime = performance.now();
+      const duration = 280;
+
+      const animate = () => {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const radius = HEX_SIZE * (0.5 + progress * 1.2);
+
+        ring.clear();
+        ring.circle(casterSprite.x, casterSprite.y, radius);
+        ring.stroke({ color: 0xffd600, width: 4 * (1 - progress), alpha: 0.9 * (1 - progress) });
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          this.renderer.getFxLayer().removeChild(ring);
+          onDone();
+        }
+      };
+      requestAnimationFrame(animate);
+    } else if (data.spell_id === 'bolt') {
+      // Ranger Bolt: Piercing high-voltage cyan laser railgun beam
+      let targetPos: { x: number; y: number } | null = null;
+      if (data.target?.payload?.unit_id) {
+        const targetSprite = this.renderer.getUnitSprite(data.target.payload.unit_id);
+        if (targetSprite) targetPos = { x: targetSprite.x, y: targetSprite.y };
+      }
+
+      if (targetPos) {
+        const beam = new PIXI.Graphics();
+        beam.moveTo(casterSprite.x, casterSprite.y);
+        beam.lineTo(targetPos.x, targetPos.y);
+        beam.stroke({ color: 0x00f5ff, width: 5, alpha: 0.95 });
+        this.renderer.getFxLayer().addChild(beam);
+
+        // Flash target
+        const impact = new PIXI.Graphics();
+        impact.circle(targetPos.x, targetPos.y, HEX_SIZE * 0.7);
+        impact.fill({ color: 0x00f5ff, alpha: 0.6 });
+        this.renderer.getFxLayer().addChild(impact);
+
+        setTimeout(() => {
+          this.renderer.getFxLayer().removeChild(beam);
+          this.renderer.getFxLayer().removeChild(impact);
+          onDone();
+        }, 220);
+      } else {
+        onDone();
+      }
+    } else if (data.spell_id === 'mend') {
+      // Warden Mend: Holy emerald healing sparkle pulse
+      let targetSprite = casterSprite;
+      if (data.target?.payload?.unit_id) {
+        targetSprite = this.renderer.getUnitSprite(data.target.payload.unit_id) ?? casterSprite;
+      }
+
+      const healCircle = new PIXI.Graphics();
+      this.renderer.getFxLayer().addChild(healCircle);
+
+      const startTime = performance.now();
+      const duration = 300;
+
+      const animate = () => {
+        const elapsed = performance.now() - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        healCircle.clear();
+        healCircle.circle(targetSprite.x, targetSprite.y, HEX_SIZE * (0.3 + progress * 0.6));
+        healCircle.stroke({ color: 0x10b981, width: 3, alpha: 1 - progress });
+        healCircle.circle(targetSprite.x, targetSprite.y, HEX_SIZE * 0.2);
+        healCircle.fill({ color: 0x34d399, alpha: 0.5 * (1 - progress) });
+
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          this.renderer.getFxLayer().removeChild(healCircle);
+          onDone();
+        }
+      };
+      requestAnimationFrame(animate);
+    } else {
+      onDone();
+    }
+  }
+
+  private animateHeal(
+    data: { caster_id: number; target_id: number; amount: number; target_hp_remaining?: number },
+    onDone: () => void
+  ): void {
+    const targetSprite = this.renderer.getUnitSprite(data.target_id);
+    if (targetSprite) {
+      if (data.target_hp_remaining !== undefined) {
+        this.renderer.updateUnitHp(data.target_id, data.target_hp_remaining);
+      }
+      this.showFloatingText(targetSprite.x, targetSprite.y, `+${data.amount} HP`, 0x10b981);
+    }
+    setTimeout(onDone, 160);
+  }
+
+  private animateRepair(
+    data: { repairer_id: number; target_id: number; amount: number; target_hp_remaining?: number },
+    onDone: () => void
+  ): void {
+    const targetSprite = this.renderer.getUnitSprite(data.target_id);
+    if (targetSprite) {
+      if (data.target_hp_remaining !== undefined) {
+        this.renderer.updateUnitHp(data.target_id, data.target_hp_remaining);
+      }
+      this.showFloatingText(targetSprite.x, targetSprite.y, `+${data.amount} Repaired`, 0x38bdf8);
+    }
+    setTimeout(onDone, 180);
+  }
+
+  private animateTeamBuff(
+    data: { team: number; buff_id: string; duration_rounds: number },
+    onDone: () => void
+  ): void {
+    // Show objective buff notification banner
+    this.showFloatingBanner(`🌟 CAMP BUFF: +5 ATK (${data.duration_rounds} RNDS)`, 0xf59e0b);
+    setTimeout(onDone, 300);
+  }
+
+  private animateCampCleared(
+    data: { camp_id: string; killer_team: number },
+    onDone: () => void
+  ): void {
+    this.showFloatingBanner(`⚔️ ${data.camp_id.toUpperCase()} SECURED!`, 0x10b981);
+    setTimeout(onDone, 250);
   }
 
   private animateDeath(data: { unit_id: number }, onDone: () => void): void {
@@ -160,13 +316,13 @@ export class Animator {
       const progress = Math.min(elapsed / duration, 1);
 
       sprite.alpha = 1 - progress;
-      sprite.scale.set(1 - progress * 0.4);
+      sprite.scale.set(1 + progress * 0.3);
 
       if (progress < 1) {
         requestAnimationFrame(animate);
       } else {
         this.renderer.removeUnitSprite(data.unit_id);
-        setTimeout(onDone, 40);
+        onDone();
       }
     };
 
@@ -179,7 +335,22 @@ export class Animator {
   ): void {
     let sprite = this.renderer.getUnitSprite(data.unit_id);
     if (!sprite) {
-      sprite = this.renderer.spawnUnit(data);
+      sprite = (this.renderer as any).createUnitSprite({
+        id: data.unit_id,
+        kind: data.unit_kind,
+        team: data.team,
+        pos: data.pos,
+        hp: 40,
+        max_hp: 40,
+        ap: 1,
+        max_ap: 1,
+        initiative: 5,
+        attack_damage: 8,
+        attack_range: 1,
+        vision_range: 2,
+        spawn_counter: 0,
+      });
+      this.renderer.getStage().addChild(sprite);
     }
 
     sprite.scale.set(0.1);
@@ -202,11 +373,15 @@ export class Animator {
   }
 
   private showDamageText(x: number, y: number, damage: number): void {
+    this.showFloatingText(x, y, `-${damage}`, 0xff1744);
+  }
+
+  private showFloatingText(x: number, y: number, msg: string, color: number): void {
     const text = new PIXI.Text({
-      text: `-${damage}`,
+      text: msg,
       style: {
-        fontSize: 18,
-        fill: 0xff1744,
+        fontSize: 16,
+        fill: color,
         fontWeight: 'bold',
         stroke: { color: 0x000000, width: 3 },
       },
@@ -217,14 +392,51 @@ export class Animator {
     this.renderer.getFxLayer().addChild(text);
 
     const startTime = performance.now();
-    const duration = 600;
+    const duration = 650;
 
     const animate = () => {
       const elapsed = performance.now() - startTime;
       const progress = Math.min(elapsed / duration, 1);
 
-      text.y = y - 25 - progress * 30;
+      text.y = y - 25 - progress * 32;
       text.alpha = 1 - progress;
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        this.renderer.getFxLayer().removeChild(text);
+      }
+    };
+
+    requestAnimationFrame(animate);
+  }
+
+  private showFloatingBanner(msg: string, color: number): void {
+    const app = this.renderer.getApp();
+    const text = new PIXI.Text({
+      text: msg,
+      style: {
+        fontSize: 20,
+        fill: color,
+        fontWeight: '900',
+        stroke: { color: 0x000000, width: 4 },
+        fontFamily: 'Outfit, sans-serif',
+      },
+    });
+    text.anchor.set(0.5);
+    text.x = app.screen.width / 2;
+    text.y = app.screen.height / 2 - 80;
+    this.renderer.getFxLayer().addChild(text);
+
+    const startTime = performance.now();
+    const duration = 1200;
+
+    const animate = () => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      text.y = app.screen.height / 2 - 80 - progress * 40;
+      text.alpha = 1 - progress * 0.8;
 
       if (progress < 1) {
         requestAnimationFrame(animate);

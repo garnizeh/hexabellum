@@ -6,6 +6,7 @@ export const HEX_SIZE = 30;
 export class HexRenderer {
   private app: PIXI.Application;
   private hexLayer = new PIXI.Container();
+  private obstacleLayer = new PIXI.Container();
   private overlayLayer = new PIXI.Container();
   private pathLayer = new PIXI.Container();
   private unitLayer = new PIXI.Container();
@@ -14,11 +15,13 @@ export class HexRenderer {
 
   private unitSprites = new Map<number, PIXI.Container>();
   private selectionRing = new PIXI.Graphics();
+  private raycastLine = new PIXI.Graphics();
   private playerTeam: number = 0;
 
   constructor(app: PIXI.Application) {
     this.app = app;
     this.app.stage.addChild(this.hexLayer);
+    this.app.stage.addChild(this.obstacleLayer);
     this.app.stage.addChild(this.overlayLayer);
     this.app.stage.addChild(this.pathLayer);
     this.app.stage.addChild(this.unitLayer);
@@ -26,6 +29,7 @@ export class HexRenderer {
     this.app.stage.addChild(this.fxLayer);
 
     this.overlayLayer.addChild(this.selectionRing);
+    this.overlayLayer.addChild(this.raycastLine);
   }
 
   setPlayerTeam(team: number): void {
@@ -43,11 +47,19 @@ export class HexRenderer {
 
   drawMap(hexes: HexCoord[], obstacles: HexCoord[]): void {
     this.hexLayer.removeChildren();
+    this.obstacleLayer.removeChildren();
     const obstacleSet = new Set(obstacles.map(h => `${h.q},${h.r}`));
+
+    // Known Phase 4 terrain positions
+    const walls = new Set(['0,2', '0,-2']);
+    const smokePillars = new Set(['2,2', '-2,-2']);
+    const boulders = new Set(['0,1', '0,-1']);
+    const shrines = new Set(['0,3', '0,-3']);
 
     for (const hex of hexes) {
       const { x, y } = this.hexToPixel(hex.q, hex.r);
-      const isObstacle = obstacleSet.has(`${hex.q},${hex.r}`);
+      const hexKey = `${hex.q},${hex.r}`;
+      const isObstacle = obstacleSet.has(hexKey);
 
       const g = new PIXI.Graphics();
       const points: number[] = [];
@@ -57,7 +69,42 @@ export class HexRenderer {
       }
       g.poly(points);
 
-      if (isObstacle) {
+      if (shrines.has(hexKey)) {
+        // Ancient neutral camp shrine
+        g.fill({ color: 0x064e3b, alpha: 0.85 });
+        g.stroke({ color: 0x10b981, width: 2 });
+        // Emerald rune ring
+        g.circle(x, y, HEX_SIZE * 0.6);
+        g.stroke({ color: 0x34d399, width: 1.5, alpha: 0.7 });
+        g.circle(x, y, HEX_SIZE * 0.25);
+        g.fill({ color: 0x10b981, alpha: 0.5 });
+      } else if (walls.has(hexKey)) {
+        // Dense stone wall (blocks move & blocks sight)
+        g.fill({ color: 0x1e293b });
+        g.stroke({ color: 0x475569, width: 2.5 });
+        // Stone battlement hatching
+        g.rect(x - HEX_SIZE * 0.4, y - HEX_SIZE * 0.4, HEX_SIZE * 0.8, HEX_SIZE * 0.8);
+        g.fill({ color: 0x334155 });
+        g.stroke({ color: 0x64748b, width: 1 });
+      } else if (smokePillars.has(hexKey)) {
+        // Smoke pillar (blocks sight only, allows move)
+        g.fill({ color: 0x2e1065, alpha: 0.8 });
+        g.stroke({ color: 0x7c3aed, width: 2 });
+        // Swirling misty cloud rings
+        g.circle(x, y, HEX_SIZE * 0.65);
+        g.stroke({ color: 0xa78bfa, width: 1.5, alpha: 0.6 });
+        g.circle(x, y, HEX_SIZE * 0.35);
+        g.fill({ color: 0x8b5cf6, alpha: 0.35 });
+      } else if (boulders.has(hexKey)) {
+        // Low boulders (blocks move only, allows sight)
+        g.fill({ color: 0x292524 });
+        g.stroke({ color: 0x78716c, width: 2 });
+        // Jagged rock cluster
+        g.circle(x - 5, y - 3, HEX_SIZE * 0.28);
+        g.fill({ color: 0x44403c });
+        g.circle(x + 5, y + 4, HEX_SIZE * 0.32);
+        g.fill({ color: 0x57534e });
+      } else if (isObstacle) {
         g.fill({ color: 0x24243a });
         g.stroke({ color: 0x3d3d5c, width: 1.5 });
       } else {
@@ -65,6 +112,11 @@ export class HexRenderer {
         const isLane = hex.r === 0;
         g.fill({ color: isLane ? 0x162438 : 0x101726 });
         g.stroke({ color: isLane ? 0x253b5c : 0x1a2638, width: 1 });
+        if (isLane && Math.abs(hex.q) <= 5) {
+          // Subtle lane center path dot
+          g.circle(x, y, 2.5);
+          g.fill({ color: 0x38bdf8, alpha: 0.35 });
+        }
       }
 
       this.hexLayer.addChild(g);
@@ -112,21 +164,66 @@ export class HexRenderer {
 
     const g = new PIXI.Graphics();
     const isFriendly = unit.team === this.playerTeam;
-    const baseColor = unit.team === 0 ? 0x00d2ff : 0xff3366;
+    const isNeutral = unit.team === 255 || unit.kind === 'Neutral' || unit.kind === 'NeutralGuardian';
+    const baseColor = isNeutral ? 0xf59e0b : unit.team === 0 ? 0x00d2ff : 0xff3366;
 
-    // Draw stylized representation based on UnitKind
+    // Draw active team buff / status glow halo
+    if (unit.statuses && unit.statuses.length > 0) {
+      const halo = new PIXI.Graphics();
+      halo.circle(0, 0, HEX_SIZE * 0.72);
+      halo.stroke({ color: 0x10b981, width: 2, alpha: 0.85 });
+      halo.circle(0, 0, HEX_SIZE * 0.84);
+      halo.stroke({ color: 0x34d399, width: 1, alpha: 0.4 });
+      container.addChild(halo);
+    }
+
+    // Stylized representation based on UnitKind
     switch (unit.kind) {
+      case 'Neutral':
+      case 'NeutralGuardian': {
+        // Ancient Runic Stone Guardian
+        g.poly([
+          0, -HEX_SIZE * 0.65,
+          HEX_SIZE * 0.55, -HEX_SIZE * 0.25,
+          HEX_SIZE * 0.45, HEX_SIZE * 0.45,
+          -HEX_SIZE * 0.45, HEX_SIZE * 0.45,
+          -HEX_SIZE * 0.55, -HEX_SIZE * 0.25,
+        ]);
+        g.fill({ color: 0xd97706 });
+        g.stroke({ color: 0xfef08a, width: 2 });
+        // Golden core eye
+        g.circle(0, 0, HEX_SIZE * 0.24);
+        g.fill({ color: 0xfef08a });
+        break;
+      }
       case 'Hero': {
-        g.circle(0, 0, HEX_SIZE * 0.52);
+        g.circle(0, 0, HEX_SIZE * 0.54);
         g.fill({ color: baseColor });
         g.stroke({ color: isFriendly ? 0xffffff : 0xffb3c6, width: isFriendly ? 2.5 : 1.5 });
-        // Inner core
-        g.circle(0, 0, HEX_SIZE * 0.2);
-        g.fill({ color: 0xffffff });
+        // Inner hero badge icon
+        if (unit.max_hp === 140 || unit.cooldowns?.cleave !== undefined) {
+          // Vanguard: Frontline Shield
+          g.poly([0, -8, 7, -3, 5, 6, 0, 9, -5, 6, -7, -3]);
+          g.fill({ color: 0xffffff });
+        } else if (unit.attack_range >= 2 || unit.cooldowns?.bolt !== undefined) {
+          // Ranger: Crosshair
+          g.circle(0, 0, 7);
+          g.stroke({ color: 0xffffff, width: 2 });
+          g.circle(0, 0, 2);
+          g.fill({ color: 0xffffff });
+        } else if (unit.max_energy === 6 || unit.cooldowns?.mend !== undefined) {
+          // Warden: Medic Cross
+          g.rect(-2.5, -8, 5, 16);
+          g.rect(-8, -2.5, 16, 5);
+          g.fill({ color: 0xffffff });
+        } else {
+          g.circle(0, 0, HEX_SIZE * 0.2);
+          g.fill({ color: 0xffffff });
+        }
         break;
       }
       case 'Minion': {
-        // Creep triangle pointing towards opponent base (Team 0 moves +x, Team 1 moves -x)
+        // Creep triangle pointing towards opponent base
         const tip = unit.team === 0 ? HEX_SIZE * 0.45 : -HEX_SIZE * 0.45;
         g.poly([tip, 0, -tip * 0.7, -HEX_SIZE * 0.35, -tip * 0.7, HEX_SIZE * 0.35]);
         g.fill({ color: baseColor });
@@ -139,11 +236,11 @@ export class HexRenderer {
         g.rect(-size / 2, -size / 2, size, size);
         g.fill({ color: baseColor });
         g.stroke({ color: isFriendly ? 0xffffff : 0xffb3c6, width: 2.5 });
-        // Inner core
         g.rect(-size / 4, -size / 4, size / 2, size / 2);
         g.fill({ color: 0x111118 });
         break;
       }
+      case 'Spawner':
       case 'SpawnerTower': {
         // Spire crystal diamond
         g.poly([0, -HEX_SIZE * 0.6, HEX_SIZE * 0.5, 0, 0, HEX_SIZE * 0.6, -HEX_SIZE * 0.5, 0]);
@@ -157,35 +254,44 @@ export class HexRenderer {
         break;
     }
 
-    // Spawner wave timer dots or Hero AP dots
-    if (unit.kind === 'SpawnerTower' && unit.spawn_interval) {
-      const dotsY = HEX_SIZE * 0.75;
-      for (let i = 0; i < unit.spawn_interval; i++) {
-        const dotX = (i - (unit.spawn_interval - 1) / 2) * 10;
-        g.circle(dotX, dotsY, 3);
-        g.fill({ color: i < unit.spawn_counter ? 0x7c4dff : 0x333344 });
-      }
-    } else if (unit.kind === 'Hero') {
-      const apY = HEX_SIZE * 0.75;
+    // Hero Resource Indicators: AP (Yellow Dots) & Energy (Cyan Blue Pips)
+    if (unit.kind === 'Hero') {
+      const apY = HEX_SIZE * 0.72;
       for (let i = 0; i < unit.max_ap; i++) {
-        const apX = (i - (unit.max_ap - 1) / 2) * 10;
-        g.circle(apX, apY, 3);
+        const apX = (i - (unit.max_ap - 1) / 2) * 9;
+        g.circle(apX, apY, 2.5);
         g.fill({ color: i < unit.ap ? 0xffd600 : 0x333344 });
+      }
+
+      const energy = unit.energy ?? 0;
+      const maxEnergy = unit.max_energy ?? 5;
+      const enY = HEX_SIZE * 0.88;
+      for (let i = 0; i < maxEnergy; i++) {
+        const enX = (i - (maxEnergy - 1) / 2) * 7;
+        g.circle(enX, enY, 2);
+        g.fill({ color: i < energy ? 0x00f5ff : 0x1e293b });
       }
 
       // Initiative badge
       const initText = new PIXI.Text({
         text: `⚡${unit.initiative}`,
         style: {
-          fontSize: 9,
+          fontSize: 8.5,
           fill: 0xffffff,
           fontFamily: 'Outfit, sans-serif',
           fontWeight: 'bold',
         },
       });
       initText.anchor.set(0.5);
-      initText.y = 0;
+      initText.y = -HEX_SIZE * 0.5;
       container.addChild(initText);
+    } else if ((unit.kind === 'Spawner' || unit.kind === 'SpawnerTower') && unit.spawn_interval) {
+      const dotsY = HEX_SIZE * 0.75;
+      for (let i = 0; i < unit.spawn_interval; i++) {
+        const dotX = (i - (unit.spawn_interval - 1) / 2) * 10;
+        g.circle(dotX, dotsY, 3);
+        g.fill({ color: i < unit.spawn_counter ? 0x7c4dff : 0x333344 });
+      }
     }
 
     container.addChild(g);
@@ -226,32 +332,8 @@ export class HexRenderer {
     }
   }
 
-  spawnUnit(event: { unit_id: number; unit_kind: UnitKind; team: number; pos: HexCoord; spawner_id: number }): PIXI.Container {
-    const isMinion = event.unit_kind === 'Minion';
-    const unit: UnitData = {
-      id: event.unit_id,
-      kind: event.unit_kind,
-      team: event.team,
-      pos: event.pos,
-      hp: isMinion ? 30 : 100,
-      max_hp: isMinion ? 30 : 100,
-      ap: isMinion ? 2 : 3,
-      max_ap: isMinion ? 2 : 3,
-      initiative: isMinion ? 1 : 2,
-      attack_damage: isMinion ? 8 : 20,
-      attack_range: 1,
-      vision_range: isMinion ? 2 : 3,
-      spawn_counter: 0,
-    };
-    const sprite = this.createUnitSprite(unit);
-    this.unitLayer.addChild(sprite);
-    this.unitSprites.set(event.unit_id, sprite);
-    return sprite;
-  }
-
   drawMoveTargets(targets: (MoveTarget | HexCoord)[]): void {
-    this.overlayLayer.removeChildren();
-    this.overlayLayer.addChild(this.selectionRing);
+    this.clearOverlays();
     for (const target of targets) {
       const { x, y } = this.hexToPixel(target.q, target.r);
       const g = new PIXI.Graphics();
@@ -292,6 +374,70 @@ export class HexRenderer {
     }
   }
 
+  drawAbilityTargets(validUnitIds: number[], obstructedUnitIds: number[], state: GameState): void {
+    // Valid targets in Cyan
+    for (const targetId of validUnitIds) {
+      const unit = state.units[targetId];
+      if (!unit) continue;
+      const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
+      const g = new PIXI.Graphics();
+      g.circle(x, y, HEX_SIZE * 0.68);
+      g.stroke({ color: 0x00f5ff, width: 3, alpha: 0.95 });
+      g.circle(x, y, HEX_SIZE * 0.3);
+      g.stroke({ color: 0x00f5ff, width: 1.5, alpha: 0.6 });
+      this.overlayLayer.addChild(g);
+    }
+
+    // Obstructed targets in Red with slash indicator
+    for (const targetId of obstructedUnitIds) {
+      const unit = state.units[targetId];
+      if (!unit) continue;
+      const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
+      const g = new PIXI.Graphics();
+      g.circle(x, y, HEX_SIZE * 0.68);
+      g.stroke({ color: 0xff1744, width: 2.5, alpha: 0.8 });
+      // Red obstruction slash
+      g.moveTo(x - HEX_SIZE * 0.45, y - HEX_SIZE * 0.45);
+      g.lineTo(x + HEX_SIZE * 0.45, y + HEX_SIZE * 0.45);
+      g.stroke({ color: 0xff1744, width: 2.5, alpha: 0.85 });
+      this.overlayLayer.addChild(g);
+    }
+  }
+
+  drawRepairTargets(targetIds: number[], state: GameState): void {
+    for (const targetId of targetIds) {
+      const unit = state.units[targetId];
+      if (!unit) continue;
+      const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
+      const g = new PIXI.Graphics();
+      g.circle(x, y, HEX_SIZE * 0.72);
+      g.stroke({ color: 0x00e676, width: 3, alpha: 0.95 });
+      // Repair cross/wrench badge
+      g.rect(x - 2, y - 8, 4, 16);
+      g.rect(x - 8, y - 2, 16, 4);
+      g.fill({ color: 0x00e676, alpha: 0.8 });
+      this.overlayLayer.addChild(g);
+    }
+  }
+
+  drawRaycastLine(from: HexCoord, to: HexCoord, isBlocked: boolean): void {
+    this.raycastLine.clear();
+    const p1 = this.hexToPixel(from.q, from.r);
+    const p2 = this.hexToPixel(to.q, to.r);
+
+    this.raycastLine.moveTo(p1.x, p1.y);
+    this.raycastLine.lineTo(p2.x, p2.y);
+    if (isBlocked) {
+      this.raycastLine.stroke({ color: 0xff1744, width: 2, alpha: 0.85 });
+    } else {
+      this.raycastLine.stroke({ color: 0x00f5ff, width: 2, alpha: 0.85 });
+    }
+  }
+
+  clearRaycastLine(): void {
+    this.raycastLine.clear();
+  }
+
   drawPath(path: HexCoord[]): void {
     this.pathLayer.removeChildren();
     if (path.length < 2) return;
@@ -321,15 +467,12 @@ export class HexRenderer {
     }
   }
 
-  clearMoveTargets(): void {
-    this.overlayLayer.removeChildren();
-    this.overlayLayer.addChild(this.selectionRing);
-  }
-
   clearOverlays(): void {
     this.overlayLayer.removeChildren();
     this.overlayLayer.addChild(this.selectionRing);
+    this.overlayLayer.addChild(this.raycastLine);
     this.selectionRing.clear();
+    this.raycastLine.clear();
     this.pathLayer.removeChildren();
   }
 

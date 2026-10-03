@@ -5,20 +5,38 @@ export interface HexDto {
 
 export type HexCoord = HexDto;
 
+export interface StatusDto {
+  id: string;
+  remaining_rounds: number;
+  attack_damage_mod: number;
+}
+
+export interface NeutralCampDto {
+  id: string;
+  pos: HexDto;
+  is_alive: boolean;
+  guardian_unit_id?: number | null;
+}
+
 export interface UnitDto {
   id: number;
-  kind: string; // "Hero" | "Minion" | "Tower" | "SpawnerTower" | "Neutral"
+  kind: string; // "Hero" | "Minion" | "Tower" | "Spawner" | "NeutralGuardian"
   team: number;
   pos: HexDto;
   hp: number;
   max_hp: number;
   ap: number;
   max_ap: number;
+  energy: number;
+  max_energy: number;
   initiative: number;
   attack_damage: number;
   attack_range: number;
   vision_range: number;
   is_stationary: boolean;
+  cooldowns: Record<string, number>;
+  statuses: StatusDto[];
+  lane_id?: string | null;
 }
 
 export interface MapDto {
@@ -38,11 +56,19 @@ export interface SnapshotDto {
   controlled_units: number[];
   deadline_unix_ms?: number | null;
   state_hash: string;
+  neutral_camps: NeutralCampDto[];
 }
+
+export type SpellTargetDto =
+  | { type: 'None' }
+  | { type: 'Unit'; payload: { unit_id: number } }
+  | { type: 'Hex'; payload: { hex: HexDto } };
 
 export type ActionDto =
   | { type: 'Wait' }
-  | { type: 'Attack'; target_id: number };
+  | { type: 'Attack'; target_id: number }
+  | { type: 'Cast'; spell_id: string; target: SpellTargetDto }
+  | { type: 'Repair'; target_id: number };
 
 export interface OrderDto {
   unit_id: number;
@@ -56,6 +82,13 @@ export type SanitizedGameEvent =
   | { type: 'UnitMoved'; unit_id: number; from: HexDto; to: HexDto; path: HexDto[]; ap_spent: number }
   | { type: 'UnitAttacked'; attacker_id: number; target_id: number; damage: number; target_hp_remaining: number }
   | { type: 'TowerAttacked'; tower_id: number; target_id: number; damage: number; target_hp_remaining: number }
+  | { type: 'SpellCast'; caster_id: number; spell_id: string; target: SpellTargetDto }
+  | { type: 'HealApplied'; caster_id: number; target_id: number; amount: number; target_hp_remaining: number }
+  | { type: 'StructureRepaired'; repairer_id: number; target_id: number; amount: number; target_hp_remaining: number }
+  | { type: 'StatusApplied'; unit_id: number; status_id: string; duration_rounds: number }
+  | { type: 'StatusExpired'; unit_id: number; status_id: string }
+  | { type: 'NeutralCampCleared'; camp_id: string; killer_team: number }
+  | { type: 'TeamBuffApplied'; team: number; buff_id: string; duration_rounds: number }
   | { type: 'UnitDied'; unit_id: number; unit_kind: string; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'RoundEnded'; round: number }

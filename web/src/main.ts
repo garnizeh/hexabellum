@@ -17,6 +17,7 @@ import { HudController } from './ui/hud';
 import { SanitizedGameEvent, SnapshotDto } from './game/types';
 import { TutorialController } from './game/tutorial/TutorialController';
 import { ModeSelectModal } from './ui/ModeSelectModal';
+import { AbilityDock } from './ui/AbilityDock';
 
 async function main() {
   // Attempt local WASM init (optional, retained for local offline dev)
@@ -67,6 +68,14 @@ async function main() {
   let isOnline = false;
 
   const input = new InputHandler(renderer, null);
+  const abilityDock = new AbilityDock();
+  abilityDock.setInputHandler(input);
+  abilityDock.setSession(session);
+
+  input.setOnUnitSelectedChange((unit) => {
+    abilityDock.update(unit);
+  });
+
   const tutorial = new TutorialController(app, renderer, animator);
   const modeModal = new ModeSelectModal();
 
@@ -91,6 +100,7 @@ async function main() {
       renderer.drawMap(hexes, obstacles);
       renderer.drawUnits(state);
       renderer.drawFog(fog, hexes);
+      abilityDock.update(input.getSelectedUnit());
 
       if (roundEl) roundEl.textContent = `Round ${state.round}`;
 
@@ -164,6 +174,7 @@ async function main() {
   const applyRoundStarted = (round: number, deadlineUnixMs: number, _snapshot: SnapshotDto) => {
     isOnline = true;
     input.setSession(session);
+    abilityDock.setSession(session);
     renderer.setPlayerTeam(session.getCurrentTeam());
     renderCurrentState();
 
