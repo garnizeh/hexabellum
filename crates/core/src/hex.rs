@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 /// Axial coordinates for hex grid.
 /// q = column, r = row
@@ -97,6 +98,149 @@ impl HexMap {
         let center = HexCoord::new(0, 0);
         center.distance(coord) <= self.radius && !self.obstacles.contains(coord)
     }
+
+    /// Find path from start to goal using A*.
+    /// Returns None if no path exists.
+    /// `occupied` is a set of hexes blocked by units.
+    pub fn find_path(
+        &self,
+        start: HexCoord,
+        goal: HexCoord,
+        occupied: &HashSet<HexCoord>,
+    ) -> Option<Vec<HexCoord>> {
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        if !self.is_walkable(&goal) || occupied.contains(&goal) {
+            return None;
+        }
+
+        let mut open = BinaryHeap::new();
+        let mut came_from: HashMap<HexCoord, HexCoord> = HashMap::new();
+        let mut g_score: HashMap<HexCoord, u32> = HashMap::new();
+
+        g_score.insert(start, 0);
+        open.push(AStarNode {
+            coord: start,
+            g: 0,
+            f: start.distance(&goal),
+        });
+
+        while let Some(current) = open.pop() {
+            if current.coord == goal {
+                // Reconstruct path
+                let mut path = vec![goal];
+                let mut node = goal;
+                while let Some(&prev) = came_from.get(&node) {
+                    path.push(prev);
+                    node = prev;
+                }
+                path.reverse();
+                return Some(path);
+            }
+
+            let current_g = *g_score.get(&current.coord).unwrap_or(&u32::MAX);
+
+            for neighbor in current.coord.neighbors() {
+                if !self.is_walkable(&neighbor) {
+                    continue;
+                }
+                if occupied.contains(&neighbor) && neighbor != goal {
+                    continue;
+                }
+
+                let tentative_g = current_g + 1;
+
+                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
+                    came_from.insert(neighbor, current.coord);
+                    g_score.insert(neighbor, tentative_g);
+                    open.push(AStarNode {
+                        coord: neighbor,
+                        g: tentative_g,
+                        f: tentative_g + neighbor.distance(&goal),
+                    });
+                }
+            }
+        }
+
+        None // No path found
+    }
+
+    /// Get all hexes reachable from start within given AP budget.
+    /// Returns a map of hex -> AP cost to reach it.
+    /// Uses Dijkstra's algorithm (all edges cost 1).
+    pub fn reachable_hexes(
+        &self,
+        start: HexCoord,
+        ap_budget: u32,
+        occupied: &HashSet<HexCoord>,
+    ) -> HashMap<HexCoord, u32> {
+        let mut result: HashMap<HexCoord, u32> = HashMap::new();
+        let mut frontier: Vec<(HexCoord, u32)> = vec![(start, 0)];
+        result.insert(start, 0);
+
+        while let Some((current, cost)) = frontier.pop() {
+            if cost >= ap_budget {
+                continue;
+            }
+
+            for neighbor in current.neighbors() {
+                if !self.is_walkable(&neighbor) {
+                    continue;
+                }
+                if occupied.contains(&neighbor) {
+                    continue;
+                }
+
+                let new_cost = cost + 1;
+                if new_cost <= ap_budget {
+                    let existing = result.get(&neighbor).copied().unwrap_or(u32::MAX);
+                    if new_cost < existing {
+                        result.insert(neighbor, new_cost);
+                        frontier.push((neighbor, new_cost));
+                    }
+                }
+            }
+        }
+
+        result.remove(&start); // Don't include starting position
+        result
+    }
+
+    /// Get hexes within attack range of a position.
+    pub fn hexes_in_range(&self, center: HexCoord, range: u32) -> Vec<HexCoord> {
+        let mut results = Vec::new();
+        for r in 1..=range {
+            results.extend(center.ring(r));
+        }
+        results.retain(|h| self.is_walkable(h));
+        results
+    }
+}
+
+/// Node for A* pathfinding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AStarNode {
+    coord: HexCoord,
+    g: u32, // cost from start
+    f: u32, // g + heuristic
+}
+
+impl PartialOrd for AStarNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AStarNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse for min-heap behavior
+        other
+            .f
+            .cmp(&self.f)
+            .then_with(|| other.g.cmp(&self.g))
+    }
 }
 
 #[cfg(test)]
@@ -145,5 +289,88 @@ mod tests {
         assert!(!map.is_walkable(&HexCoord::new(5, 5)));
         map.obstacles.insert(HexCoord::new(1, 0));
         assert!(!map.is_walkable(&HexCoord::new(1, 0)));
+    }
+
+    #[test]
+    fn test_find_path_straight() {
+        let map = HexMap::new(4);
+        let occupied = HashSet::new();
+        let path = map
+            .find_path(HexCoord::new(-3, 0), HexCoord::new(0, 0), &occupied)
+            .unwrap();
+        // Shortest path length = distance + 1 (includes start)
+        assert_eq!(path.len(), 4);
+        assert_eq!(path[0], HexCoord::new(-3, 0));
+        assert_eq!(*path.last().unwrap(), HexCoord::new(0, 0));
+        // Each step must be a neighbor of the previous
+        for w in path.windows(2) {
+            assert_eq!(w[0].distance(&w[1]), 1);
+        }
+    }
+
+    #[test]
+    fn test_find_path_same_start_goal() {
+        let map = HexMap::new(4);
+        let occupied = HashSet::new();
+        let path = map
+            .find_path(HexCoord::new(1, 1), HexCoord::new(1, 1), &occupied)
+            .unwrap();
+        assert_eq!(path, vec![HexCoord::new(1, 1)]);
+    }
+
+    #[test]
+    fn test_find_path_blocked_by_obstacle_and_units() {
+        let mut map = HexMap::new(1);
+        // Block everything except center and one hex
+        for h in map.all_hexes() {
+            if h != HexCoord::new(0, 0) && h != HexCoord::new(1, 0) {
+                map.obstacles.insert(h);
+            }
+        }
+        let occupied = HashSet::new();
+        assert!(map
+            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0), &occupied)
+            .is_some());
+
+        // Goal occupied by a unit -> no path
+        let mut occupied = HashSet::new();
+        occupied.insert(HexCoord::new(1, 0));
+        assert!(map
+            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0), &occupied)
+            .is_none());
+    }
+
+    #[test]
+    fn test_reachable_hexes_ap_budget() {
+        let map = HexMap::new(4);
+        let occupied = HashSet::new();
+        let start = HexCoord::new(0, 0);
+        let reachable = map.reachable_hexes(start, 2, &occupied);
+        // Doesn't include start
+        assert!(!reachable.contains_key(&start));
+        // All costs within budget
+        for (_hex, cost) in &reachable {
+            assert!(*cost >= 1 && *cost <= 2);
+        }
+        // A hex at distance 3 is not reachable with AP 2
+        assert!(!reachable.contains_key(&HexCoord::new(3, 0)));
+        // Adjacent hex reachable with cost 1
+        assert_eq!(reachable.get(&HexCoord::new(1, 0)), Some(&1));
+    }
+
+    #[test]
+    fn test_reachable_respects_occupied() {
+        let map = HexMap::new(4);
+        let mut occupied = HashSet::new();
+        occupied.insert(HexCoord::new(1, 0));
+        let reachable = map.reachable_hexes(HexCoord::new(0, 0), 1, &occupied);
+        assert!(!reachable.contains_key(&HexCoord::new(1, 0)));
+    }
+
+    #[test]
+    fn test_hexes_in_range() {
+        let map = HexMap::new(4);
+        let in_range = map.hexes_in_range(HexCoord::new(0, 0), 1);
+        assert_eq!(in_range.len(), 6);
     }
 }
