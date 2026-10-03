@@ -6,18 +6,13 @@ use crate::state::{GameState, Phase};
 use crate::turn::TurnProcessor;
 use crate::unit::{Unit, UnitId, UnitKind};
 use hexabellum_protocol::{
-    ActionDto, HexDto, MapDto, OrderDto, PlayerId, ProtocolErrorCode,
+    ActionDto, HexDto, MapDto, MatchPhaseDto, OrderDto, ProtocolErrorCode, RosterEntryDto,
     SanitizedGameEvent, SnapshotDto, TeamId, UnitDto,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-/// Entity controller designation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Controller {
-    Player(PlayerId),
-    Ai,
-    Automatic,
-}
+pub use crate::controller::{Controller, ControllerMap, PlayerId};
 
 /// Detailed error information for rejected order submissions.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,27 +25,57 @@ pub struct OrderSubmissionError {
 impl PartialEq<ProtocolErrorCode> for OrderSubmissionError {
     fn eq(&self, other: &ProtocolErrorCode) -> bool {
         self.code == *other
+            || (*other == ProtocolErrorCode::UnitNotOwned
+                && self.code == ProtocolErrorCode::NotYourUnit)
+            || (*other == ProtocolErrorCode::NotYourUnit
+                && self.code == ProtocolErrorCode::UnitNotOwned)
     }
 }
 
 /// Match configuration parameters.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BattleConfig {
     pub map_radius: u32,
+    pub players_per_team: u32,
+    pub heroes_per_team: u32,
     pub turn_duration_secs: u64,
-    pub spawn_interval: u32,
-    pub enable_ai_team_1: bool,
     pub early_resolution_grace_ms: u64,
+    pub spawn_interval: u32,
+    pub fill_empty_slots_with_ai: bool,
+    #[serde(default)]
+    pub enable_ai_team_1: bool,
+    #[serde(default)]
+    pub skip_draft: bool,
 }
 
 impl Default for BattleConfig {
     fn default() -> Self {
         Self {
-            map_radius: 6,
+            map_radius: 8,
+            players_per_team: 5,
+            heroes_per_team: 5,
             turn_duration_secs: 30,
-            spawn_interval: 3,
-            enable_ai_team_1: false,
             early_resolution_grace_ms: 1000,
+            spawn_interval: 3,
+            fill_empty_slots_with_ai: true,
+            enable_ai_team_1: false,
+            skip_draft: false,
+        }
+    }
+}
+
+impl BattleConfig {
+    pub fn legacy_3v3() -> Self {
+        Self {
+            map_radius: 6,
+            players_per_team: 1,
+            heroes_per_team: 3,
+            turn_duration_secs: 30,
+            early_resolution_grace_ms: 1000,
+            spawn_interval: 3,
+            fill_empty_slots_with_ai: false,
+            enable_ai_team_1: false,
+            skip_draft: true,
         }
     }
 }
@@ -59,86 +84,217 @@ impl Default for BattleConfig {
 pub struct BattleSession {
     pub match_id: String,
     pub state: GameState,
-    pub controllers: HashMap<UnitId, Controller>,
+    pub controllers: ControllerMap,
     pub staged_orders: HashMap<TeamId, HashMap<UnitId, UnitOrder>>,
     pub submitted_teams: HashSet<TeamId>,
     pub config: BattleConfig,
     pub unit_registry: HashMap<UnitId, (TeamId, UnitKind, HexCoord)>,
+    pub hero_assignments: HashMap<String, UnitId>,
 }
 
 impl BattleSession {
-    /// Initialize a new 3v3 MOBA battle session with lane topology.
+    pub fn new_test_5v5() -> Self {
+        let mut config = BattleConfig::default();
+        config.map_radius = 8;
+        config.heroes_per_team = 5;
+        config.players_per_team = 5;
+        Self::new("test_5v5".into(), config)
+    }
+
+    pub fn new_with_seed(config: BattleConfig, _seed: u64) -> Self {
+        Self::new("sim".into(), config)
+    }
+
+    /// Initialize a battle session supporting 1v1, 3v3, or 5v5 MOBA configurations.
     pub fn new(match_id: String, config: BattleConfig) -> Self {
         let mut map = HexMap::new(config.map_radius);
+        let mut state;
+        let mut controllers = ControllerMap::new();
+        let mut hero_assignments = HashMap::new();
 
-        // Phase 4 Terrain Topology
-        // Dense Stone Wall: (0, 2) & (0, -2) (blocks move, blocks vision)
-        map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
-        map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
+        if config.heroes_per_team >= 5 || config.map_radius >= 8 {
+            // ==========================================
+            // Phase 5 Scaled Arena Topology (Radius 8, 217 Hexes)
+            // ==========================================
+            // 6 Tactical Vision Blockers (both movement and sight blockers)
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(-2, -3)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(2, -3)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(-3, 2)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(3, -2)));
 
-        // Smoke Pillar: (2, 2) & (-2, -2) (blocks vision only, allows movement)
-        map.add_obstacle(crate::vision::Obstacle::smoke(HexCoord::new(2, 2)));
-        map.add_obstacle(crate::vision::Obstacle::smoke(HexCoord::new(-2, -2)));
+            state = GameState::new(map);
 
-        // Low Boulders: (0, 1) & (0, -1) (blocks move only, allows sight)
-        map.add_obstacle(crate::vision::Obstacle::boulder(HexCoord::new(0, 1)));
-        map.add_obstacle(crate::vision::Obstacle::boulder(HexCoord::new(0, -1)));
+            // Team 0 Base & Defenses (Left)
+            let mut t0_spawner = Unit::new_spawner(100, 0, HexCoord::new(-7, 0), config.spawn_interval);
+            t0_spawner.hp = 200;
+            t0_spawner.max_hp = 200;
+            let t0_tower = Unit::new_tower(101, 0, HexCoord::new(-5, 0));
+            controllers.assign(100, Controller::Automatic);
+            controllers.assign(101, Controller::Automatic);
+            state.add_unit(t0_spawner);
+            state.add_unit(t0_tower);
 
-        let mut state = GameState::new(map);
-        let mut controllers = HashMap::new();
+            // Team 0 Heroes: Vanguard, Ranger, Warden, Sniper, Berserker
+            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-6, -2), 3));
+            state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-6, -1), 4));
+            state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-6, 0), 2));
+            state.add_unit(Unit::new_sniper(4, 0, HexCoord::new(-6, 1), 4));
+            state.add_unit(Unit::new_berserker(5, 0, HexCoord::new(-6, 2), 3));
+            for uid in 1..=5 {
+                controllers.assign(uid, Controller::Ai);
+            }
+            hero_assignments.insert("vanguard_0".to_string(), 1);
+            hero_assignments.insert("ranger_0".to_string(), 2);
+            hero_assignments.insert("warden_0".to_string(), 3);
+            hero_assignments.insert("sniper_0".to_string(), 4);
+            hero_assignments.insert("berserker_0".to_string(), 5);
 
-        // Team 0 Base (Left)
-        let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-5, 0), config.spawn_interval);
-        let t0_tower = Unit::new_tower(11, 0, HexCoord::new(-3, 0));
-        controllers.insert(10, Controller::Automatic);
-        controllers.insert(11, Controller::Automatic);
-        state.add_unit(t0_spawner);
-        state.add_unit(t0_tower);
+            // Team 1 Base & Defenses (Right)
+            let mut t1_spawner = Unit::new_spawner(200, 1, HexCoord::new(7, 0), config.spawn_interval);
+            t1_spawner.hp = 200;
+            t1_spawner.max_hp = 200;
+            let t1_tower = Unit::new_tower(201, 1, HexCoord::new(5, 0));
+            controllers.assign(200, Controller::Automatic);
+            controllers.assign(201, Controller::Automatic);
+            state.add_unit(t1_spawner);
+            state.add_unit(t1_tower);
 
-        // Team 0 Heroes: Vanguard, Ranger, Warden
-        state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-4, -1), 3));
-        state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-4, 0), 2));
-        state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-4, 1), 1));
-        controllers.insert(1, Controller::Ai);
-        controllers.insert(2, Controller::Ai);
-        controllers.insert(3, Controller::Ai);
+            // Team 1 Heroes: Vanguard, Ranger, Warden, Sniper, Berserker
+            state.add_unit(Unit::new_vanguard(6, 1, HexCoord::new(6, -2), 3));
+            state.add_unit(Unit::new_ranger(7, 1, HexCoord::new(6, -1), 4));
+            state.add_unit(Unit::new_warden(8, 1, HexCoord::new(6, 0), 2));
+            state.add_unit(Unit::new_sniper(9, 1, HexCoord::new(6, 1), 4));
+            state.add_unit(Unit::new_berserker(10, 1, HexCoord::new(6, 2), 3));
+            for uid in 6..=10 {
+                controllers.assign(uid, Controller::Ai);
+            }
+            hero_assignments.insert("vanguard_1".to_string(), 6);
+            hero_assignments.insert("ranger_1".to_string(), 7);
+            hero_assignments.insert("warden_1".to_string(), 8);
+            hero_assignments.insert("sniper_1".to_string(), 9);
+            hero_assignments.insert("berserker_1".to_string(), 10);
 
-        // Team 1 Base (Right)
-        let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(5, 0), config.spawn_interval);
-        let t1_tower = Unit::new_tower(21, 1, HexCoord::new(3, 0));
-        controllers.insert(20, Controller::Automatic);
-        controllers.insert(21, Controller::Automatic);
-        state.add_unit(t1_spawner);
-        state.add_unit(t1_tower);
+            // Neutral Camps: North (0, -4) and South (0, 4)
+            let guardian_north = Unit::new_neutral_guardian(301, HexCoord::new(0, -4));
+            let guardian_south = Unit::new_neutral_guardian(302, HexCoord::new(0, 4));
+            controllers.assign(301, Controller::Automatic);
+            controllers.assign(302, Controller::Automatic);
+            state.add_unit(guardian_north);
+            state.add_unit(guardian_south);
 
-        // Team 1 Heroes: Vanguard, Ranger, Warden
-        state.add_unit(Unit::new_vanguard(4, 1, HexCoord::new(4, -1), 3));
-        state.add_unit(Unit::new_ranger(5, 1, HexCoord::new(4, 0), 2));
-        state.add_unit(Unit::new_warden(6, 1, HexCoord::new(4, 1), 1));
-        controllers.insert(4, Controller::Ai);
-        controllers.insert(5, Controller::Ai);
-        controllers.insert(6, Controller::Ai);
+            state.neutral_camps.push(crate::neutral::NeutralCamp::new(
+                "camp_north".to_string(),
+                HexCoord::new(0, -4),
+                301,
+            ));
+            state.neutral_camps.push(crate::neutral::NeutralCamp::new(
+                "camp_south".to_string(),
+                HexCoord::new(0, 4),
+                302,
+            ));
 
-        // Neutral Camps & Guardians
-        let guardian_alpha = Unit::new_neutral_guardian(31, HexCoord::new(0, 3));
-        let guardian_beta = Unit::new_neutral_guardian(32, HexCoord::new(0, -3));
-        controllers.insert(31, Controller::Automatic);
-        controllers.insert(32, Controller::Automatic);
-        state.add_unit(guardian_alpha);
-        state.add_unit(guardian_beta);
+            state.next_unit_id = 400;
+        } else if config.heroes_per_team == 3 {
+            // Phase 4 Terrain Topology (Radius 6/7 3v3)
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
+            map.add_obstacle(crate::vision::Obstacle::smoke(HexCoord::new(2, 2)));
+            map.add_obstacle(crate::vision::Obstacle::smoke(HexCoord::new(-2, -2)));
+            map.add_obstacle(crate::vision::Obstacle::boulder(HexCoord::new(0, 1)));
+            map.add_obstacle(crate::vision::Obstacle::boulder(HexCoord::new(0, -1)));
 
-        state.neutral_camps.push(crate::neutral::NeutralCamp::new(
-            "camp_alpha".to_string(),
-            HexCoord::new(0, 3),
-            31,
-        ));
-        state.neutral_camps.push(crate::neutral::NeutralCamp::new(
-            "camp_beta".to_string(),
-            HexCoord::new(0, -3),
-            32,
-        ));
+            state = GameState::new(map);
 
-        state.next_unit_id = 35;
+            // Team 0 Base (Left)
+            let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-5, 0), config.spawn_interval);
+            let t0_tower = Unit::new_tower(11, 0, HexCoord::new(-3, 0));
+            controllers.assign(10, Controller::Automatic);
+            controllers.assign(11, Controller::Automatic);
+            state.add_unit(t0_spawner);
+            state.add_unit(t0_tower);
+
+            // Team 0 Heroes: Vanguard, Ranger, Warden
+            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-4, -1), 3));
+            state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-4, 0), 2));
+            state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-4, 1), 1));
+            controllers.assign(1, Controller::Ai);
+            controllers.assign(2, Controller::Ai);
+            controllers.assign(3, Controller::Ai);
+            hero_assignments.insert("vanguard_0".to_string(), 1);
+            hero_assignments.insert("ranger_0".to_string(), 2);
+            hero_assignments.insert("warden_0".to_string(), 3);
+
+            // Team 1 Base (Right)
+            let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(5, 0), config.spawn_interval);
+            let t1_tower = Unit::new_tower(21, 1, HexCoord::new(3, 0));
+            controllers.assign(20, Controller::Automatic);
+            controllers.assign(21, Controller::Automatic);
+            state.add_unit(t1_spawner);
+            state.add_unit(t1_tower);
+
+            // Team 1 Heroes: Vanguard, Ranger, Warden
+            state.add_unit(Unit::new_vanguard(4, 1, HexCoord::new(4, -1), 3));
+            state.add_unit(Unit::new_ranger(5, 1, HexCoord::new(4, 0), 2));
+            state.add_unit(Unit::new_warden(6, 1, HexCoord::new(4, 1), 1));
+            controllers.assign(4, Controller::Ai);
+            controllers.assign(5, Controller::Ai);
+            controllers.assign(6, Controller::Ai);
+            hero_assignments.insert("vanguard_1".to_string(), 4);
+            hero_assignments.insert("ranger_1".to_string(), 5);
+            hero_assignments.insert("warden_1".to_string(), 6);
+
+            // Neutral Camps & Guardians
+            let guardian_alpha = Unit::new_neutral_guardian(31, HexCoord::new(0, 3));
+            let guardian_beta = Unit::new_neutral_guardian(32, HexCoord::new(0, -3));
+            controllers.assign(31, Controller::Automatic);
+            controllers.assign(32, Controller::Automatic);
+            state.add_unit(guardian_alpha);
+            state.add_unit(guardian_beta);
+
+            state.neutral_camps.push(crate::neutral::NeutralCamp::new(
+                "camp_alpha".to_string(),
+                HexCoord::new(0, 3),
+                31,
+            ));
+            state.neutral_camps.push(crate::neutral::NeutralCamp::new(
+                "camp_beta".to_string(),
+                HexCoord::new(0, -3),
+                32,
+            ));
+
+            state.next_unit_id = 35;
+        } else {
+            // 1v1 Configuration
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
+            map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
+            state = GameState::new(map);
+
+            let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-5, 0), config.spawn_interval);
+            let t0_tower = Unit::new_tower(11, 0, HexCoord::new(-3, 0));
+            controllers.assign(10, Controller::Automatic);
+            controllers.assign(11, Controller::Automatic);
+            state.add_unit(t0_spawner);
+            state.add_unit(t0_tower);
+
+            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-4, 0), 3));
+            controllers.assign(1, Controller::Ai);
+            hero_assignments.insert("vanguard_0".to_string(), 1);
+
+            let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(5, 0), config.spawn_interval);
+            let t1_tower = Unit::new_tower(21, 1, HexCoord::new(3, 0));
+            controllers.assign(20, Controller::Automatic);
+            controllers.assign(21, Controller::Automatic);
+            state.add_unit(t1_spawner);
+            state.add_unit(t1_tower);
+
+            state.add_unit(Unit::new_vanguard(4, 1, HexCoord::new(4, 0), 3));
+            controllers.assign(4, Controller::Ai);
+            hero_assignments.insert("vanguard_1".to_string(), 4);
+
+            state.next_unit_id = 35;
+        }
 
         // Initialize vision
         state.update_fog();
@@ -156,6 +312,7 @@ impl BattleSession {
             submitted_teams: HashSet::new(),
             config,
             unit_registry,
+            hero_assignments,
         }
     }
 
@@ -164,9 +321,15 @@ impl BattleSession {
         for unit in self.state.units.values() {
             if unit.team == team && unit.kind == UnitKind::Hero {
                 self.controllers
-                    .insert(unit.id, Controller::Player(player_id.clone()));
+                    .assign(unit.id, Controller::Player(player_id.clone()));
             }
         }
+    }
+
+    /// Assign player to a specific hero avatar.
+    pub fn assign_hero_player(&mut self, unit_id: UnitId, player_id: PlayerId) {
+        self.controllers
+            .assign(unit_id, Controller::Player(player_id));
     }
 
     /// Submit turn orders from a player.
@@ -195,6 +358,14 @@ impl BattleSession {
             });
         }
 
+        if self.config.players_per_team == 5 && orders.len() != 1 {
+            return Err(OrderSubmissionError {
+                code: ProtocolErrorCode::InvalidOrderCount,
+                unit_id: None,
+                reason: "Exactly one order must be submitted per player in single-hero mode".into(),
+            });
+        }
+
         let mut validated_orders = HashMap::new();
 
         for dto in orders {
@@ -218,25 +389,22 @@ impl BattleSession {
             }
             if unit.team != team {
                 return Err(OrderSubmissionError {
-                    code: ProtocolErrorCode::UnitNotOwned,
+                    code: ProtocolErrorCode::NotYourUnit,
                     unit_id: Some(dto.unit_id),
                     reason: format!("Unit #{} does not belong to team {}", dto.unit_id, team),
                 });
             }
 
             // Verify controller ownership
-            match self.controllers.get(&dto.unit_id) {
-                Some(Controller::Player(owner)) if owner == player_id => {}
-                _ => {
-                    return Err(OrderSubmissionError {
-                        code: ProtocolErrorCode::NotAuthorized,
-                        unit_id: Some(dto.unit_id),
-                        reason: format!(
-                            "Player {} is not authorized to order unit #{}",
-                            player_id, dto.unit_id
-                        ),
-                    });
-                }
+            if !self.controllers.is_controlled_by_player(dto.unit_id, player_id) {
+                return Err(OrderSubmissionError {
+                    code: ProtocolErrorCode::NotYourUnit,
+                    unit_id: Some(dto.unit_id),
+                    reason: format!(
+                        "Player {} is not authorized to order unit #{}",
+                        player_id, dto.unit_id
+                    ),
+                });
             }
 
             let move_target = dto.move_target.map(|h| HexCoord::new(h.q, h.r));
@@ -809,8 +977,84 @@ impl BattleSession {
         sanitized
     }
 
+    /// Build full roster entries for allied heroes and LOS-censored enemy heroes
+    pub fn build_roster_entries(
+        &self,
+        player_team: TeamId,
+        team_vision: &HashSet<HexCoord>,
+    ) -> Vec<RosterEntryDto> {
+        let mut roster = Vec::new();
+        let mut hero_units: Vec<&Unit> = self
+            .state
+            .units
+            .values()
+            .filter(|u| u.is_hero())
+            .collect();
+        hero_units.sort_by_key(|u| (u.team, u.id));
+
+        for hero in hero_units {
+            let is_ally = hero.team == player_team;
+            let is_visible = is_ally || team_vision.contains(&hero.pos);
+
+            let (player_id, is_ai, display_name) = match self.controllers.get(hero.id) {
+                Some(Controller::Player(pid)) => (
+                    Some(pid.clone()),
+                    false,
+                    pid.clone(),
+                ),
+                Some(Controller::Ai) | None => (
+                    None,
+                    true,
+                    format!("Bot ({})", hero.hero_id.as_deref().unwrap_or("Hero")),
+                ),
+                Some(Controller::Automatic) => (
+                    None,
+                    true,
+                    "AI".to_string(),
+                ),
+            };
+
+            let hero_def_id = hero
+                .hero_id
+                .clone()
+                .unwrap_or_else(|| "hero".to_string());
+
+            let orders_submitted = self
+                .staged_orders
+                .get(&hero.team)
+                .map(|orders| orders.contains_key(&hero.id))
+                .unwrap_or(false);
+
+            roster.push(RosterEntryDto {
+                player_id,
+                display_name,
+                hero_def_id,
+                unit_id: hero.id,
+                team: hero.team,
+                connected: true,
+                is_ai,
+                orders_submitted,
+                alive: hero.is_alive(),
+                hp: if is_visible { Some(hero.hp) } else { None },
+                max_hp: hero.max_hp,
+            });
+        }
+
+        roster
+    }
+
     /// Generate team-sanitized snapshot strictly withholding concealed enemy positions.
     pub fn snapshot_for_team(&self, team: TeamId, deadline_unix_ms: Option<u64>) -> SnapshotDto {
+        self.snapshot_for_player(team, None, deadline_unix_ms)
+    }
+
+    /// Generate snapshot customized for an individual player and their controlled units.
+    pub fn snapshot_for_player(
+        &self,
+        team: TeamId,
+        player_id: Option<&PlayerId>,
+        deadline_unix_ms: Option<u64>,
+    ) -> SnapshotDto {
         let visible_hexes = self.state.fog.visible_hexes(team);
 
         let mut sorted_unit_ids: Vec<UnitId> = self.state.units.keys().copied().collect();
@@ -852,15 +1096,20 @@ impl BattleSession {
                     })
                     .collect(),
                 lane_id: u.lane_id.clone(),
+                hero_id: u.hero_id.clone(),
             })
             .collect();
 
-        let controlled_units: Vec<UnitId> = sorted_unit_ids
-            .iter()
-            .filter_map(|id| self.state.get_unit(*id))
-            .filter(|u| u.team == team && u.kind == UnitKind::Hero && u.is_alive())
-            .map(|u| u.id)
-            .collect();
+        let controlled_units: Vec<UnitId> = if let Some(pid) = player_id {
+            self.controllers.get_units_for_player(pid)
+        } else {
+            sorted_unit_ids
+                .iter()
+                .filter_map(|id| self.state.get_unit(*id))
+                .filter(|u| u.team == team && u.kind == UnitKind::Hero && u.is_alive())
+                .map(|u| u.id)
+                .collect()
+        };
 
         let mut walkable: Vec<HexDto> = self
             .state
@@ -910,6 +1159,14 @@ impl BattleSession {
             })
             .collect();
 
+        let roster = self.build_roster_entries(team, visible_hexes);
+
+        let match_phase = Some(match self.state.phase {
+            Phase::Planning => MatchPhaseDto::Planning,
+            Phase::Resolution => MatchPhaseDto::Resolution,
+            Phase::MatchEnd => MatchPhaseDto::MatchEnd,
+        });
+
         SnapshotDto {
             match_id: self.match_id.clone(),
             round: self.state.round,
@@ -926,7 +1183,26 @@ impl BattleSession {
             deadline_unix_ms,
             state_hash: self.state_hash(),
             neutral_camps,
+            player_team: team,
+            roster,
+            match_phase,
         }
+    }
+
+    pub fn calculate_state_hash(&self) -> String {
+        self.state_hash()
+    }
+}
+
+pub fn build_sanitized_snapshot(session: &BattleSession, team: u8, player_id: &str) -> SnapshotDto {
+    let pid = player_id.to_string();
+    session.snapshot_for_player(team, Some(&pid), None)
+}
+
+impl BattleSession {
+
+    pub fn resolve_ai_round(&mut self) -> Vec<GameEvent> {
+        self.resolve_round()
     }
 
     /// Compute cryptographic BLAKE3 state hash for audit and desync detection.
@@ -1009,10 +1285,10 @@ mod tests {
         session.state.update_fog();
 
         let hidden_move = GameEvent::UnitMoved {
-            unit_id: 4, // Team 1 Hero
-            from: HexCoord::new(4, 0),
-            to: HexCoord::new(5, -1),
-            path: vec![HexCoord::new(4, 0), HexCoord::new(5, -1)],
+            unit_id: 6, // Team 1 Hero
+            from: HexCoord::new(6, 0),
+            to: HexCoord::new(7, -1),
+            path: vec![HexCoord::new(6, 0), HexCoord::new(7, -1)],
             ap_spent: 1,
         };
 
@@ -1083,18 +1359,18 @@ mod tests {
         let res_stale = session.submit_player_orders(&player_p1, 0, 99, vec![]);
         assert_eq!(res_stale.unwrap_err().code, ProtocolErrorCode::StaleRound);
 
-        // 3. Reject unit not owned (Hero 4 is Team 1)
+        // 3. Reject unit not owned (Hero 6 is Team 1)
         let unowned_order = OrderDto {
-            unit_id: 4,
+            unit_id: 6,
             move_target: None,
             action: ActionDto::Wait,
         };
         let err_unowned = session
             .submit_player_orders(&player_p1, 0, 0, vec![unowned_order])
             .unwrap_err();
-        assert_eq!(err_unowned.code, ProtocolErrorCode::UnitNotOwned);
-        assert_eq!(err_unowned.unit_id, Some(4));
-        assert!(err_unowned.reason.contains("Unit #4"));
+        assert_eq!(err_unowned.code, ProtocolErrorCode::NotYourUnit);
+        assert_eq!(err_unowned.unit_id, Some(6));
+        assert!(err_unowned.reason.contains("Unit #6"));
 
         // 4. Reject invalid target (cannot attack own team)
         let friendly_attack = OrderDto {
@@ -1171,7 +1447,7 @@ mod tests {
                 vec![OrderDto {
                     unit_id: 1,
                     move_target: Some(HexDto::new(-4, 0)),
-                    action: ActionDto::Repair { target_id: 11 },
+                    action: ActionDto::Repair { target_id: 101 },
                 }],
             )
             .unwrap_err();
@@ -1179,7 +1455,7 @@ mod tests {
         assert!(err_full_repair.reason.contains("full health"));
 
         // 9. Accept Repair if structure is damaged and adjacent
-        session.state.get_unit_mut(11).unwrap().hp = 50;
+        session.state.get_unit_mut(101).unwrap().hp = 50;
         let valid_repair = session.submit_player_orders(
             &player_p1,
             0,
@@ -1187,7 +1463,7 @@ mod tests {
             vec![OrderDto {
                 unit_id: 1,
                 move_target: Some(HexDto::new(-4, 0)),
-                action: ActionDto::Repair { target_id: 11 },
+                action: ActionDto::Repair { target_id: 101 },
             }],
         );
         assert!(valid_repair.is_ok());

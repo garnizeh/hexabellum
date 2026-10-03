@@ -5,6 +5,11 @@ import {
   SanitizedGameEvent,
   ProtocolErrorCode,
   SpellTargetDto,
+  MatchPhaseDto,
+  PlayerLobbyDto,
+  HeroDto,
+  RosterEntryDto,
+  HeroDefId,
 } from './types';
 import { GameState, UnitData, HexCoord, UnitKind } from './bridge';
 import {
@@ -56,14 +61,32 @@ export function snapshotToGameState(snapshot: SnapshotDto): GameState {
   };
 }
 
+export interface LobbyState {
+  matchId: string;
+  phase: MatchPhaseDto;
+  players: PlayerLobbyDto[];
+  heroPools: Record<number, HeroDto[]>;
+  countdownMs?: number | null;
+}
+
 export interface ClientSessionEvents {
   onConnectionChange: (state: ConnectionState) => void;
   onMatchJoined: (matchId: string, team: number, snapshot: SnapshotDto) => void;
+  onLobbyUpdated: (lobby: LobbyState) => void;
+  onHeroSelected: (playerId: string, team: number, heroDefId: HeroDefId) => void;
+  onMatchStarting: (round: number, snapshot: SnapshotDto) => void;
   onRoundStarted: (round: number, deadlineUnixMs: number, snapshot: SnapshotDto) => void;
   onOrdersAccepted: (round: number) => void;
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
-  onRoundResolved: (round: number, events: SanitizedGameEvent[], snapshot: SnapshotDto) => void;
-  onMatchEnded: (winner: number | null, snapshot: SnapshotDto) => void;
+  onEarlyResolutionTriggered: (round: number, resolutionUnixMs: number) => void;
+  onRoundResolved: (
+    round: number,
+    events: SanitizedGameEvent[],
+    snapshot: SnapshotDto,
+    stateHash?: string | null
+  ) => void;
+  onPlayerConnectionUpdated: (playerId: string, connected: boolean, isAiControlled: boolean) => void;
+  onMatchEnded: (winner: number | null, snapshot: SnapshotDto, stateHash?: string | null) => void;
   onOpponentStatus?: (online: boolean) => void;
   onError: (msg: string) => void;
 }
@@ -71,6 +94,7 @@ export interface ClientSessionEvents {
 export class ClientSession {
   private net: NetworkBridge;
   private currentSnapshot: SnapshotDto | null = null;
+  private lobbyState: LobbyState | null = null;
   private currentTeam: number = 0;
   private stagedOrders = new Map<number, OrderDto>();
   private events: Partial<ClientSessionEvents> = {};
@@ -105,8 +129,38 @@ export class ClientSession {
     return this.currentSnapshot;
   }
 
+  getLobbyState(): LobbyState | null {
+    return this.lobbyState;
+  }
+
   getGameState(): GameState | null {
     return this.currentSnapshot ? snapshotToGameState(this.currentSnapshot) : null;
+  }
+
+  getControlledUnitIds(): number[] {
+    return this.currentSnapshot?.controlled_units ?? [];
+  }
+
+  getPrimaryControlledUnitId(): number | null {
+    const list = this.currentSnapshot?.controlled_units;
+    return list && list.length > 0 ? list[0] : null;
+  }
+
+  isMyControlledUnit(unitId: number): boolean {
+    if (!this.currentSnapshot) return true;
+    if (this.currentSnapshot.controlled_units.length === 0) return true;
+    return this.currentSnapshot.controlled_units.includes(unitId);
+  }
+
+  getMyHero(): UnitData | null {
+    const primaryId = this.getPrimaryControlledUnitId();
+    if (primaryId === null) return null;
+    const state = this.getGameState();
+    return state?.units[primaryId] ?? null;
+  }
+
+  getRoster(): RosterEntryDto[] {
+    return this.currentSnapshot?.roster ?? [];
   }
 
   getMapHexes(): HexCoord[] {
@@ -139,10 +193,34 @@ export class ClientSession {
       try {
         const body = await res.json();
         if (body?.message) detail = body.message;
-      } catch {
-        // use statusText fallback
-      }
+      } catch {}
       throw new Error(`Failed to create match (${res.status}): ${detail}`);
+    }
+    const data = await res.json();
+    return data.match_id;
+  }
+
+  async create5v5Match(enableAiTeam1: boolean = true, turnDurationSecs: number = 30): Promise<string> {
+    this.isPvAi = enableAiTeam1;
+    const res = await fetch('/api/matches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enable_ai_team_1: enableAiTeam1,
+        turn_duration_secs: turnDurationSecs,
+        players_per_team: 5,
+        heroes_per_team: 5,
+        map_radius: 8,
+        skip_draft: false,
+      }),
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        if (body?.message) detail = body.message;
+      } catch {}
+      throw new Error(`Failed to create 5v5 match (${res.status}): ${detail}`);
     }
     const data = await res.json();
     return data.match_id;
@@ -151,6 +229,20 @@ export class ClientSession {
   joinMatch(matchId: string): void {
     this.stagedOrders.clear();
     this.net.connect(matchId);
+  }
+
+  selectHero(heroDefId: HeroDefId): void {
+    this.net.selectHero(heroDefId);
+  }
+
+  setReady(ready: boolean): void {
+    this.net.setReady(ready);
+  }
+
+  cancelOrders(): void {
+    if (this.currentSnapshot) {
+      this.net.cancelOrders(this.currentSnapshot.round);
+    }
   }
 
   getStagedCount(): number {
@@ -167,6 +259,7 @@ export class ClientSession {
   }
 
   stageMoveOrder(unitId: number, q: number, r: number): boolean {
+    if (!this.isMyControlledUnit(unitId)) return false;
     const existing = this.stagedOrders.get(unitId);
     this.stagedOrders.set(unitId, {
       unit_id: unitId,
@@ -177,6 +270,7 @@ export class ClientSession {
   }
 
   stageAttackOrder(unitId: number, targetId: number): boolean {
+    if (!this.isMyControlledUnit(unitId)) return false;
     if (!this.currentSnapshot) return false;
     const unit = this.currentSnapshot.units.find(u => u.id === unitId);
     if (!unit || unit.hp === 0) return false;
@@ -201,6 +295,7 @@ export class ClientSession {
   }
 
   stageCastOrder(unitId: number, spellId: string, target: SpellTargetDto): boolean {
+    if (!this.isMyControlledUnit(unitId)) return false;
     if (!this.currentSnapshot) return false;
     const unit = this.currentSnapshot.units.find(u => u.id === unitId);
     if (!unit || unit.hp === 0) return false;
@@ -224,6 +319,7 @@ export class ClientSession {
   }
 
   stageRepairOrder(unitId: number, targetId: number): boolean {
+    if (!this.isMyControlledUnit(unitId)) return false;
     if (!this.currentSnapshot) return false;
     const unit = this.currentSnapshot.units.find(u => u.id === unitId);
     if (!unit || unit.hp === 0) return false;
@@ -247,6 +343,7 @@ export class ClientSession {
   }
 
   stageWaitOrder(unitId: number): boolean {
+    if (!this.isMyControlledUnit(unitId)) return false;
     const existing = this.stagedOrders.get(unitId);
     this.stagedOrders.set(unitId, {
       unit_id: unitId,
@@ -267,6 +364,7 @@ export class ClientSession {
   }
 
   getVisionBlockers(): Set<string> {
+    // Radius 8 arena features:
     // Walls at (0, 2) & (0, -2); Smoke pillars at (2, 2) & (-2, -2)
     return new Set(['0,2', '0,-2', '2,2', '-2,-2']);
   }
@@ -300,21 +398,13 @@ export class ClientSession {
       const path = this.findPath(unit.pos.q, unit.pos.r, fromQ, fromR);
       moveCost = path.length > 1 ? path.length - 1 : 0;
     }
-    // Attack costs 1 AP: ensure remaining AP >= 1
     if (moveCost + 1 > unit.ap) {
       return [];
     }
 
     const state = snapshotToGameState(this.currentSnapshot);
-    const visibleHexes = new Set(this.currentSnapshot.visible_hexes.map(h => `${h.q},${h.r}`));
-    return hexGetAttackTargets(
-      { q: fromQ, r: fromR },
-      unit.attack_range,
-      state.units,
-      this.currentTeam,
-      visibleHexes,
-      this.getVisionBlockers()
-    );
+    const blockers = this.getVisionBlockers();
+    return hexGetAttackTargets(unitId, { q: fromQ, r: fromR }, unit.attack_range, state, blockers);
   }
 
   getRepairTargets(unitId: number, fromQ: number, fromR: number): number[] {
@@ -327,18 +417,15 @@ export class ClientSession {
       const path = this.findPath(unit.pos.q, unit.pos.r, fromQ, fromR);
       moveCost = path.length > 1 ? path.length - 1 : 0;
     }
-    if (moveCost + 1 > unit.ap) return [];
+    if (moveCost + 1 > unit.ap) {
+      return [];
+    }
 
     const state = snapshotToGameState(this.currentSnapshot);
-    return hexGetRepairTargets({ q: fromQ, r: fromR }, state.units, this.currentTeam);
+    return hexGetRepairTargets(unitId, { q: fromQ, r: fromR }, state);
   }
 
-  getSpellTargets(
-    unitId: number,
-    spellId: string,
-    fromQ: number,
-    fromR: number
-  ): SpellTargetingResult {
+  getSpellTargets(unitId: number, spellId: string, fromQ: number, fromR: number): SpellTargetingResult {
     if (!this.currentSnapshot) {
       return { validUnitIds: [], obstructedUnitIds: [], isSelfOnly: false };
     }
@@ -357,46 +444,73 @@ export class ClientSession {
     }
 
     const state = snapshotToGameState(this.currentSnapshot);
-    const casterData: UnitData = {
+    const blockers = this.getVisionBlockers();
+    const virtualCaster: UnitData = {
       ...state.units[unitId],
       pos: { q: fromQ, r: fromR },
     };
-    const visibleHexes = new Set(this.currentSnapshot.visible_hexes.map(h => `${h.q},${h.r}`));
-    return hexGetSpellTargets(
-      casterData,
-      spellId,
-      state.units,
-      this.getVisionBlockers(),
-      visibleHexes
-    );
+    return hexGetSpellTargets(virtualCaster, spellId, state.units, blockers);
   }
 
   private setupNetworkCallbacks(): void {
     this.net.setCallbacks({
-      onConnectionChange: (state) => this.events.onConnectionChange?.(state),
-      onMatchJoined: (team, snapshot) => {
+      onConnectionChange: (state) => {
+        this.events.onConnectionChange?.(state);
+      },
+      onMatchJoined: (matchId, team, snapshot) => {
+        this.currentSnapshot = snapshot;
         this.currentTeam = team;
+        this.events.onMatchJoined?.(matchId, team, snapshot);
+      },
+      onLobbyUpdated: (matchId, phase, players, heroPools, countdownMs) => {
+        this.lobbyState = {
+          matchId,
+          phase,
+          players,
+          heroPools,
+          countdownMs,
+        };
+        this.events.onLobbyUpdated?.(this.lobbyState);
+      },
+      onHeroSelected: (playerId, team, heroDefId) => {
+        this.events.onHeroSelected?.(playerId, team, heroDefId);
+      },
+      onMatchStarting: (round, snapshot) => {
+        this.currentSnapshot = snapshot;
+        this.events.onMatchStarting?.(round, snapshot);
+      },
+      onRoundStarted: (round, deadlineUnixMs, snapshot) => {
         this.currentSnapshot = snapshot;
         this.stagedOrders.clear();
-        this.events.onMatchJoined?.(snapshot.match_id, team, snapshot);
+        this.events.onRoundStarted?.(round, deadlineUnixMs, snapshot);
       },
-      onRoundStarted: (round, deadline, snapshot) => {
+      onOrdersAccepted: (round) => {
+        this.events.onOrdersAccepted?.(round);
+      },
+      onOrderRejected: (round, code, reason) => {
+        this.events.onOrderRejected?.(round, code, reason);
+      },
+      onEarlyResolutionTriggered: (round, resolutionUnixMs) => {
+        this.events.onEarlyResolutionTriggered?.(round, resolutionUnixMs);
+      },
+      onRoundResolved: (round, events, snapshot, stateHash) => {
         this.currentSnapshot = snapshot;
         this.stagedOrders.clear();
-        this.events.onRoundStarted?.(round, deadline, snapshot);
+        this.events.onRoundResolved?.(round, events, snapshot, stateHash);
       },
-      onOrdersAccepted: (round) => this.events.onOrdersAccepted?.(round),
-      onOrderRejected: (round, code, reason) => this.events.onOrderRejected?.(round, code, reason),
-      onRoundResolved: (round, events, snapshot) => {
+      onPlayerConnectionUpdated: (playerId, connected, isAiControlled) => {
+        this.events.onPlayerConnectionUpdated?.(playerId, connected, isAiControlled);
+      },
+      onMatchEnded: (winner, snapshot, stateHash, _totalRounds) => {
         this.currentSnapshot = snapshot;
-        this.events.onRoundResolved?.(round, events, snapshot);
+        this.events.onMatchEnded?.(winner, snapshot, stateHash);
       },
-      onMatchEnded: (winner, snapshot) => {
-        this.currentSnapshot = snapshot;
-        this.events.onMatchEnded?.(winner, snapshot);
+      onOpponentStatus: (online) => {
+        this.events.onOpponentStatus?.(online);
       },
-      onOpponentStatus: (online) => this.events.onOpponentStatus?.(online),
-      onError: (msg) => this.events.onError?.(msg),
+      onError: (msg) => {
+        this.events.onError?.(msg);
+      },
     });
   }
 }

@@ -69,31 +69,99 @@ pub struct UnitDto {
     pub statuses: Vec<StatusDto>,
     #[serde(default)]
     pub lane_id: Option<String>,
+    #[serde(default)]
+    pub hero_id: Option<String>,
 }
 
 /// Arena terrain layout.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MapDto {
     pub radius: u32,
     pub walkable: Vec<HexDto>,
     pub obstacles: Vec<HexDto>,
 }
 
+pub type HeroDefId = String;
+pub type HexCoordDto = HexDto;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MatchPhaseDto {
+    Lobby,
+    HeroSelect,
+    Planning,
+    Resolution,
+    MatchEnd,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerLobbyDto {
+    pub player_id: String,
+    pub display_name: String,
+    pub team: u8,
+    pub connected: bool,
+    pub ready: bool,
+    pub hero_def_id: Option<HeroDefId>,
+    pub is_ai: bool,
+    #[serde(default)]
+    pub ping_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeroDto {
+    pub id: HeroDefId,
+    pub name: String,
+    pub role: String,
+    pub max_hp: u32,
+    pub attack_damage: u32,
+    pub attack_range: u32,
+    pub vision_range: u32,
+    pub max_energy: u32,
+    pub spell_id: String,
+    pub spell_name: String,
+    pub spell_desc: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterEntryDto {
+    pub player_id: Option<String>,
+    pub display_name: String,
+    pub hero_def_id: HeroDefId,
+    pub unit_id: UnitId,
+    pub team: u8,
+    pub connected: bool,
+    pub is_ai: bool,
+    pub orders_submitted: bool,
+    pub alive: bool,
+    /// Exact HP is included for all allies; masked for enemies unless currently in LOS.
+    pub hp: Option<u32>,
+    pub max_hp: u32,
+}
+
 /// Team-sanitized game state snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotDto {
+    #[serde(default)]
     pub match_id: MatchId,
     pub round: Round,
-    pub phase: String, // "Planning", "Resolution", "Ended"
+    pub phase: String, // "Planning", "Resolution", "Ended", etc.
     pub winner: Option<TeamId>,
+    #[serde(default)]
     pub map: MapDto,
     pub units: Vec<UnitDto>,
     pub visible_hexes: Vec<HexDto>,
     pub controlled_units: Vec<UnitId>,
+    #[serde(default)]
     pub deadline_unix_ms: Option<u64>,
+    #[serde(alias = "blake3_hash")]
     pub state_hash: String,
     #[serde(default)]
     pub neutral_camps: Vec<NeutralCampDto>,
+    #[serde(default)]
+    pub player_team: TeamId,
+    #[serde(default)]
+    pub roster: Vec<RosterEntryDto>,
+    #[serde(default)]
+    pub match_phase: Option<MatchPhaseDto>,
 }
 
 /// Spell target DTO.
@@ -228,13 +296,32 @@ pub enum ClientMessage {
         reconnect_token: Option<ReconnectToken>,
     },
     JoinMatch {
+        #[serde(default)]
         match_id: MatchId,
+        #[serde(default)]
+        player_id: Option<String>,
+        #[serde(default)]
+        display_name: Option<String>,
+        #[serde(default)]
+        reconnect_token: Option<String>,
+        #[serde(default)]
+        preferred_team: Option<u8>,
+    },
+    SelectHero {
+        hero_def_id: HeroDefId,
+    },
+    SetReady {
+        ready: bool,
     },
     SubmitOrders {
         round: Round,
         orders: Vec<OrderDto>,
     },
+    CancelOrders {
+        round: Round,
+    },
     Ping {
+        #[serde(alias = "timestamp_ms")]
         client_time_ms: u64,
     },
 }
@@ -254,6 +341,23 @@ pub enum ServerMessage {
         is_spectator: bool,
         snapshot: SnapshotDto,
     },
+    LobbyUpdated {
+        match_id: String,
+        phase: MatchPhaseDto,
+        players: Vec<PlayerLobbyDto>,
+        hero_pools: HashMap<u8, Vec<HeroDto>>,
+        #[serde(default)]
+        countdown_ms: Option<u64>,
+    },
+    HeroSelected {
+        player_id: String,
+        team: u8,
+        hero_def_id: HeroDefId,
+    },
+    MatchStarting {
+        round: Round,
+        initial_snapshot: SnapshotDto,
+    },
     RoundStarted {
         round: Round,
         deadline_unix_ms: u64,
@@ -267,15 +371,30 @@ pub enum ServerMessage {
         error_code: ProtocolErrorCode,
         reason: String,
     },
+    EarlyResolutionTriggered {
+        round: Round,
+        resolution_unix_ms: u64,
+    },
     RoundResolved {
         /// The round number that was resolved (corresponds to the round that was planned).
         round: Round,
         events: Vec<SanitizedGameEvent>,
         snapshot: SnapshotDto,
+        #[serde(default)]
+        state_hash: Option<String>,
+    },
+    PlayerConnectionUpdated {
+        player_id: String,
+        connected: bool,
+        is_ai_controlled: bool,
     },
     MatchEnded {
         winner: Option<TeamId>,
         snapshot: SnapshotDto,
+        #[serde(default)]
+        state_hash: Option<String>,
+        #[serde(default)]
+        total_rounds: Option<Round>,
     },
     OpponentStatus {
         online: bool,
@@ -285,6 +404,7 @@ pub enum ServerMessage {
         server_time_ms: u64,
     },
     Error {
+        #[serde(alias = "code")]
         error_code: ProtocolErrorCode,
         message: String,
     },
@@ -293,21 +413,54 @@ pub enum ServerMessage {
 /// Structured protocol error codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolErrorCode {
+    // Authentication & Controller Permissions
+    NotYourUnit,
+    InvalidOrderCount,
+    PlayerNotAuthenticated,
+    UnauthorizedAction,
+
+    // Match & Lobby Lifecycle
+    MatchFull,
+    LobbyAlreadyStarted,
+    NotInLobbyPhase,
+    NotInHeroSelectPhase,
+    NotInPlanningPhase,
+    HeroAlreadySelected,
+    InvalidHeroDef,
+    HeroSelectLocked,
+    PlayerAlreadyConnected,
+
+    // Turn & Timing
+    RoundMismatch,
+    TurnDeadlineExceeded,
+    OrdersAlreadySubmitted,
+
+    // Gameplay Rules
+    InsufficientAp,
+    InsufficientEnergy,
+    AbilityOnCooldown,
+    LineOfSightBlocked,
+    TargetOutOfRange,
+    InvalidTarget,
+    TargetDead,
+    PathObstructed,
+
+    // Legacy & General codes
     InvalidMessage,
     MatchNotFound,
-    MatchFull,
     NotAuthorized,
     StaleRound,
     InvalidPhase,
     UnitNotOwned,
     UnitDead,
-    InvalidTarget,
     TimerExpired,
     InternalError,
     InsufficientResources,
     CooldownActive,
     MissingLineOfSight,
 }
+
+pub use ProtocolErrorCode as ErrorCode;
 
 #[cfg(test)]
 mod tests {
@@ -364,12 +517,16 @@ mod tests {
                 cooldowns: HashMap::new(),
                 statuses: Vec::new(),
                 lane_id: None,
+                hero_id: None,
             }],
             visible_hexes: vec![HexDto::new(-4, -1)],
             controlled_units: vec![1],
             deadline_unix_ms: Some(1700000000000),
             state_hash: "abcd1234deadbeef".into(),
             neutral_camps: Vec::new(),
+            player_team: 0,
+            roster: Vec::new(),
+            match_phase: Some(MatchPhaseDto::Planning),
         };
 
         let msg = ServerMessage::RoundStarted {
@@ -439,4 +596,39 @@ mod tests {
         let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(msg, decoded);
     }
+
+    #[test]
+    fn test_phase5_messages_serialization() {
+        let lobby_msg = ServerMessage::LobbyUpdated {
+            match_id: "m-5v5".into(),
+            phase: MatchPhaseDto::Lobby,
+            players: vec![PlayerLobbyDto {
+                player_id: "p1".into(),
+                display_name: "Commander1".into(),
+                team: 0,
+                connected: true,
+                ready: true,
+                hero_def_id: Some("sniper".into()),
+                is_ai: false,
+                ping_ms: Some(25),
+            }],
+            hero_pools: HashMap::new(),
+            countdown_ms: Some(20000),
+        };
+        let json = serde_json::to_string(&lobby_msg).unwrap();
+        assert!(json.contains("\"type\":\"LobbyUpdated\""));
+        assert!(json.contains("\"phase\":\"Lobby\""));
+        let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(lobby_msg, decoded);
+
+        let select_hero_client = ClientMessage::SelectHero {
+            hero_def_id: "berserker".into(),
+        };
+        let json2 = serde_json::to_string(&select_hero_client).unwrap();
+        assert!(json2.contains("\"type\":\"SelectHero\""));
+        assert!(json2.contains("\"hero_def_id\":\"berserker\""));
+        let decoded2: ClientMessage = serde_json::from_str(&json2).unwrap();
+        assert_eq!(select_hero_client, decoded2);
+    }
 }
+

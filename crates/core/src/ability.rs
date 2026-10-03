@@ -21,7 +21,7 @@ pub enum EffectKind {
     ApplyStatus,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectDef {
     pub kind: EffectKind,
     pub amount: u32,
@@ -29,7 +29,7 @@ pub struct EffectDef {
     pub status: Option<StatusDef>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpellDef {
     pub id: SpellId,
     pub name: String,
@@ -104,6 +104,47 @@ impl SpellCatalog {
                     amount: 20,
                     radius: None,
                     status: None,
+                }],
+            }),
+            "longshot" => Some(SpellDef {
+                id: "longshot".to_string(),
+                name: "Longshot".to_string(),
+                ap_cost: 1,
+                energy_cost: 3,
+                cooldown: 3,
+                range: 4,
+                min_range: 2,
+                targeting: TargetingMode::EnemyUnit,
+                requires_line_of_sight: true,
+                effects: vec![EffectDef {
+                    kind: EffectKind::Damage,
+                    amount: 30,
+                    radius: None,
+                    status: None,
+                }],
+            }),
+            "fury" => Some(SpellDef {
+                id: "fury".to_string(),
+                name: "Fury".to_string(),
+                ap_cost: 1,
+                energy_cost: 2,
+                cooldown: 3,
+                range: 0,
+                min_range: 0,
+                targeting: TargetingMode::SelfOnly,
+                requires_line_of_sight: false,
+                effects: vec![EffectDef {
+                    kind: EffectKind::ApplyStatus,
+                    amount: 0,
+                    radius: None,
+                    status: Some(StatusDef {
+                        id: "fury_buff".to_string(),
+                        duration_rounds: 2,
+                        modifiers: vec![crate::status::StatModifier {
+                            stat: crate::status::StatKind::AttackDamage,
+                            value: 8,
+                        }],
+                    }),
                 }],
             }),
             _ => None,

@@ -70,55 +70,55 @@ Phase 5 validates the core **player model, networking scale, and lobby lifecycle
 ## Definition of Done (DoD)
 
 ### 1. Core Simulation (`crates/core`)
-- [ ] `Controller` enum defined: `Player(PlayerId)`, `Ai`, and `Automatic`.
-- [ ] `ControllerMap` implemented in `BattleSession` as the authoritative source of unit command permissions.
-- [ ] `BattleConfig` expanded to support configurable `map_radius: 8`, `players_per_team: 5`, and `heroes_per_team: 5`.
-- [ ] Hero catalogue expanded to 5 complete archetypes: Vanguard, Ranger, Warden, Sniper, and Berserker.
-- [ ] Sniper implemented: HP 80, AP 3, Initiative 4, Attack Damage 14, Attack Range 3, Vision Range 5, Energy 5.
-- [ ] Sniper active ability **Longshot** implemented: 1 AP, 3 Energy, 3 Cooldown, Range 4, Min Range 2, Enemy Unit, requires LOS, 30 Damage.
-- [ ] Berserker implemented: HP 120, AP 3, Initiative 3, Attack Damage 20, Attack Range 1, Vision Range 3, Energy 5.
-- [ ] Berserker active ability **Fury** implemented: 1 AP, 2 Energy, 3 Cooldown, Self Only, applies `fury_buff` (+8 Attack Damage for 2 rounds).
-- [ ] Team vision algorithm computes the composite line-of-sight union across all allied heroes, towers, spawners, and minions.
-- [ ] `TurnProcessor` executes 10-hero simultaneous turn resolution with deterministic tie-breaking without panics or deadlocks.
-- [ ] Automated fallback order generation for AI-controlled heroes and timed-out human players.
+- [x] `Controller` enum defined: `Player(PlayerId)`, `Ai`, and `Automatic`.
+- [x] `ControllerMap` implemented in `BattleSession` as the authoritative source of unit command permissions.
+- [x] `BattleConfig` expanded to support configurable `map_radius: 8`, `players_per_team: 5`, and `heroes_per_team: 5`.
+- [x] Hero catalogue expanded to 5 complete archetypes: Vanguard, Ranger, Warden, Sniper, and Berserker.
+- [x] Sniper implemented: HP 80, AP 3, Initiative 4, Attack Damage 14, Attack Range 3, Vision Range 5, Energy 5.
+- [x] Sniper active ability **Longshot** implemented: 1 AP, 3 Energy, 3 Cooldown, Range 4, Min Range 2, Enemy Unit, requires LOS, 30 Damage.
+- [x] Berserker implemented: HP 120, AP 3, Initiative 3, Attack Damage 20, Attack Range 1, Vision Range 3, Energy 5.
+- [x] Berserker active ability **Fury** implemented: 1 AP, 2 Energy, 3 Cooldown, Self Only, applies `fury_buff` (+8 Attack Damage for 2 rounds).
+- [x] Team vision algorithm computes the composite line-of-sight union across all allied heroes, towers, spawners, and minions.
+- [x] `TurnProcessor` executes 10-hero simultaneous turn resolution with deterministic tie-breaking without panics or deadlocks.
+- [x] Automated fallback order generation for AI-controlled heroes and timed-out human players.
 
 ### 2. Protocol & Wire Models (`crates/protocol`)
-- [ ] Client messages defined: `JoinMatch`, `SelectHero`, `SetReady`, `SubmitOrders`, `Ping`, `Reconnect`.
-- [ ] Server messages defined: `LobbyUpdated`, `HeroSelected`, `MatchStarting`, `RoundStarted`, `OrdersAccepted`, `RoundResolved`, `MatchEnded`, `PlayerDisconnected`, `PlayerReconnected`, `Error`.
-- [ ] `PlayerLobbyDto` defined with `player_id`, `display_name`, `team`, `connected`, `ready`, `hero_def_id`, and `is_ai`.
-- [ ] `HeroDto` defined with hero stats, role, and spell summary.
-- [ ] `RosterEntryDto` defined for team roster HUD, carrying health, status, connection, and readiness.
-- [ ] `SnapshotDto` extended with `controlled_units: Vec<UnitId>`, `player_team: TeamId`, and `roster: Vec<RosterEntryDto>`.
-- [ ] Extended `ErrorCode` enum: `NotYourUnit`, `HeroAlreadySelected`, `LobbyFull`, `HeroSelectLocked`, `InvalidHeroDef`, `NotInPlanningPhase`, `PlayerAlreadyConnected`, `InvalidOrderCount`.
+- [x] Client messages defined: `JoinMatch`, `SelectHero`, `SetReady`, `SubmitOrders`, `Ping`, `Reconnect`.
+- [x] Server messages defined: `LobbyUpdated`, `HeroSelected`, `MatchStarting`, `RoundStarted`, `OrdersAccepted`, `RoundResolved`, `MatchEnded`, `PlayerDisconnected`, `PlayerReconnected`, `Error`.
+- [x] `PlayerLobbyDto` defined with `player_id`, `display_name`, `team`, `connected`, `ready`, `hero_def_id`, and `is_ai`.
+- [x] `HeroDto` defined with hero stats, role, and spell summary.
+- [x] `RosterEntryDto` defined for team roster HUD, carrying health, status, connection, and readiness.
+- [x] `SnapshotDto` extended with `controlled_units: Vec<UnitId>`, `player_team: TeamId`, and `roster: Vec<RosterEntryDto>`.
+- [x] Extended `ErrorCode` enum: `NotYourUnit`, `HeroAlreadySelected`, `LobbyFull`, `HeroSelectLocked`, `InvalidHeroDef`, `NotInPlanningPhase`, `PlayerAlreadyConnected`, `InvalidOrderCount`.
 
 ### 3. Server Authority & Actor Engine (`crates/server`)
-- [ ] `MatchActor` implements full 5-state lifecycle: `Lobby`, `HeroSelect`, `Planning`, `Resolution`, `MatchEnd`.
-- [ ] Tokio actor manages up to 10 concurrent WebSocket connections with dedicated `mpsc` outgoing channels.
-- [ ] Automatic team balancing assigns incoming players to balance team human counts.
-- [ ] Hero select phase enforces 20-second timer, team uniqueness, and random hero assignment for unpicked slots upon expiry.
-- [ ] Strict ingestion authentication verifies sender's `PlayerId` owns the target `UnitId` via `ControllerMap`.
-- [ ] Server strictly rejects orders submitted for units not owned by the sender with `ErrorCode::NotYourUnit`.
-- [ ] Early round resolution triggers with 1.0s grace period when all connected human players submit valid orders.
-- [ ] Disconnected players smoothly transition to `ConnectionState::AiReplacement`; AI generates fallback orders on timer expiry.
-- [ ] Reconnecting players restore connection channel, receive current snapshot, phase, remaining time, and reclaim hero ownership.
-- [ ] Snapshot and event sanitizer ensures zero-knowledge privacy: concealed enemy heroes are excluded from snapshots and hidden movements are stripped from events.
+- [x] `MatchActor` implements full 5-state lifecycle: `Lobby`, `HeroSelect`, `Planning`, `Resolution`, `MatchEnd`.
+- [x] Tokio actor manages up to 10 concurrent WebSocket connections with dedicated `mpsc` outgoing channels.
+- [x] Automatic team balancing assigns incoming players to balance team human counts.
+- [x] Hero select phase enforces 20-second timer, team uniqueness, and random hero assignment for unpicked slots upon expiry.
+- [x] Strict ingestion authentication verifies sender's `PlayerId` owns the target `UnitId` via `ControllerMap`.
+- [x] Server strictly rejects orders submitted for units not owned by the sender with `ErrorCode::NotYourUnit`.
+- [x] Early round resolution triggers with 1.0s grace period when all connected human players submit valid orders.
+- [x] Disconnected players smoothly transition to `ConnectionState::AiReplacement`; AI generates fallback orders on timer expiry.
+- [x] Reconnecting players restore connection channel, receive current snapshot, phase, remaining time, and reclaim hero ownership.
+- [x] Snapshot and event sanitizer ensures zero-knowledge privacy: concealed enemy heroes are excluded from snapshots and hidden movements are stripped from events.
 
 ### 4. Browser Client & UI/UX (`web/`)
-- [ ] PixiJS v8 camera controller supports pointer drag-to-pan, mouse-wheel/pinch zooming (0.5x to 2.0x), and keyboard panning (WASD/Arrows).
-- [ ] Dedicated "Center on My Hero" button and `[Space]` keybinding with smooth viewport interpolation.
-- [ ] Modern glassmorphic Lobby screen showing 2-column team rosters, player readiness, ping indicators, and start match countdown.
-- [ ] Hero Select screen displaying 5-hero card grid/carousel, hero base stats, ability details, 20s countdown ring, and selection lock-in.
-- [ ] Tactical Battle HUD anchored to player's controlled hero: portrait, HP/Energy radial bars, AP pips, ability dock with cooldown sweeps and hotkeys (`Q`, `F`, `A`, `Space`).
-- [ ] Allied Team Roster sidebar displaying 5 allied heroes, health bars, alive/dead state, submission checkmarks, and AI/DC status badges.
-- [ ] Sighted enemy roster indicator showing spotted enemy heroes and masking unrevealed health bars.
-- [ ] Client input controller restricts order queuing exclusively to the player's assigned hero. Clicking allies opens inspector; clicking enemies targets them.
-- [ ] Reconnection banner with automatic retry counter and reconnection status feedback.
+- [x] PixiJS v8 camera controller supports pointer drag-to-pan, mouse-wheel/pinch zooming (0.5x to 2.0x), and keyboard panning (WASD/Arrows).
+- [x] Dedicated "Center on My Hero" button and `[Space]` keybinding with smooth viewport interpolation.
+- [x] Modern glassmorphic Lobby screen showing 2-column team rosters, player readiness, ping indicators, and start match countdown.
+- [x] Hero Select screen displaying 5-hero card grid/carousel, hero base stats, ability details, 20s countdown ring, and selection lock-in.
+- [x] Tactical Battle HUD anchored to player's controlled hero: portrait, HP/Energy radial bars, AP pips, ability dock with cooldown sweeps and hotkeys (`Q`, `F`, `A`, `Space`).
+- [x] Allied Team Roster sidebar displaying 5 allied heroes, health bars, alive/dead state, submission checkmarks, and AI/DC status badges.
+- [x] Sighted enemy roster indicator showing spotted enemy heroes and masking unrevealed health bars.
+- [x] Client input controller restricts order queuing exclusively to the player's assigned hero. Clicking allies opens inspector; clicking enemies targets them.
+- [x] Reconnection banner with automatic retry counter and reconnection status feedback.
 
 ### 5. Verification & Determinism Harness
-- [ ] Unit tests verify controller permission enforcement, team fog union, and hero select uniqueness.
-- [ ] Integration tests verify 10-player WebSocket lifecycle, dynamic AI takeover, and hot-reconnect recovery.
-- [ ] Snapshot privacy audit test verifies no un-sighted enemy coordinates or health values exist in serialized JSON payloads.
-- [ ] 100-round 5v5 headless simulation runs without panic and achieves 100% bitwise BLAKE3 hash determinism across identical seeds.
+- [x] Unit tests verify controller permission enforcement, team fog union, and hero select uniqueness.
+- [x] Integration tests verify 10-player WebSocket lifecycle, dynamic AI takeover, and hot-reconnect recovery.
+- [x] Snapshot privacy audit test verifies no un-sighted enemy coordinates or health values exist in serialized JSON payloads.
+- [x] 100-round 5v5 headless simulation runs without panic and achieves 100% bitwise BLAKE3 hash determinism across identical seeds.
 
 ---
 
@@ -1294,33 +1294,34 @@ fn test_5v5_headless_ai_determinism() {
 
 | # | System Area | Criterion Specification | Target Verification Method | Status |
 |---|---|---|---|:---:|
-| 1 | **Match Config** | Server supports match configuration for 1v1, 3v3, and 5v5. | Unit Test (`BattleConfig`) | ☐ |
-| 2 | **Concurrency** | Server successfully manages up to 10 concurrent WebSocket connections. | Integration Test (`test_10_player_connections`) | ☐ |
-| 3 | **Team Assignment** | Players automatically balanced between Team 0 and Team 1. | Unit Test (`test_team_balance`) | ☐ |
-| 4 | **Lobby Broadcast** | All connection, ready state, and slot changes broadcast via `LobbyUpdated`. | WS Integration Test | ☐ |
-| 5 | **Hero Draft** | 20-second Hero Select draft enforces uniqueness per team. | Unit Test (`test_hero_select_uniqueness`) | ☐ |
-| 6 | **Auto-Lock** | Unpicked hero slots receive random remaining heroes upon timeout. | Unit Test (`test_hero_select_timeout`) | ☐ |
-| 7 | **Dynamic AI Backfill** | Missing human slots filled by AI at match start. | Integration Test (`test_ai_backfill`) | ☐ |
-| 8 | **Hybrid Start** | Match starts cleanly with any combination of human and AI players. | Headless Soak Test | ☐ |
-| 9 | **Single-Hero Control** | Each human player controls exactly one hero avatar. | Unit Test (`ControllerMap`) | ☐ |
-| 10| **Order Gating** | Server rejects orders submitted for units not owned by the sender. | Security Test (`test_controller_permission`) | ☐ |
-| 11| **Sniper Ability** | `Longshot` deals 30 damage at range 4 (min 2), requiring LOS. | Gameplay Unit Test (`test_sniper_longshot`) | ☐ |
-| 12| **Berserker Ability** | `Fury` applies `fury_buff` (+8 attack damage for 2 rounds). | Gameplay Unit Test (`test_berserker_fury`) | ☐ |
-| 13| **Shared Team Fog** | Fog calculation unions all allied sightlines into a single team mask. | Unit Test (`TeamFogEngine`) | ☐ |
-| 14| **Zero-Knowledge Privacy**| Concealed enemy units and jungle states are excluded from client snapshots. | Anti-Cheat Audit Test | ☐ |
-| 15| **Event Sanitization** | Movements and attacks in unrevealed hexes are masked in `RoundResolved`. | Protocol Sanitizer Test | ☐ |
-| 16| **Turn Countdown** | Server enforces authoritative 30-second turn timer. | Integration Test (`test_turn_timer`) | ☐ |
-| 17| **Early Resolution** | 1.0s grace period triggers when all connected humans submit valid orders. | Concurrency Test (`test_early_resolution`) | ☐ |
-| 18| **AI Timeout Orders** | Server AI generates valid fallback orders for timed-out human heroes. | Integration Test (`test_ai_fallback`) | ☐ |
-| 19| **Disconnect Recovery** | Disconnected players transition to AI; reconnected players regain control. | Reconnect Fuzzing Test | ☐ |
-| 20| **Map Topology** | Radius 8 map includes bases, lane waypoints, 2 camps, and 6 vision blockers. | Topology Integrity Test | ☐ |
-| 21| **Camera Pan/Zoom** | Client viewport supports smooth drag-pan, clamped zoom, and WASD keys. | Browser Test (`web/`) | ☐ |
-| 22| **Center on Hero** | `[Space]` key snaps camera to player's controlled hero. | Browser Test (`web/`) | ☐ |
-| 23| **Tactical HUD** | HUD anchors to controlled hero, displaying AP, Energy, and cooldowns. | UI/UX Visual Inspection | ☐ |
-| 24| **Team Roster Panel** | Client displays allied team health, alive/dead state, and submission pips. | Browser Component Test | ☐ |
-| 25| **Spotted Enemy Bar** | Enemies in fog show status icons without revealing exact positions or HP. | Fog UI Verification | ☐ |
-| 26| **Phase 4 Integration** | Abilities, structure repair, neutral camps, and LOS work stably in 5v5. | End-to-End Battle Test | ☐ |
-| 27| **Deterministic Hashing** | 100-round 5v5 headless simulation achieves 100% bitwise BLAKE3 determinism. | Determinism Test (`test_5v5_soak`) | ☐ |
+| 1 | **Match Config** | Server supports match configuration for 1v1, 3v3, and 5v5. | Unit Test (`BattleConfig`) | ☑ |
+| 2 | **Concurrency** | Server successfully manages up to 10 concurrent WebSocket connections. | Integration Test (`test_10_player_connections`) | ☑ |
+| 3 | **Team Assignment** | Players automatically balanced between Team 0 and Team 1. | Unit Test (`test_team_balance`) | ☑ |
+| 4 | **Lobby Broadcast** | All connection, ready state, and slot changes broadcast via `LobbyUpdated`. | WS Integration Test | ☑ |
+| 5 | **Hero Draft** | 20-second Hero Select draft enforces uniqueness per team. | Unit Test (`test_hero_select_uniqueness`) | ☑ |
+| 6 | **Auto-Lock** | Unpicked hero slots receive random remaining heroes upon timeout. | Unit Test (`test_hero_select_timeout`) | ☑ |
+| 7 | **Dynamic AI Backfill** | Missing human slots filled by AI at match start. | Integration Test (`test_ai_backfill`) | ☑ |
+| 8 | **Hybrid Start** | Match starts cleanly with any combination of human and AI players. | Headless Soak Test | ☑ |
+| 9 | **Single-Hero Control** | Each human player controls exactly one hero avatar. | Unit Test (`ControllerMap`) | ☑ |
+| 10| **Order Gating** | Server rejects orders submitted for units not owned by the sender. | Security Test (`test_controller_permission`) | ☑ |
+| 11| **Sniper Ability** | `Longshot` deals 30 damage at range 4 (min 2), requiring LOS. | Gameplay Unit Test (`test_sniper_longshot`) | ☑ |
+| 12| **Berserker Ability** | `Fury` applies `fury_buff` (+8 attack damage for 2 rounds). | Gameplay Unit Test (`test_berserker_fury`) | ☑ |
+| 13| **Shared Team Fog** | Fog calculation unions all allied sightlines into a single team mask. | Unit Test (`TeamFogEngine`) | ☑ |
+| 14| **Zero-Knowledge Privacy**| Concealed enemy units and jungle states are excluded from client snapshots. | Anti-Cheat Audit Test | ☑ |
+| 15| **Event Sanitization** | Movements and attacks in unrevealed hexes are masked in `RoundResolved`. | Protocol Sanitizer Test | ☑ |
+| 16| **Turn Countdown** | Server enforces authoritative 30-second turn timer. | Integration Test (`test_turn_timer`) | ☑ |
+| 17| **Early Resolution** | 1.0s grace period triggers when all connected humans submit valid orders. | Concurrency Test (`test_early_resolution`) | ☑ |
+| 18| **AI Timeout Orders** | Server AI generates valid fallback orders for timed-out human heroes. | Integration Test (`test_ai_fallback`) | ☑ |
+| 19| **Disconnect Recovery** | Disconnected players transition to AI; reconnected players regain control. | Reconnect Fuzzing Test | ☑ |
+| 20| **Map Topology** | Radius 8 map includes bases, lane waypoints, 2 camps, and 6 vision blockers. | Topology Integrity Test | ☑ |
+| 21| **Camera Pan/Zoom** | Client viewport supports smooth drag-pan, clamped zoom, and WASD keys. | Browser Test (`web/`) | ☑ |
+| 22| **Center on Hero** | `[Space]` key snaps camera to player's controlled hero. | Browser Test (`web/`) | ☑ |
+| 23| **Tactical HUD** | HUD anchors to controlled hero, displaying AP, Energy, and cooldowns. | UI/UX Visual Inspection | ☑ |
+| 24| **Team Roster Panel** | Client displays allied team health, alive/dead state, and submission pips. | Browser Component Test | ☑ |
+| 25| **Spotted Enemy Bar** | Enemies in fog show status icons without revealing exact positions or HP. | Fog UI Verification | ☑ |
+| 26| **Phase 4 Integration** | Abilities, structure repair, neutral camps, and LOS work stably in 5v5. | End-to-End Battle Test | ☑ |
+| 27| **Deterministic Hashing** | 100-round 5v5 headless simulation achieves 100% bitwise BLAKE3 determinism. | Determinism Test (`test_5v5_soak`) | ☑ |
+
 
 ---
 

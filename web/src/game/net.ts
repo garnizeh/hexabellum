@@ -5,18 +5,43 @@ import {
   OrderDto,
   SanitizedGameEvent,
   ProtocolErrorCode,
+  MatchPhaseDto,
+  PlayerLobbyDto,
+  HeroDto,
+  HeroDefId,
 } from './types';
 
 export type ConnectionState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'RECONNECTING';
 
 export interface NetworkCallbacks {
   onConnectionChange: (state: ConnectionState) => void;
-  onMatchJoined: (team: number, snapshot: SnapshotDto) => void;
+  onMatchJoined: (matchId: string, team: number, snapshot: SnapshotDto) => void;
+  onLobbyUpdated?: (
+    matchId: string,
+    phase: MatchPhaseDto,
+    players: PlayerLobbyDto[],
+    heroPools: Record<number, HeroDto[]>,
+    countdownMs?: number | null
+  ) => void;
+  onHeroSelected?: (playerId: string, team: number, heroDefId: HeroDefId) => void;
+  onMatchStarting?: (round: number, initialSnapshot: SnapshotDto) => void;
   onRoundStarted: (round: number, deadlineUnixMs: number, snapshot: SnapshotDto) => void;
   onOrdersAccepted: (round: number) => void;
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
-  onRoundResolved: (round: number, events: SanitizedGameEvent[], snapshot: SnapshotDto) => void;
-  onMatchEnded: (winner: number | null, snapshot: SnapshotDto) => void;
+  onEarlyResolutionTriggered?: (round: number, resolutionUnixMs: number) => void;
+  onRoundResolved: (
+    round: number,
+    events: SanitizedGameEvent[],
+    snapshot: SnapshotDto,
+    stateHash?: string | null
+  ) => void;
+  onPlayerConnectionUpdated?: (playerId: string, connected: boolean, isAiControlled: boolean) => void;
+  onMatchEnded: (
+    winner: number | null,
+    snapshot: SnapshotDto,
+    stateHash?: string | null,
+    totalRounds?: number | null
+  ) => void;
   onOpponentStatus?: (online: boolean) => void;
   onLatency?: (latencyMs: number) => void;
   onError: (message: string) => void;
@@ -126,6 +151,27 @@ export class NetworkBridge {
     };
   }
 
+  selectHero(heroDefId: HeroDefId): void {
+    this.send({
+      type: 'SelectHero',
+      hero_def_id: heroDefId,
+    });
+  }
+
+  setReady(ready: boolean): void {
+    this.send({
+      type: 'SetReady',
+      ready,
+    });
+  }
+
+  cancelOrders(round: number): void {
+    this.send({
+      type: 'CancelOrders',
+      round,
+    });
+  }
+
   submitOrders(round: number, orders: OrderDto[]): void {
     this.send({
       type: 'SubmitOrders',
@@ -158,7 +204,25 @@ export class NetworkBridge {
         break;
 
       case 'MatchJoined':
-        this.callbacks.onMatchJoined?.(msg.team, msg.snapshot);
+        this.callbacks.onMatchJoined?.(msg.match_id, msg.team, msg.snapshot);
+        break;
+
+      case 'LobbyUpdated':
+        this.callbacks.onLobbyUpdated?.(
+          msg.match_id,
+          msg.phase,
+          msg.players,
+          msg.hero_pools,
+          msg.countdown_ms
+        );
+        break;
+
+      case 'HeroSelected':
+        this.callbacks.onHeroSelected?.(msg.player_id, msg.team, msg.hero_def_id);
+        break;
+
+      case 'MatchStarting':
+        this.callbacks.onMatchStarting?.(msg.round, msg.initial_snapshot);
         break;
 
       case 'RoundStarted':
@@ -173,12 +237,34 @@ export class NetworkBridge {
         this.callbacks.onOrderRejected?.(msg.round, msg.error_code, msg.reason);
         break;
 
+      case 'EarlyResolutionTriggered':
+        this.callbacks.onEarlyResolutionTriggered?.(msg.round, msg.resolution_unix_ms);
+        break;
+
       case 'RoundResolved':
-        this.callbacks.onRoundResolved?.(msg.round, msg.events, msg.snapshot);
+        this.callbacks.onRoundResolved?.(
+          msg.round,
+          msg.events,
+          msg.snapshot,
+          msg.state_hash
+        );
+        break;
+
+      case 'PlayerConnectionUpdated':
+        this.callbacks.onPlayerConnectionUpdated?.(
+          msg.player_id,
+          msg.connected,
+          msg.is_ai_controlled
+        );
         break;
 
       case 'MatchEnded':
-        this.callbacks.onMatchEnded?.(msg.winner, msg.snapshot);
+        this.callbacks.onMatchEnded?.(
+          msg.winner,
+          msg.snapshot,
+          msg.state_hash,
+          msg.total_rounds
+        );
         break;
 
       case 'OpponentStatus':

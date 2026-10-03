@@ -6,6 +6,7 @@ export class ModeSelectModal {
   private lessonSelectEl: HTMLSelectElement | null = null;
 
   private onStartTutorialCb: ((lessonId: string) => void) | null = null;
+  private onStart5v5Cb: (() => void) | null = null;
   private onStartPvAICb: (() => void) | null = null;
   private onStartPvPCb: (() => void) | null = null;
   private onJoinMatchCb: ((matchId: string) => void) | null = null;
@@ -17,6 +18,10 @@ export class ModeSelectModal {
     document.body.appendChild(this.modalEl);
 
     this.renderFtueBanner();
+  }
+
+  public setOnStart5v5(cb: () => void) {
+    this.onStart5v5Cb = cb;
   }
 
   public setOnStartTutorial(cb: (lessonId: string) => void) {
@@ -145,6 +150,9 @@ export class ModeSelectModal {
               </ul>
 
               <div class="modal-btn-group" style="gap: 8px;">
+                <button id="btn-hub-start-5v5" class="btn-mode-start" style="background: linear-gradient(135deg, #7c3aed, #6366f1); margin-bottom: 4px;">
+                  ⚔️ Batalha 5v5 MOBA (10 Jogadores & Draft)
+                </button>
                 <button id="btn-hub-start-pvai" class="btn-mode-start btn-mode-pvai">
                   🤖 Jogar contra Servidor IA (PvAI)
                 </button>
@@ -169,6 +177,11 @@ export class ModeSelectModal {
     `;
 
     this.lessonSelectEl = this.modalEl.querySelector('#hub-lesson-select') as HTMLSelectElement;
+
+    this.modalEl.querySelector('#btn-hub-start-5v5')?.addEventListener('click', () => {
+      this.close();
+      if (this.onStart5v5Cb) this.onStart5v5Cb();
+    });
 
     this.modalEl.querySelector('#btn-hub-start-tutorial')?.addEventListener('click', () => {
       const selected = this.lessonSelectEl?.value || 'lesson_00_intro';

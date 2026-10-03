@@ -1,5 +1,6 @@
 import * as PIXI from 'pixi.js';
 import './ui/tutorial.css';
+import './ui/phase5.css';
 import {
   initGame,
   getPlayerState,
@@ -18,6 +19,8 @@ import { SanitizedGameEvent, SnapshotDto } from './game/types';
 import { TutorialController } from './game/tutorial/TutorialController';
 import { ModeSelectModal } from './ui/ModeSelectModal';
 import { AbilityDock } from './ui/AbilityDock';
+import { LobbyScreen } from './ui/LobbyScreen';
+import { HeroSelectScreen } from './ui/HeroSelectScreen';
 
 async function main() {
   // Attempt local WASM init (optional, retained for local offline dev)
@@ -56,6 +59,7 @@ async function main() {
   // Matchmaking UI elements
   const matchModal = document.getElementById('match-dialog-modal') as HTMLElement;
   const btnOpenMatchmaking = document.getElementById('btn-open-matchmaking') as HTMLButtonElement;
+  const btnStart5v5 = document.getElementById('btn-start-5v5') as HTMLButtonElement;
   const btnStartPvAI = document.getElementById('btn-start-pvai') as HTMLButtonElement;
   const btnStartPvP = document.getElementById('btn-start-pvp') as HTMLButtonElement;
   const btnSubmitJoin = document.getElementById('btn-submit-join') as HTMLButtonElement;
@@ -67,6 +71,12 @@ async function main() {
   const session = new ClientSession();
   let isOnline = false;
 
+  const lobbyScreen = new LobbyScreen();
+  lobbyScreen.setSession(session);
+
+  const heroSelectScreen = new HeroSelectScreen();
+  heroSelectScreen.setSession(session);
+
   const input = new InputHandler(renderer, null);
   const abilityDock = new AbilityDock();
   abilityDock.setInputHandler(input);
@@ -74,6 +84,31 @@ async function main() {
 
   input.setOnUnitSelectedChange((unit) => {
     abilityDock.update(unit);
+  });
+
+  // Provide hero position for Space key snap
+  renderer.getCamera().setHeroPositionProvider(() => {
+    const myHero = session.getMyHero();
+    if (myHero) {
+      return renderer.hexToPixel(myHero.pos.q, myHero.pos.r);
+    }
+    const selected = input.getSelectedUnit();
+    if (selected) {
+      return renderer.hexToPixel(selected.pos.q, selected.pos.r);
+    }
+    return null;
+  });
+
+  abilityDock.setOnCenterHero(() => {
+    renderer.getCamera().centerOnHero();
+  });
+
+  hud.setOnFocusUnit((unitId) => {
+    const snap = session.getSnapshot();
+    const unit = snap?.units.find((u) => u.id === unitId);
+    if (unit) {
+      renderer.centerOnHex(unit.pos.q, unit.pos.r);
+    }
   });
 
   const tutorial = new TutorialController(app, renderer, animator);
@@ -100,7 +135,15 @@ async function main() {
       renderer.drawMap(hexes, obstacles);
       renderer.drawUnits(state);
       renderer.drawFog(fog, hexes);
+
+      // Auto-select player's assigned hero in 5v5 if none selected
+      const primaryId = session.getPrimaryControlledUnitId();
+      if (primaryId && input.getSelectedUnitId() === null && state.units[primaryId]) {
+        input.selectUnit(primaryId);
+      }
+
       abilityDock.update(input.getSelectedUnit());
+      hud.update5v5Rosters(snap, session.getNet().getPlayerId());
 
       if (roundEl) roundEl.textContent = `Round ${state.round}`;
 
@@ -173,6 +216,8 @@ async function main() {
 
   const applyRoundStarted = (round: number, deadlineUnixMs: number, _snapshot: SnapshotDto) => {
     isOnline = true;
+    lobbyScreen.hide();
+    heroSelectScreen.hide();
     input.setSession(session);
     abilityDock.setSession(session);
     renderer.setPlayerTeam(session.getCurrentTeam());
@@ -220,8 +265,41 @@ async function main() {
         statusEl.textContent = `Joined Match [Team ${team === 0 ? 'Blue' : 'Red'}] — Waiting for planning...`;
       }
     },
+    onLobbyUpdated: (lobby) => {
+      lobbyScreen.update(lobby);
+      heroSelectScreen.update(lobby);
+    },
+    onHeroSelected: () => {
+      const lobby = session.getLobbyState();
+      if (lobby) {
+        heroSelectScreen.update(lobby);
+      }
+    },
+    onMatchStarting: () => {
+      lobbyScreen.hide();
+      heroSelectScreen.hide();
+      if (statusEl) {
+        statusEl.textContent = 'Hero draft complete! Match deploying into arena...';
+        statusEl.style.color = '#00e676';
+      }
+    },
+    onEarlyResolutionTriggered: (round) => {
+      if (statusEl) {
+        statusEl.textContent = `All orders locked in! Early resolution triggered for Round ${round}...`;
+        statusEl.style.color = '#00e676';
+      }
+    },
+    onPlayerConnectionUpdated: (playerId, connected, isAi) => {
+      if (isAi) {
+        hud.showToast(`Player ${playerId.slice(0, 6)} disconnected — AI takeover activated.`);
+      } else if (connected) {
+        hud.showToast(`Player ${playerId.slice(0, 6)} reconnected! Control restored.`);
+      }
+    },
     onRoundStarted: (round, deadlineUnixMs, snapshot) => {
       isOnline = true;
+      lobbyScreen.hide();
+      heroSelectScreen.hide();
       input.setSession(session);
       renderer.setPlayerTeam(session.getCurrentTeam());
       hud.setOpponentStatus(session.getIsPvAI() ? 'ai' : 'ready');
@@ -358,6 +436,28 @@ async function main() {
     }
   };
 
+  const startNew5v5Match = async () => {
+    try {
+      if (statusEl) statusEl.textContent = 'Hosting 5v5 Tactical Match (10 Players)...';
+      const matchId = await session.create5v5Match(true, 30);
+      if (typeof window !== 'undefined' && window.history) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('match', matchId);
+        url.searchParams.delete('mode');
+        window.history.replaceState(null, '', url.toString());
+      }
+      sessionStorage.setItem('hb_current_match', matchId);
+      hud.setMatchInfo(matchId, false);
+      hud.setOpponentStatus('waiting');
+      session.joinMatch(matchId);
+      if (matchModal) matchModal.style.display = 'none';
+      hud.showToast('⚔️ 5v5 Match created! Entering pre-game lobby.');
+    } catch (err) {
+      console.warn("Failed to create 5v5 match:", err);
+      hud.showToast('Failed to create 5v5 match. Ensure backend server is running.');
+    }
+  };
+
   const startNewPvPMatch = async () => {
     try {
       if (statusEl) statusEl.textContent = 'Hosting 1v1 PvP match...';
@@ -487,6 +587,13 @@ async function main() {
     startTutorialMode(lessonId);
   });
 
+  modeModal.setOnStart5v5(() => {
+    if (tutorial.isRunning()) {
+      tutorial.exitTutorial();
+    }
+    startNew5v5Match();
+  });
+
   modeModal.setOnStartPvAI(() => {
     if (tutorial.isRunning()) {
       tutorial.exitTutorial();
@@ -518,6 +625,7 @@ async function main() {
       matchModal.style.display = 'none';
     });
   }
+  if (btnStart5v5) btnStart5v5.addEventListener('click', startNew5v5Match);
   if (btnStartPvAI) btnStartPvAI.addEventListener('click', startNewPvAIMatch);
   if (btnStartPvP) btnStartPvP.addEventListener('click', startNewPvPMatch);
   if (btnSubmitJoin && inputJoinId) {

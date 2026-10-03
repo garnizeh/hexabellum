@@ -271,6 +271,44 @@ export function getSpellTargets(
     };
   }
 
+  if (spellId === 'fury') {
+    return {
+      validUnitIds: [caster.id],
+      obstructedUnitIds: [],
+      isSelfOnly: true,
+    };
+  }
+
+  if (spellId === 'longshot') {
+    const validUnitIds: number[] = [];
+    const obstructedUnitIds: number[] = [];
+    const maxRange = 4;
+    const minRange = 2;
+
+    for (const [idStr, u] of Object.entries(units)) {
+      if (u.team !== caster.team && u.hp > 0) {
+        if (visibleHexes && !visibleHexes.has(`${u.pos.q},${u.pos.r}`)) {
+          continue;
+        }
+        const dist = axialDistance(caster.pos, u.pos);
+        if (dist >= minRange && dist <= maxRange) {
+          const id = Number(idStr);
+          if (hasLineOfSight(visionBlockers, caster.pos, u.pos)) {
+            validUnitIds.push(id);
+          } else {
+            obstructedUnitIds.push(id);
+          }
+        }
+      }
+    }
+
+    return {
+      validUnitIds,
+      obstructedUnitIds,
+      isSelfOnly: false,
+    };
+  }
+
   return { validUnitIds: [], obstructedUnitIds: [], isSelfOnly: false };
 }
 

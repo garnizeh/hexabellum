@@ -54,3 +54,16 @@ impl FogState {
         &self.visible[team as usize]
     }
 }
+
+pub struct TeamFogEngine;
+
+impl TeamFogEngine {
+    /// Computes the set of all hexes visible to the specified team.
+    /// Uses cube-coordinate line-of-sight raycasting through terrain obstacles.
+    pub fn compute_team_vision(state: &crate::state::GameState, team: TeamId) -> HashSet<HexCoord> {
+        let blockers = state.map.vision_blockers();
+        let unit_list: Vec<Unit> = state.units.values().cloned().collect();
+        compute_team_los_fog(&blockers, state.map.radius, &unit_list, team)
+    }
+}
+

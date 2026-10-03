@@ -99,6 +99,7 @@ impl TutorialScenarioRunner {
                 energy_regen: 0,
                 cooldowns: std::collections::HashMap::new(),
                 statuses: Vec::new(),
+                hero_id: None,
                 lane_id: None,
                 waypoint_index: None,
                 aggro_range: 2,

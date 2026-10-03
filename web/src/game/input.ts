@@ -64,6 +64,18 @@ export class InputHandler {
     return state.units[this.selectedUnit] ?? null;
   }
 
+  selectUnit(unitId: number): void {
+    const state = this.getState();
+    const unit = state.units[unitId];
+    if (!unit) return;
+    this.selectedUnit = unitId;
+    this.inputMode = 'normal';
+    this.renderNormalOverlays(this.selectedUnit, state);
+    this.renderer.highlightUnit(this.selectedUnit);
+    this.updateInspector(unit);
+    this.onUnitSelectedChange?.(unit);
+  }
+
   reset(): void {
     this.selectedUnit = null;
     this.inputMode = 'normal';
@@ -166,7 +178,7 @@ export class InputHandler {
   }
 
   private handlePointerMove(x: number, y: number): void {
-    const hex = this.pixelToHex(x, y);
+    const hex = this.renderer.screenToHex(x, y);
     if (!hex || this.selectedUnit === null) {
       this.renderer.clearRaycastLine();
       return;
@@ -224,11 +236,15 @@ export class InputHandler {
   }
 
   private handleClick(x: number, y: number): void {
+    if (this.renderer.getCamera().hasDraggedRecently()) {
+      return;
+    }
+
     if (this.clickInterceptor && this.clickInterceptor(x, y)) {
       return;
     }
 
-    const hex = this.pixelToHex(x, y);
+    const hex = this.renderer.screenToHex(x, y);
     if (!hex) return;
 
     const state = this.getState();
@@ -292,12 +308,20 @@ export class InputHandler {
     // 1. Click on a living Player Hero: select
     for (const [idStr, unit] of Object.entries(state.units)) {
       if (unit.pos.q === hex.q && unit.pos.r === hex.r && unit.team === playerTeam && unit.kind === 'Hero') {
-        this.selectedUnit = Number(idStr);
-        this.inputMode = 'normal';
-        this.renderNormalOverlays(this.selectedUnit, state);
-        this.renderer.highlightUnit(this.selectedUnit);
-        this.updateInspector(unit);
-        this.onUnitSelectedChange?.(unit);
+        const clickedId = Number(idStr);
+        const isControlled = this.session ? this.session.isMyControlledUnit(clickedId) : true;
+        if (isControlled) {
+          this.selectedUnit = clickedId;
+          this.inputMode = 'normal';
+          this.renderNormalOverlays(this.selectedUnit, state);
+          this.renderer.highlightUnit(this.selectedUnit);
+          this.updateInspector(unit);
+          this.onUnitSelectedChange?.(unit);
+        } else {
+          // Allied hero: inspect without taking order control
+          this.updateInspector(unit);
+          this.showToast(`Inspecting allied ${unit.kind} #${clickedId}`);
+        }
         return;
       }
     }
@@ -419,7 +443,7 @@ export class InputHandler {
       return;
     }
 
-    const energyCost = spellId === 'cleave' ? 3 : 2;
+    const energyCost = (spellId === 'cleave' || spellId === 'longshot') ? 3 : 2;
     if ((hero.energy ?? 0) < energyCost) {
       this.showToast(`Insufficient Energy! (Requires ⚡${energyCost}, you have ⚡${hero.energy ?? 0})`);
       return;
@@ -444,7 +468,21 @@ export class InputHandler {
       return;
     }
 
-    // Ranger Bolt / Warden Mend: Switch to targeting mode
+    if (spellId === 'fury') {
+      // Berserker Fury is Self-Buff: stage immediately!
+      if (this.session) {
+        const ok = this.session.stageCastOrder(this.selectedUnit, 'fury', { type: 'None' });
+        if (ok) {
+          this.showToast('🔥 FURY queued! (+8 Attack Damage for 2 rounds)');
+          this.renderer.clearOverlays();
+          this.selectedUnit = null;
+          this.onUnitSelectedChange?.(null);
+        }
+      }
+      return;
+    }
+
+    // Ranger Bolt / Warden Mend / Sniper Longshot: Switch to targeting mode
     this.inputMode = 'targetingSpell';
     const staged = this.stagedMoves.get(this.selectedUnit);
     const origin = staged ?? hero.pos;
@@ -455,6 +493,24 @@ export class InputHandler {
       this.renderer.highlightUnit(this.selectedUnit);
       this.showToast(`Target ${spellId.toUpperCase()} (Cyan: In range, Red: Obstructed)`);
     }
+  }
+
+  triggerWaitOrder(): void {
+    const heroId = this.selectedUnit ?? this.session?.getPrimaryControlledUnitId() ?? null;
+    if (heroId === null) {
+      this.showToast('No hero available to wait.');
+      return;
+    }
+    if (this.session) {
+      this.session.stageWaitOrder(heroId);
+    } else {
+      setWaitOrder(heroId);
+    }
+    this.showToast(`Hero #${heroId} holding position (Wait queued)`);
+    this.selectedUnit = null;
+    this.renderer.clearOverlays();
+    this.updateInspector(null);
+    this.onUnitSelectedChange?.(null);
   }
 
   triggerRepair(): void {
@@ -509,6 +565,8 @@ export class InputHandler {
 
   private getHeroSpellId(hero: UnitData): string | null {
     if (hero.cooldowns?.cleave !== undefined || hero.max_hp === 140) return 'cleave';
+    if (hero.cooldowns?.longshot !== undefined || hero.attack_range >= 3 || hero.max_hp === 80) return 'longshot';
+    if (hero.cooldowns?.fury !== undefined || (hero.max_hp === 120 && hero.attack_range === 1)) return 'fury';
     if (hero.cooldowns?.bolt !== undefined || hero.attack_range >= 2) return 'bolt';
     if (hero.cooldowns?.mend !== undefined || hero.max_energy === 6) return 'mend';
     return 'cleave';
@@ -592,30 +650,6 @@ export class InputHandler {
   }
 
   private pixelToHex(x: number, y: number): { q: number; r: number } | null {
-    const app = this.renderer.getApp();
-    const cx = x - app.screen.width / 2;
-    const cy = y - app.screen.height / 2;
-
-    const q = ((Math.sqrt(3) / 3) * cx - (1 / 3) * cy) / HEX_SIZE;
-    const r = ((2 / 3) * cy) / HEX_SIZE;
-    return this.hexRound(q, r);
-  }
-
-  private hexRound(q: number, r: number): { q: number; r: number } {
-    const s = -q - r;
-    let rq = Math.round(q);
-    let rr = Math.round(r);
-    const rs = Math.round(s);
-
-    const qDiff = Math.abs(rq - q);
-    const rDiff = Math.abs(rr - r);
-    const sDiff = Math.abs(rs - s);
-
-    if (qDiff > rDiff && qDiff > sDiff) {
-      rq = -rr - rs;
-    } else if (rDiff > sDiff) {
-      rr = -rq - rs;
-    }
-    return { q: rq, r: rr };
+    return this.renderer.screenToHex(x, y);
   }
 }

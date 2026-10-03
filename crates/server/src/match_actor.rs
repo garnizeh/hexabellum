@@ -1,18 +1,23 @@
-use crate::player::PlayerConnection;
+use crate::draft::HeroSelectDraft;
+use crate::player::{ConnectionState, PlayerConnection};
+use hexabellum_core::controller::Controller;
+use hexabellum_core::hero_defs::get_all_hero_defs;
 use hexabellum_core::session::{BattleConfig, BattleSession};
 use hexabellum_protocol::{
-    OrderDto, PlayerId, ProtocolErrorCode, ReconnectToken, Round,
-    ServerMessage, TeamId,
+    ErrorCode, HeroDefId, HeroDto, MatchPhaseDto, OrderDto, PlayerId,
+    ProtocolErrorCode, ReconnectToken, Round, ServerMessage, TeamId,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::info;
 
 /// Actor commands routed from WebSocket and HTTP handlers.
+#[derive(Debug)]
 pub enum MatchCommand {
     PlayerConnect {
         player_id: PlayerId,
+        display_name: Option<String>,
         reconnect_token: Option<ReconnectToken>,
         sender: mpsc::UnboundedSender<ServerMessage>,
     },
@@ -22,11 +27,24 @@ pub enum MatchCommand {
     PlayerPing {
         player_id: PlayerId,
     },
+    SelectHero {
+        player_id: PlayerId,
+        hero_def_id: HeroDefId,
+    },
+    SetReady {
+        player_id: PlayerId,
+        ready: bool,
+    },
     SubmitOrders {
         player_id: PlayerId,
         round: Round,
         orders: Vec<OrderDto>,
     },
+    CancelOrders {
+        player_id: PlayerId,
+        round: Round,
+    },
+    HeroSelectTimerFired,
     TurnTimerFired {
         round: Round,
     },
@@ -62,10 +80,15 @@ impl MatchActorHandle {
 
 pub struct MatchActor {
     pub match_id: String,
-    pub session: BattleSession,
+    pub phase: MatchPhaseDto,
+    pub session: Option<BattleSession>,
+    pub config: BattleConfig,
     pub players: HashMap<PlayerId, PlayerConnection>,
     pub human_teams: Vec<TeamId>,
+    pub hero_drafts: HashMap<TeamId, HeroSelectDraft>,
+    pub submitted_players: HashSet<PlayerId>,
     pub turn_deadline_unix_ms: Option<u64>,
+    pub hero_select_deadline_unix_ms: Option<u64>,
     pub grace_timer_active: bool,
     pub grace_period_seq: u64,
     pub self_tx: mpsc::Sender<MatchCommand>,
@@ -79,18 +102,88 @@ impl MatchActor {
         self_tx: mpsc::Sender<MatchCommand>,
         registry: Option<crate::MatchRegistry>,
     ) -> Self {
-        let session = BattleSession::new(match_id.clone(), config);
+        let pool = vec![
+            "vanguard".to_string(),
+            "ranger".to_string(),
+            "warden".to_string(),
+            "sniper".to_string(),
+            "berserker".to_string(),
+        ];
+        let mut hero_drafts = HashMap::new();
+        hero_drafts.insert(0, HeroSelectDraft::new_team_draft(pool.clone()));
+        hero_drafts.insert(1, HeroSelectDraft::new_team_draft(pool));
+
+        let initial_phase = if config.skip_draft {
+            MatchPhaseDto::Planning
+        } else {
+            MatchPhaseDto::Lobby
+        };
+
+        let session = if config.skip_draft {
+            Some(BattleSession::new(match_id.clone(), config.clone()))
+        } else {
+            None
+        };
+
         Self {
             match_id,
+            phase: initial_phase,
             session,
+            config,
             players: HashMap::new(),
             human_teams: Vec::new(),
+            hero_drafts,
+            submitted_players: HashSet::new(),
             turn_deadline_unix_ms: None,
+            hero_select_deadline_unix_ms: None,
             grace_timer_active: false,
             grace_period_seq: 0,
             self_tx,
             registry,
         }
+    }
+
+    pub fn new_test_match() -> Self {
+        let (tx, _rx) = mpsc::channel(128);
+        Self::new("test_match".into(), BattleConfig::default(), tx, None)
+    }
+
+    pub fn setup_5v5_session(&mut self) {
+        let mut config = BattleConfig::default();
+        config.map_radius = 8;
+        config.heroes_per_team = 5;
+        config.players_per_team = 5;
+        config.fill_empty_slots_with_ai = true;
+        self.config = config.clone();
+
+        let mut session = BattleSession::new(self.match_id.clone(), config);
+        session.state.round = 1;
+
+        let heroes = ["vanguard", "ranger", "warden", "sniper", "berserker"];
+        for i in 0..5 {
+            let p_id = format!("player_{}", i + 1);
+            let unit_id = (i + 1) as u64;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            let mut conn = PlayerConnection::new(p_id.clone(), 0, tx);
+            conn.hero_def_id = Some(heroes[i].to_string());
+            conn.hero_unit_id = Some(unit_id);
+            session.controllers.assign(unit_id, Controller::Player(p_id.clone()));
+            self.players.insert(p_id, conn);
+        }
+
+        for i in 0..5 {
+            let p_id = format!("player_{}", i + 6);
+            let unit_id = (i + 6) as u64;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            let mut conn = PlayerConnection::new(p_id.clone(), 1, tx);
+            conn.hero_def_id = Some(heroes[i].to_string());
+            conn.hero_unit_id = Some(unit_id);
+            session.controllers.assign(unit_id, Controller::Player(p_id.clone()));
+            self.players.insert(p_id, conn);
+        }
+
+        self.phase = MatchPhaseDto::Planning;
+        self.session = Some(session);
     }
 
     pub async fn run(mut self, mut rx: mpsc::Receiver<MatchCommand>) {
@@ -100,53 +193,110 @@ impl MatchActor {
             match cmd {
                 MatchCommand::PlayerConnect {
                     player_id,
+                    display_name,
                     reconnect_token,
                     sender,
                 } => {
-                    self.handle_player_connect(player_id, reconnect_token, sender)
+                    self.handle_player_connect(player_id, display_name, reconnect_token, sender)
                         .await;
                 }
                 MatchCommand::PlayerDisconnect { player_id } => {
-                    self.handle_player_disconnect(player_id);
+                    self.handle_disconnect(&player_id);
                 }
                 MatchCommand::PlayerPing { player_id } => {
                     if let Some(conn) = self.players.get_mut(&player_id) {
                         conn.last_seen = Instant::now();
                     }
                 }
+                MatchCommand::SelectHero {
+                    player_id,
+                    hero_def_id,
+                } => {
+                    let _ = self.handle_select_hero(&player_id, &hero_def_id).await;
+                }
+                MatchCommand::SetReady { player_id, ready } => {
+                    self.handle_set_ready(&player_id, ready).await;
+                }
                 MatchCommand::SubmitOrders {
                     player_id,
                     round,
                     orders,
                 } => {
-                    self.handle_submit_orders(player_id, round, orders).await;
+                    let res = self.handle_submit_orders(&player_id, round, orders.clone());
+                    if let Err(err) = res {
+                        if let Some(conn) = self.players.get(&player_id) {
+                            let reason = if err == ErrorCode::NotYourUnit || err == ErrorCode::UnitNotOwned {
+                                if let Some(o) = orders.first() {
+                                    format!("Unit #{} is not controlled by player {}", o.unit_id, player_id)
+                                } else {
+                                    format!("Order rejected: {:?}", err)
+                                }
+                            } else if err == ErrorCode::RoundMismatch || err == ErrorCode::StaleRound {
+                                format!("Stale round {} rejected", round)
+                            } else {
+                                format!("Order rejected: {:?}", err)
+                            };
+                            conn.send(ServerMessage::OrderRejected {
+                                round,
+                                error_code: err,
+                                reason,
+                            });
+                        }
+                    }
+                }
+                MatchCommand::CancelOrders { player_id, round } => {
+                    if self.phase == MatchPhaseDto::Planning {
+                        if let Some(session) = self.session.as_mut() {
+                            if let Some(conn) = self.players.get(&player_id) {
+                                if let Some(unit_id) = conn.hero_unit_id {
+                                    if let Some(orders) = session.staged_orders.get_mut(&conn.team) {
+                                        orders.remove(&unit_id);
+                                    }
+                                }
+                            }
+                        }
+                        self.submitted_players.remove(&player_id);
+                        if let Some(conn) = self.players.get(&player_id) {
+                            conn.send(ServerMessage::OrdersAccepted { round });
+                        }
+                    }
+                }
+                MatchCommand::HeroSelectTimerFired => {
+                    if self.phase == MatchPhaseDto::HeroSelect {
+                        self.finalize_hero_draft_and_start_match().await;
+                    }
                 }
                 MatchCommand::TurnTimerFired { round } => {
-                    if self.session.state.round == round
-                        && self.session.state.winner.is_none()
-                        && self.session.state.phase != hexabellum_core::state::Phase::MatchEnd
-                        && self.turn_deadline_unix_ms.is_some()
-                    {
-                        info!(
-                            "MatchActor [{}] Turn timer expired for round {}",
-                            self.match_id, round
-                        );
-                        self.resolve_round().await;
+                    if let Some(ref session) = self.session {
+                        if session.state.round == round
+                            && session.state.winner.is_none()
+                            && self.phase == MatchPhaseDto::Planning
+                            && self.turn_deadline_unix_ms.is_some()
+                        {
+                            info!(
+                                "MatchActor [{}] Turn timer expired for round {}",
+                                self.match_id, round
+                            );
+                            self.handle_turn_timeout();
+                            self.resolve_round().await;
+                        }
                     }
                 }
                 MatchCommand::GracePeriodFired { round, seq } => {
-                    if self.session.state.round == round
-                        && self.grace_timer_active
-                        && self.grace_period_seq == seq
-                        && self.session.state.winner.is_none()
-                        && self.session.state.phase != hexabellum_core::state::Phase::MatchEnd
-                        && self.turn_deadline_unix_ms.is_some()
-                    {
-                        info!(
-                            "MatchActor [{}] Early resolution grace period elapsed for round {} (seq {})",
-                            self.match_id, round, seq
-                        );
-                        self.resolve_round().await;
+                    if let Some(ref session) = self.session {
+                        if session.state.round == round
+                            && self.grace_timer_active
+                            && self.grace_period_seq == seq
+                            && session.state.winner.is_none()
+                            && self.phase == MatchPhaseDto::Planning
+                            && self.turn_deadline_unix_ms.is_some()
+                        {
+                            info!(
+                                "MatchActor [{}] Early resolution grace period elapsed for round {} (seq {})",
+                                self.match_id, round, seq
+                            );
+                            self.resolve_round().await;
+                        }
                     }
                 }
                 MatchCommand::Finish => {
@@ -165,21 +315,90 @@ impl MatchActor {
         info!("MatchActor [{}] terminated", self.match_id);
     }
 
-    async fn handle_player_connect(
+    pub fn handle_disconnect(&mut self, player_id: &str) {
+        if let Some(conn) = self.players.get_mut(player_id) {
+            conn.connection_state = ConnectionState::Disconnected;
+            conn.is_connected = false;
+            conn.sender = None;
+            let team = conn.team;
+            info!(
+                "Player [{}] disconnected from match [{}]",
+                player_id, self.match_id
+            );
+            self.broadcast(ServerMessage::PlayerConnectionUpdated {
+                player_id: player_id.to_string(),
+                connected: false,
+                is_ai_controlled: false,
+            });
+            for other in self.players.values().filter(|o| o.team != team) {
+                other.send(ServerMessage::OpponentStatus { online: false });
+            }
+        }
+    }
+
+    pub fn handle_turn_timeout(&mut self) {
+        let mut transferred = Vec::new();
+        for (pid, conn) in self.players.iter_mut() {
+            if conn.connection_state == ConnectionState::Disconnected {
+                conn.connection_state = ConnectionState::AiReplacement;
+                if let Some(uid) = conn.hero_unit_id {
+                    transferred.push((uid, pid.clone()));
+                }
+            }
+        }
+
+        if let Some(session) = self.session.as_mut() {
+            for (uid, _) in &transferred {
+                session.controllers.transfer_to_ai(*uid);
+            }
+        }
+
+        for (_, pid) in transferred {
+            self.broadcast(ServerMessage::PlayerConnectionUpdated {
+                player_id: pid,
+                connected: false,
+                is_ai_controlled: true,
+            });
+        }
+    }
+
+    pub fn handle_reconnect(&mut self, player_id: &str) {
+        if let Some(conn) = self.players.get_mut(player_id) {
+            conn.connection_state = ConnectionState::Connected;
+            conn.is_connected = true;
+            if let Some(uid) = conn.hero_unit_id {
+                if let Some(session) = self.session.as_mut() {
+                    session
+                        .controllers
+                        .transfer_to_player(uid, player_id.to_string());
+                }
+            }
+            self.broadcast(ServerMessage::PlayerConnectionUpdated {
+                player_id: player_id.to_string(),
+                connected: true,
+                is_ai_controlled: false,
+            });
+        }
+    }
+
+    pub async fn handle_player_connect(
         &mut self,
         player_id: PlayerId,
+        display_name: Option<String>,
         reconnect_token: Option<ReconnectToken>,
         sender: mpsc::UnboundedSender<ServerMessage>,
     ) {
         // If match already ended, notify and return
-        if self.session.state.winner.is_some()
-            || self.session.state.phase == hexabellum_core::state::Phase::MatchEnd
-        {
-            let snapshot = self.session.snapshot_for_team(0, None);
-            let _ = sender.send(ServerMessage::MatchEnded {
-                winner: self.session.state.winner,
-                snapshot,
-            });
+        if self.phase == MatchPhaseDto::MatchEnd {
+            if let Some(ref session) = self.session {
+                let snapshot = session.snapshot_for_team(0, None);
+                let _ = sender.send(ServerMessage::MatchEnded {
+                    winner: session.state.winner,
+                    snapshot,
+                    state_hash: Some(session.state_hash()),
+                    total_rounds: Some(session.state.round),
+                });
+            }
             return;
         }
 
@@ -190,6 +409,7 @@ impl MatchActor {
                 conn.connection_generation += 1;
                 conn.sender = Some(sender.clone());
                 conn.is_connected = true;
+                conn.connection_state = ConnectionState::Connected;
                 conn.last_seen = Instant::now();
                 let team = conn.team;
 
@@ -198,36 +418,46 @@ impl MatchActor {
                     reconnect_token: conn.reconnect_token.clone(),
                 });
 
-                let snapshot = self
-                    .session
-                    .snapshot_for_team(team, self.turn_deadline_unix_ms);
-                let _ = sender.send(ServerMessage::MatchJoined {
-                    match_id: self.match_id.clone(),
-                    player_id: player_id.clone(),
-                    team,
-                    is_spectator: false,
-                    snapshot: snapshot.clone(),
-                });
-
-                if let Some(deadline) = self.turn_deadline_unix_ms {
-                    let _ = sender.send(ServerMessage::RoundStarted {
-                        round: self.session.state.round,
-                        deadline_unix_ms: deadline,
-                        snapshot,
+                if let Some(ref mut session) = self.session {
+                    if let Some(uid) = conn.hero_unit_id {
+                        session
+                            .controllers
+                            .transfer_to_player(uid, player_id.clone());
+                    }
+                    let snapshot = session.snapshot_for_player(team, Some(&player_id), self.turn_deadline_unix_ms);
+                    let _ = sender.send(ServerMessage::MatchJoined {
+                        match_id: self.match_id.clone(),
+                        player_id: player_id.clone(),
+                        team,
+                        is_spectator: false,
+                        snapshot: snapshot.clone(),
                     });
+
+                    if let Some(deadline) = self.turn_deadline_unix_ms {
+                        let _ = sender.send(ServerMessage::RoundStarted {
+                            round: session.state.round,
+                            deadline_unix_ms: deadline,
+                            snapshot,
+                        });
+                    }
                 }
 
-                // Notify opponent that this player came back online
                 for other in self.players.values().filter(|o| o.team != team) {
                     other.send(ServerMessage::OpponentStatus { online: true });
                 }
-
                 let opp_online = self
                     .players
                     .values()
                     .any(|o| o.team != team && o.is_connected);
-                let _ = sender.send(ServerMessage::OpponentStatus { online: opp_online });
+                if opp_online {
+                    let _ = sender.send(ServerMessage::OpponentStatus { online: true });
+                }
 
+                self.broadcast(ServerMessage::PlayerConnectionUpdated {
+                    player_id: player_id.clone(),
+                    connected: true,
+                    is_ai_controlled: false,
+                });
                 return;
             } else {
                 let _ = sender.send(ServerMessage::Error {
@@ -238,8 +468,9 @@ impl MatchActor {
             }
         }
 
-        // New player connection
-        if self.players.len() >= 2 {
+        // Max players check
+        let max_players = (self.config.players_per_team * 2) as usize;
+        if self.players.len() >= max_players {
             let _ = sender.send(ServerMessage::Error {
                 error_code: ProtocolErrorCode::MatchFull,
                 message: "Match is full".into(),
@@ -247,68 +478,272 @@ impl MatchActor {
             return;
         }
 
-        let assigned_team = if self.players.is_empty() { 0 } else { 1 };
-        let conn = PlayerConnection::new(player_id.clone(), assigned_team, sender.clone());
+        // Team balancing: team with fewer players, or Team 0 if equal
+        let t0_count = self.players.values().filter(|p| p.team == 0).count();
+        let t1_count = self.players.values().filter(|p| p.team == 1).count();
+        let assigned_team = if t0_count <= t1_count { 0 } else { 1 };
+
+        let mut conn = PlayerConnection::new(player_id.clone(), assigned_team, sender.clone());
+        if let Some(name) = display_name {
+            conn.display_name = name;
+        }
         let token = conn.reconnect_token.clone();
 
-        self.session
-            .assign_team_player(assigned_team, player_id.clone());
-        self.human_teams.push(assigned_team);
         self.players.insert(player_id.clone(), conn);
+        if !self.human_teams.contains(&assigned_team) {
+            self.human_teams.push(assigned_team);
+        }
+
+        if let Some(draft) = self.hero_drafts.get_mut(&assigned_team) {
+            draft.register_player(&player_id);
+        }
 
         let _ = sender.send(ServerMessage::HelloAck {
             player_id: player_id.clone(),
             reconnect_token: token,
         });
 
-        let snapshot = self
-            .session
-            .snapshot_for_team(assigned_team, self.turn_deadline_unix_ms);
-        let _ = sender.send(ServerMessage::MatchJoined {
-            match_id: self.match_id.clone(),
-            player_id,
-            team: assigned_team,
-            is_spectator: false,
-            snapshot,
-        });
+        // If in legacy mode / skip draft:
+        if self.config.skip_draft {
+            if let Some(ref mut session) = self.session {
+                session.assign_team_player(assigned_team, player_id.clone());
+                let snapshot = session.snapshot_for_player(assigned_team, Some(&player_id), self.turn_deadline_unix_ms);
+                let _ = sender.send(ServerMessage::MatchJoined {
+                    match_id: self.match_id.clone(),
+                    player_id: player_id.clone(),
+                    team: assigned_team,
+                    is_spectator: false,
+                    snapshot,
+                });
+            }
 
-        // If this is the second player joining, notify first player
-        for other in self.players.values().filter(|o| o.team != assigned_team) {
-            other.send(ServerMessage::OpponentStatus { online: true });
-        }
-        let opp_online = self
-            .players
-            .values()
-            .any(|o| o.team != assigned_team && o.is_connected);
-        if opp_online {
-            let _ = sender.send(ServerMessage::OpponentStatus { online: true });
-        }
+            for other in self.players.values().filter(|o| o.team != assigned_team) {
+                other.send(ServerMessage::OpponentStatus { online: true });
+            }
+            let opp_online = self
+                .players
+                .values()
+                .any(|o| o.team != assigned_team && o.is_connected);
+            if opp_online {
+                let _ = sender.send(ServerMessage::OpponentStatus { online: true });
+            }
 
-        // Auto-start match if 2 players or PvAI mode
-        let ready_to_start = self.players.len() == 2
-            || (self.players.len() == 1 && self.session.config.enable_ai_team_1);
-        if ready_to_start && self.turn_deadline_unix_ms.is_none() {
-            self.start_planning_phase().await;
+            let ready_to_start = self.players.len() == 2
+                || (self.players.len() == 1 && self.config.enable_ai_team_1);
+            if ready_to_start && self.turn_deadline_unix_ms.is_none() {
+                self.start_planning_phase().await;
+            }
+        } else {
+            // Lobby / HeroSelect mode
+            self.broadcast_lobby_state();
+
+            // Auto-advance to HeroSelect if all players ready or lobby full
+            if self.players.len() == max_players {
+                self.start_hero_select_phase().await;
+            }
         }
     }
 
-    fn handle_player_disconnect(&mut self, player_id: PlayerId) {
-        if let Some(conn) = self.players.get_mut(&player_id) {
-            conn.is_connected = false;
-            conn.sender = None;
-            let disconnected_team = conn.team;
-            info!(
-                "Player [{}] disconnected from match [{}]",
-                player_id, self.match_id
-            );
-            for other in self
-                .players
-                .values()
-                .filter(|o| o.team != disconnected_team)
-            {
-                other.send(ServerMessage::OpponentStatus { online: false });
+    pub async fn handle_select_hero(
+        &mut self,
+        player_id: &str,
+        hero_def_id: &str,
+    ) -> Result<(), ErrorCode> {
+        if self.phase != MatchPhaseDto::HeroSelect && self.phase != MatchPhaseDto::Lobby {
+            return Err(ErrorCode::NotInHeroSelectPhase);
+        }
+
+        let team = self
+            .players
+            .get(player_id)
+            .ok_or(ErrorCode::PlayerNotAuthenticated)?
+            .team;
+
+        let draft = self
+            .hero_drafts
+            .get_mut(&team)
+            .ok_or(ErrorCode::InvalidHeroDef)?;
+
+        draft.select_hero(player_id, hero_def_id)?;
+
+        if let Some(conn) = self.players.get_mut(player_id) {
+            conn.hero_def_id = Some(hero_def_id.to_string());
+        }
+
+        self.broadcast(ServerMessage::HeroSelected {
+            player_id: player_id.to_string(),
+            team,
+            hero_def_id: hero_def_id.to_string(),
+        });
+        self.broadcast_lobby_state();
+
+        // Check if all connected players have selected heroes and are ready
+        let all_selected_and_ready = self
+            .players
+            .values()
+            .filter(|p| p.is_connected && !p.is_ai)
+            .all(|p| p.hero_def_id.is_some() && p.is_ready);
+
+        if all_selected_and_ready && self.phase == MatchPhaseDto::HeroSelect {
+            self.finalize_hero_draft_and_start_match().await;
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_set_ready(&mut self, player_id: &str, ready: bool) {
+        if let Some(conn) = self.players.get_mut(player_id) {
+            conn.is_ready = ready;
+        }
+        self.broadcast_lobby_state();
+
+        let all_ready = self
+            .players
+            .values()
+            .filter(|p| p.is_connected && !p.is_ai)
+            .all(|p| p.is_ready);
+
+        if all_ready && self.players.len() >= 2 && self.phase == MatchPhaseDto::Lobby {
+            self.start_hero_select_phase().await;
+        }
+    }
+
+    pub async fn start_hero_select_phase(&mut self) {
+        self.phase = MatchPhaseDto::HeroSelect;
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let deadline_ms = now_ms + 20_000;
+        self.hero_select_deadline_unix_ms = Some(deadline_ms);
+
+        self.broadcast_lobby_state();
+
+        let tx = self.self_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(20)).await;
+            let _ = tx.send(MatchCommand::HeroSelectTimerFired).await;
+        });
+    }
+
+    pub async fn finalize_hero_draft_and_start_match(&mut self) {
+        for team in [0, 1] {
+            if let Some(draft) = self.hero_drafts.get_mut(&team) {
+                draft.handle_timeout();
+                for (pid, hero) in &draft.selections {
+                    if let Some(conn) = self.players.get_mut(pid) {
+                        conn.hero_def_id = Some(hero.clone());
+                    }
+                }
             }
         }
+
+        let mut session = BattleSession::new(self.match_id.clone(), self.config.clone());
+
+        // Assign heroes to human players in ControllerMap
+        for conn in self.players.values_mut() {
+            if let Some(ref hero_def_id) = conn.hero_def_id {
+                let key = format!("{}_{}", hero_def_id, conn.team);
+                if let Some(&unit_id) = session.hero_assignments.get(&key) {
+                    conn.hero_unit_id = Some(unit_id);
+                    session
+                        .controllers
+                        .assign(unit_id, Controller::Player(conn.player_id.clone()));
+                }
+            }
+        }
+
+        self.session = Some(session);
+        self.phase = MatchPhaseDto::Planning;
+        self.start_planning_phase().await;
+    }
+
+    pub fn handle_submit_orders(
+        &mut self,
+        player_id: &str,
+        round: u32,
+        orders: Vec<OrderDto>,
+    ) -> Result<(), ErrorCode> {
+        // 1. Verify match phase
+        if self.phase != MatchPhaseDto::Planning {
+            return Err(ErrorCode::NotInPlanningPhase);
+        }
+
+        let session = self.session.as_mut().ok_or(ErrorCode::NotInPlanningPhase)?;
+
+        // 2. Verify current round
+        if round != session.state.round {
+            return Err(ErrorCode::RoundMismatch);
+        }
+
+        // 3. Enforce single-hero control: exactly 1 order allowed in multi-player mode
+        if self.config.players_per_team > 1 {
+            if orders.len() != 1 {
+                return Err(ErrorCode::InvalidOrderCount);
+            }
+
+            let order = &orders[0];
+
+            // 4. Authoritative controller check: does player_id own this unit_id?
+            if !session.controllers.is_controlled_by_player(order.unit_id, &player_id.to_string()) {
+                return Err(ErrorCode::NotYourUnit);
+            }
+
+            // 5. Verify unit is alive
+            let unit = session.state.units.get(&order.unit_id).ok_or(ErrorCode::TargetDead)?;
+            if !unit.is_alive() {
+                return Err(ErrorCode::TargetDead);
+            }
+        }
+
+        let team = self
+            .players
+            .get(player_id)
+            .ok_or(ErrorCode::PlayerNotAuthenticated)?
+            .team;
+
+        // 6. Ingest into session
+        let p_id = player_id.to_string();
+        session.submit_player_orders(&p_id, team, round, orders).map_err(|e| e.code)?;
+
+        self.submitted_players.insert(player_id.to_string());
+        if let Some(conn) = self.players.get(player_id) {
+            conn.send(ServerMessage::OrdersAccepted { round });
+        }
+
+        // Check early resolution
+        let connected_humans: Vec<&PlayerConnection> = self
+            .players
+            .values()
+            .filter(|p| p.is_connected && !p.is_ai)
+            .collect();
+        let all_submitted = connected_humans
+            .iter()
+            .all(|p| self.submitted_players.contains(&p.player_id));
+
+        if all_submitted && !connected_humans.is_empty() {
+            self.grace_timer_active = true;
+            self.grace_period_seq += 1;
+            let seq = self.grace_period_seq;
+            let tx = self.self_tx.clone();
+            let grace_ms = self.config.early_resolution_grace_ms;
+
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            self.broadcast(ServerMessage::EarlyResolutionTriggered {
+                round,
+                resolution_unix_ms: now_ms + grace_ms,
+            });
+
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(grace_ms)).await;
+                let _ = tx.send(MatchCommand::GracePeriodFired { round, seq }).await;
+            });
+        }
+
+        Ok(())
     }
 
     async fn start_planning_phase(&mut self) {
@@ -316,14 +751,20 @@ impl MatchActor {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as u64;
-        let deadline_ms = now_ms + (self.session.config.turn_duration_secs * 1000);
+        let deadline_ms = now_ms + (self.config.turn_duration_secs * 1000);
         self.turn_deadline_unix_ms = Some(deadline_ms);
         self.grace_timer_active = false;
+        self.submitted_players.clear();
 
-        let round = self.session.state.round;
+        let session = match self.session.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let round = session.state.round;
 
         for conn in self.players.values() {
-            let snapshot = self.session.snapshot_for_team(conn.team, Some(deadline_ms));
+            let snapshot = session.snapshot_for_player(conn.team, Some(&conn.player_id), Some(deadline_ms));
             conn.send(ServerMessage::RoundStarted {
                 round,
                 deadline_unix_ms: deadline_ms,
@@ -331,119 +772,112 @@ impl MatchActor {
             });
         }
 
-        // Spawn Tokio timer task for the 30-second deadline
         let tx = self.self_tx.clone();
-        let duration = Duration::from_secs(self.session.config.turn_duration_secs);
+        let duration = Duration::from_secs(self.config.turn_duration_secs);
         tokio::spawn(async move {
             tokio::time::sleep(duration).await;
             let _ = tx.send(MatchCommand::TurnTimerFired { round }).await;
         });
     }
 
-    async fn handle_submit_orders(
-        &mut self,
-        player_id: PlayerId,
-        round: Round,
-        orders: Vec<OrderDto>,
-    ) {
-        if self.turn_deadline_unix_ms.is_none() {
-            if let Some(conn) = self.players.get(&player_id) {
-                conn.send(ServerMessage::OrderRejected {
-                    round,
-                    error_code: ProtocolErrorCode::InvalidPhase,
-                    reason: "Match is waiting for players or already resolving".into(),
-                });
-            }
-            return;
-        }
-
-        let team = match self.players.get(&player_id) {
-            Some(conn) => conn.team,
-            None => {
-                tracing::warn!(
-                    "MatchActor [{}] SubmitOrders from unknown player {}",
-                    self.match_id,
-                    player_id
-                );
-                return;
-            }
-        };
-
-        match self
-            .session
-            .submit_player_orders(&player_id, team, round, orders)
-        {
-            Ok(()) => {
-                if let Some(conn) = self.players.get(&player_id) {
-                    conn.send(ServerMessage::OrdersAccepted { round });
-                }
-
-                // Check early resolution with debouncing
-                if self.session.all_human_teams_submitted(&self.human_teams) {
-                    self.grace_timer_active = true;
-                    self.grace_period_seq += 1;
-                    let seq = self.grace_period_seq;
-                    let tx = self.self_tx.clone();
-                    let grace_ms = self.session.config.early_resolution_grace_ms;
-                    info!(
-                        "All human orders submitted for round {}. Triggering {}ms grace period (seq {})",
-                        round, grace_ms, seq
-                    );
-
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(grace_ms)).await;
-                        let _ = tx.send(MatchCommand::GracePeriodFired { round, seq }).await;
-                    });
-                }
-            }
-            Err(err) => {
-                if let Some(conn) = self.players.get(&player_id) {
-                    conn.send(ServerMessage::OrderRejected {
-                        round,
-                        error_code: err.code,
-                        reason: err.reason,
-                    });
-                }
-            }
-        }
-    }
-
     async fn resolve_round(&mut self) {
         self.grace_timer_active = false;
         self.turn_deadline_unix_ms = None;
+        self.phase = MatchPhaseDto::Resolution;
 
-        let round_planned = self.session.state.round;
-        let raw_events = self.session.resolve_round();
-        let is_ended = self.session.state.winner.is_some()
-            || self.session.state.phase == hexabellum_core::state::Phase::MatchEnd;
+        let session = match self.session.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let round_planned = session.state.round;
+        let raw_events = session.resolve_round();
+        let is_ended = session.state.winner.is_some()
+            || session.state.phase == hexabellum_core::state::Phase::MatchEnd;
+        let state_hash = session.state_hash();
 
         for conn in self.players.values() {
             let team = conn.team;
-            let sanitized_events = self.session.sanitize_events_for_team(team, &raw_events);
-            let snapshot = self.session.snapshot_for_team(team, None);
+            let sanitized_events = session.sanitize_events_for_team(team, &raw_events);
+            let snapshot = session.snapshot_for_player(team, Some(&conn.player_id), None);
 
             if is_ended {
                 conn.send(ServerMessage::MatchEnded {
-                    winner: self.session.state.winner,
+                    winner: session.state.winner,
                     snapshot,
+                    state_hash: Some(state_hash.clone()),
+                    total_rounds: Some(round_planned),
                 });
             } else {
                 conn.send(ServerMessage::RoundResolved {
                     round: round_planned,
                     events: sanitized_events,
                     snapshot,
+                    state_hash: Some(state_hash.clone()),
                 });
             }
         }
 
         if !is_ended {
+            self.phase = MatchPhaseDto::Planning;
             self.start_planning_phase().await;
         } else {
+            self.phase = MatchPhaseDto::MatchEnd;
             let tx = self.self_tx.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(60)).await;
                 let _ = tx.send(MatchCommand::Finish).await;
             });
         }
+    }
+
+    pub fn build_hero_pools_dto(&self) -> HashMap<u8, Vec<HeroDto>> {
+        let hero_defs = get_all_hero_defs();
+        let mut pools = HashMap::new();
+        for team in [0, 1] {
+            let dtos: Vec<HeroDto> = hero_defs
+                .iter()
+                .map(|def| HeroDto {
+                    id: def.id.clone(),
+                    name: def.name.clone(),
+                    role: def.role.clone(),
+                    max_hp: def.max_hp,
+                    attack_damage: def.attack_damage,
+                    attack_range: def.attack_range,
+                    vision_range: def.vision_range,
+                    max_energy: def.max_energy,
+                    spell_id: def.spell.id.clone(),
+                    spell_name: def.spell.name.clone(),
+                    spell_desc: def.spell.name.clone(),
+                })
+                .collect();
+            pools.insert(team, dtos);
+        }
+        pools
+    }
+
+    pub fn broadcast(&self, msg: ServerMessage) {
+        for conn in self.players.values() {
+            conn.send(msg.clone());
+        }
+    }
+
+    pub fn broadcast_lobby_state(&self) {
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let countdown_ms = self
+            .hero_select_deadline_unix_ms
+            .map(|deadline| deadline.saturating_sub(now_ms));
+
+        let msg = ServerMessage::LobbyUpdated {
+            match_id: self.match_id.clone(),
+            phase: self.phase,
+            players: self.players.values().map(|p| p.to_lobby_dto()).collect(),
+            hero_pools: self.build_hero_pools_dto(),
+            countdown_ms,
+        };
+        self.broadcast(msg);
     }
 }
