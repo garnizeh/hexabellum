@@ -334,10 +334,10 @@ Phase 5 expands the battlefield from radius 7 (169 hexes) to **radius 8 (217 hex
 | Feature / Location | Axial Coordinates $(q, r)$ | Cube Coordinates $(x, y, z)$ | Functional Role & Mechanics |
 |---|---|---|---|
 | **Arena Dimensions** | $R = 8$ | $\|x\|, \|y\|, \|z\| \le 8$ | 217 total hexagonal tiles. Axial distance formula: $D = \frac{\|q\| + \|q+r\| + \|r\|}{2}$. |
-| **Team 0 Spawner Base** | `(-7, 0)` | `(-7, 0, 7)` | Team 0 base structure. Spawns 2 minions every 3 rounds. Has 200 HP. Loss triggers defeat. |
+| **Team 0 Spawner Base** | `(-7, 0)` | `(-7, 0, 7)` | Team 0 interim base structure. Spawns 2 minions every 3 rounds. Has 200 HP. Loss triggers defeat. *(Note: Evolves in Phase 7 into the permanent Sovereign Core at `(-7, 0)`, flanked by dual Spawners at `(-6, ±1)` and outer towers at `(-4, ±1)`).* |
 | **Team 0 Defensive Tower**| `(-5, 0)` | `(-5, 0, 5)` | Defensive tower. Range 3, 25 damage, attacks nearest enemy minion/hero. Has 150 HP. Repairable. |
 | **Team 0 Hero Spawn Cluster**| `(-6, -2)`<br>`(-6, -1)`<br>`(-6, 0)`<br>`(-6, 1)`<br>`(-6, 2)` | `(-6, -2, 8)`<br>`(-6, -1, 7)`<br>`(-6, 0, 6)`<br>`(-6, 1, 5)`<br>`(-6, 2, 4)` | Starting spawn points for the 5 Team 0 heroes. Placed behind the defensive tower for safe initial deployment. |
-| **Team 1 Spawner Base** | `(7, 0)` | `(7, 0, -7)` | Team 1 base structure. Spawns 2 minions every 3 rounds. Has 200 HP. Loss triggers defeat. |
+| **Team 1 Spawner Base** | `(7, 0)` | `(7, 0, -7)` | Team 1 interim base structure. Spawns 2 minions every 3 rounds. Has 200 HP. Loss triggers defeat. *(Note: Evolves in Phase 7 into the permanent Sovereign Core at `(7, 0)`, flanked by dual Spawners at `(6, ±1)` and outer towers at `(4, ±1)`).* |
 | **Team 1 Defensive Tower**| `(5, 0)` | `(5, 0, -5)` | Defensive tower. Range 3, 25 damage, attacks nearest enemy minion/hero. Has 150 HP. Repairable. |
 | **Team 1 Hero Spawn Cluster**| `(6, -2)`<br>`(6, -1)`<br>`(6, 0)`<br>`(6, 1)`<br>`(6, 2)` | `(6, -2, -4)`<br>`(6, -1, -5)`<br>`(6, 0, -6)`<br>`(6, 1, -7)`<br>`(6, 2, -8)` | Starting spawn points for the 5 Team 1 heroes. Symmetrical placement behind the defensive tower. |
 | **Central Lane Waypoints**| `(-7, 0)`<br>`(-4, 0)`<br>`(0, 0)`<br>`(4, 0)`<br>`(7, 0)` | Node 0: Base 0<br>Node 1: Lane Entry<br>Node 2: Mid Choke<br>Node 3: Lane Exit<br>Node 4: Base 1 | Sequential waypoint corridor followed by lane minions. Minions advance target index when within 1 hex of current waypoint. |

@@ -769,7 +769,7 @@ use serde::{Deserialize, Serialize};
 use crate::ItemDefId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type")]
 pub enum ClientMessage {
     // Existing Phase 5 messages...
     JoinMatch { match_id: String, display_name: String, team: Option<u8> },
@@ -795,7 +795,7 @@ use serde::{Deserialize, Serialize};
 use crate::{UnitId, ItemDefId, ErrorCode, RewardReason};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type")]
 pub enum ServerMessage {
     // Existing Phase 5 messages...
     LobbyUpdated(LobbyDto),
@@ -932,9 +932,7 @@ pub enum ErrorCode {
 ```json
 {
   "type": "BuyItem",
-  "payload": {
-    "item_id": "longblade"
-  }
+  "item_id": "longblade"
 }
 ```
 
@@ -942,13 +940,11 @@ pub enum ErrorCode {
 ```json
 {
   "type": "PurchaseResolved",
-  "payload": {
-    "unit_id": 101,
-    "item_id": "longblade",
-    "success": true,
-    "gold_remaining": 20,
-    "error": null
-  }
+  "unit_id": 101,
+  "item_id": "longblade",
+  "success": true,
+  "gold_remaining": 20,
+  "error": null
 }
 ```
 
@@ -956,13 +952,11 @@ pub enum ErrorCode {
 ```json
 {
   "type": "EconomyUpdated",
-  "payload": {
-    "unit_id": 101,
-    "gold": 20,
-    "xp": 50,
-    "level": 2,
-    "items": ["longblade"]
-  }
+  "unit_id": 101,
+  "gold": 20,
+  "xp": 50,
+  "level": 2,
+  "items": ["longblade"]
 }
 ```
 
@@ -970,13 +964,11 @@ pub enum ErrorCode {
 ```json
 {
   "type": "LevelUpOccurred",
-  "payload": {
-    "unit_id": 101,
-    "new_level": 2,
-    "new_max_hp": 152,
-    "new_attack_damage": 21,
-    "new_max_energy": 6
-  }
+  "unit_id": 101,
+  "new_level": 2,
+  "new_max_hp": 152,
+  "new_attack_damage": 21,
+  "new_max_energy": 6
 }
 ```
 

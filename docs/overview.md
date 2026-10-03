@@ -5,7 +5,7 @@
 ---
 
 ## Document Version
-`Architecture v2.0 — Aligned with Phases 0–7 Technical Specs, GDD v1.0, UX v1.0, and DevOps v1.0`
+`Architecture v2.0 — Aligned with Phases 0–7 Technical Specs, GDD v2.0, UI/UX v2.0, and DevOps v2.0`
 
 ---
 
@@ -304,10 +304,10 @@ Hexabellum enforces strict **information asymmetry**: players only perceive what
 
 ```mermaid
 flowchart TD
-    HEROES["Allied Living Heroes<br/>(Vision Radius: 4 hexes)"] --> UNION["Team Vision Union Engine"]
+    HEROES["Allied Living Heroes<br/>(Vision Radius: 3–5 hexes)"] --> UNION["Team Vision Union Engine"]
     TOWERS["Allied Towers & Spawners<br/>(Vision Radius: 5 hexes)"] --> UNION
     CORE["Allied Sovereign Core<br/>(Vision Radius: 5 hexes)"] --> UNION
-    MINIONS["Allied Active Minions<br/>(Vision Radius: 3 hexes)"] --> UNION
+    MINIONS["Allied Active Minions<br/>(Vision Radius: 2 hexes)"] --> UNION
     ITEMS["Scout Lens Item Passive<br/>(+1 Vision Radius Modifier)"] --> HEROES
     
     UNION --> LOS["Cube Raycasting Line-of-Sight Occlusion<br/>(Obstacles & Enemy Structures Block Vision)"]
@@ -430,11 +430,11 @@ Hexabellum features 5 distinct hero archetypes balanced for 5v5 tactical synergy
 
 | Hero Archetype | Class Role | Base HP | AP | Initiative | Attack Dmg / Rng | Signature Ability | Tactical Identity |
 |---|---|---|---|---|---|---|---|
-| **Vanguard** | Tank / Bruiser | 120 | 3 | 10 | 18 / 1 (Melee) | **Cleave** (AoE Melee Cone) | Frontline anchor, damage sponge, area denial |
-| **Ranger** | Skirmisher | 85 | 3 | 16 | 15 / 3 (Ranged) | **Bolt** (Piercing Line Shot) | High mobility, scout, objective harassment |
-| **Warden** | Support / Protector | 95 | 3 | 12 | 12 / 2 (Reach) | **Mend** (Targeted Allied Heal) | Base defense, lane sustain, emergency triage |
-| **Sniper** | Long-Range Artillery | 70 | 3 | 14 | 24 / 4 (Sniper) | **Overwatch** (Reaction Shot) | Glass cannon, zoning, high single-target burst |
-| **Berserker** | Melee Assassin | 105 | 3 | 18 | 22 / 1 (Melee) | **Frenzy** (Bonus Attack on Kill) | Flanker, squishy executioner, rapid cleanup |
+| **Vanguard** | Tank / Bruiser | 140 | 3 | 3 | 18 / 1 (Melee) | **Cleave** (AoE Melee Sweep, Radius 1, 15 Dmg) | Frontline anchor, damage sponge, area denial |
+| **Ranger** | Skirmisher / Scout | 90 | 3 | 4 | 16 / 2 (Ranged) | **Bolt** (Piercing Line Beam, Range 3, 25 Dmg) | High mobility, scout, objective harassment |
+| **Warden** | Support / Protector | 100 | 3 | 2 | 12 / 1 (Melee) | **Mend** (Targeted Allied Heal, Range 2, 20 Heal) | Base defense, lane sustain, emergency triage |
+| **Sniper** | Long-Range Artillery | 80 | 3 | 4 | 14 / 3 (Ranged) | **Longshot** (Artillery Strike, Range 4, Min Range 2, 30 Dmg) | Glass cannon, zoning, high single-target burst |
+| **Berserker** | Melee Assassin / Bruiser | 120 | 3 | 3 | 20 / 1 (Melee) | **Fury** (Self-Buff, +8 Atk Dmg for 2 Rounds) | Flanker, squishy executioner, rapid cleanup |
 
 ### 9.2 Progression & Level Scaling (Levels 1–5)
 Heroes accumulate experience through last-hits, structure assists, and neutral camps. Reaching an XP threshold triggers immediate level-up:
@@ -497,10 +497,14 @@ flowchart TD
 #### Client-to-Server Messages
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type")]
 pub enum ClientMessage {
-    JoinMatch { match_id: String, player_id: String, hero_id: String },
-    SubmitOrders { round: u32, unit_id: u32, move_dest: Option<HexCoord>, action: ActionDto },
+    Hello { player_id: String, reconnect_token: Option<String> },
+    JoinMatch { match_id: String, player_id: String, hero_id: Option<String> },
+    SelectHero { hero_def_id: String },
+    SetReady { ready: bool },
+    SubmitOrders { round: u32, orders: Vec<OrderDto> },
+    CancelOrders { round: u32 },
     BuyItem { item_id: String },
     Ping { client_time_ms: u64 },
     Surrender,
@@ -510,9 +514,10 @@ pub enum ClientMessage {
 #### Server-to-Client Messages
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type")]
 pub enum ServerMessage {
-    MatchStarted { match_id: String, seed: u64, assigned_hero: u32, team_id: u8 },
+    HelloAck { player_id: String, reconnect_token: String },
+    MatchStarted { match_id: String, seed: u64, assigned_hero: u64, team_id: u8 },
     RoundStarted { round: u32, time_remaining_ms: u32, snapshot: SanitizedSnapshotDto },
     OrdersLocked { round: u32 },
     RoundResolved { 
@@ -597,12 +602,12 @@ flowchart TD
 
 | Phase | Milestone Name | Architecture Decision Record | Core Deliverables & Systems Built | Primary Verification Artifact |
 |---|---|---|---|---|
-| **0** | **Foundation / Vertical Slice** | [`ADR-001`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-0.md#architectural-decision-record-adr-001-rust-wasm-vertical-slice-architecture) | Rust workspace (`core`, `wasm`), axial coordinates, A* pathfinding, single hero movement, PixiJS v8 browser renderer. | Playable browser prototype moving a hero across hexes via WASM. |
-| **1** | **Combat & AI Opponent** | [`ADR-002`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-1.md#architectural-decision-record-adr-002-deterministic-combat-engine-initiative-resolution--tactical-ai) | 3v3 team skirmish, 3 AP budget, melee combat, damage/elimination, initiative sorting (`rand_chacha`), greedy AI bot. | Headless 100-round AI vs AI test; browser 3v3 battle to hero elimination. |
-| **2** | **MOBA Autonomous Entities** | [`ADR-003`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-2.md#architectural-decision-record-adr-003-autonomous-moba-entities-dual-team-coordination-and-information-fog) | Automated minion waves, defensive towers with retaliatory attacks, radius fog of war, synchronized 30s turn timer. | Browser battle with autonomous minions pushing lanes and towers firing. |
-| **3** | **Authoritative Server** | [`ADR-004`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-3.md#architectural-decision-record-adr-004-tokio-actor-per-match-authoritative-server-architecture-websocket-framing--grace-period-synchronization) | Axum WebSocket server, Tokio `MatchActor` per room, simultaneous order ingestion with 1.0s grace, BLAKE3 state hashing. | 2 browser tabs connected over WebSockets playing a synchronized match. |
-| **4** | **Abilities & Micro Tactics** | [`ADR-005`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-4.md#architectural-decision-record-adr-005-hero-active-abilities-composable-effect-pipeline-cube-raycast-los-structure-repair-and-neutral-camps) | Hero active abilities (Cleave, Bolt, Mend), composable effect pipeline, cube raycast LoS, structure repair, neutral camps with leash. | Tactical depth with wall-blocked vision, ability cooldowns, and camp farming. |
-| **5** | **5v5 Scale & True Multiplayer** | [`ADR-006`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-5.md#architectural-decision-record-adr-006-5v5-multiplayer-scaling-per-player-single-hero-avatar-model-team-vision-union-and-dynamic-ai-backfill) | 1-player-1-hero avatar model (up to 10 players), 5-hero roster, shared team vision union, dynamic AI backfill, radius 8 arena. | 10 concurrent browser connections in an arena with pan/zoom and team vision. |
+| **0** | **Foundation / Vertical Slice** | [`ADR-001`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-0.md#architectural-decision-record-adr-001-vertical-slice-strategy) | Rust workspace (`core`, `wasm`), axial coordinates, A* pathfinding, single hero movement, PixiJS v8 browser renderer. | Playable browser prototype moving a hero across hexes via WASM. |
+| **1** | **Combat & AI Opponent** | [`ADR-002`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-1.md#architectural-decision-record-adr-002-deterministic-simultaneous-resolution--cooperative-movement-protocol) | 3v3 team skirmish, 3 AP budget, melee combat, damage/elimination, initiative sorting (`rand_chacha`), greedy AI bot. | Headless 100-round AI vs AI test; browser 3v3 battle to hero elimination. |
+| **2** | **MOBA Autonomous Entities** | [`ADR-003`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-2.md#architectural-decision-record-adr-003-moba-systems-vision-asymmetry-cooperative-mechanics--event-animation-pipeline) | Automated minion waves, defensive towers with retaliatory attacks, radius fog of war, synchronized 30s turn timer. | Browser battle with autonomous minions pushing lanes and towers firing. |
+| **3** | **Authoritative Server** | [`ADR-004`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-3.md#architectural-decision-record-adr-004-authoritative-server-architecture-websocket-state-synchronization-fog-masked-event-streams--reconnection-protocol) | Axum WebSocket server, Tokio `MatchActor` per room, simultaneous order ingestion with 1.0s grace, BLAKE3 state hashing. | 2 browser tabs connected over WebSockets playing a synchronized match. |
+| **4** | **Abilities & Micro Tactics** | [`ADR-005`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-4.md#architectural-decision-record-adr-005-hero-abilities-status-effect-engine-line-of-sight-cube-raycasting-neutral-camp-leash-mechanics--lane-aware-minion-steering) | Hero active abilities (Cleave, Bolt, Mend), composable effect pipeline, cube raycast LoS, structure repair, neutral camps with leash. | Tactical depth with wall-blocked vision, ability cooldowns, and camp farming. |
+| **5** | **5v5 Scale & True Multiplayer** | [`ADR-006`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-5.md#architectural-decision-record-adr-006-5v5-match-lifecycle-per-player-controller-model-team-shared-fog-of-war-scaled-radius-8-arena--fault-tolerant-ai-backfill) | 1-player-1-hero avatar model (up to 10 players), 5-hero roster, shared team vision union, dynamic AI backfill, radius 8 arena. | 10 concurrent browser connections in an arena with pan/zoom and team vision. |
 | **6** | **In-Match Economy & Progression** | [`ADR-007`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-6.md#architectural-decision-record-adr-007-server-authoritative-economy-killobjective-bounties-level-up-progression--field-item-shop) | Sovereign gold ledgers, last-hit bounties, global structure payouts, linear XP/levels (1–5), 4 passive items, Field Shop. | Heroes leveling up, earning gold bounties, and buying stat-enhancing items. |
 | **7** | **MOBA Macro Loop & Victory** | [`ADR-008`](file:///home/user/Code/garnizeh/hexabellum/docs/phase-7.md#architectural-decision-record-adr-008-sovereign-core-structures-base-zones-hero-respawn-lifecycle-neutral-objective-vault-mechanics-base-only-shopping-and-core-destruction-victory) | Sovereign Cores (700 HP), Base Zones (19 hexes), 3-round hero respawn, Base-only shopping, neutral Vault, Core Destruction victory. | Complete MOBA loop: siege enemy towers, contest Vault, shatter enemy Core. |
 

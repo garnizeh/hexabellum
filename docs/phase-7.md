@@ -998,19 +998,20 @@ impl BattleSession {
 In the scaled radius 8 arena (217 hexes):
 
 ```
-                   TEAM 0 BASE                                      TEAM 1 BASE
-     Core: (-7, 0) | Spawner: (-5, 0) | Tower: (-3, 0)      Tower: (3, 0) | Spawner: (5, 0) | Core: (7, 0)
-     Base Zone Radius: 2 (19 Hexes)                         Base Zone Radius: 2 (19 Hexes)
-                      \                                                   /
-                       \=======>  CENTRAL OBJECTIVE VAULT: (0, 0) <======/
+                       AZURE SANCTUARY (TEAM 0)                                   CRIMSON SANCTUARY (TEAM 1)
+           North Spawner: (-6, -1) ── Outer Tower: (-4, -1)                 Outer Tower: (4, -1) ── North Spawner: (6, -1)
+          /                                                \               /                                               \
+Core: (-7, 0) [Base r=2 (19 Hexes)]                   ====== CENTRAL OBJECTIVE: VAULT (0, 0) ======               Core: (7, 0) [Base r=2 (19 Hexes)]
+          \                                                /               \                                               /
+           South Spawner: (-6,  1) ── Outer Tower: (-4,  1)                 Outer Tower: (4,  1) ── South Spawner: (6,  1)
 ```
 
-- **Team 0 Base Zone**: Centered at `(-7, 0)`, radius 2 (bounds: `q` from -9 to -5, `r` from -2 to +2). Contains Core `(-7, 0)`, Spawner `(-5, 0)`, and Hero spawn hexes.
-- **Team 1 Base Zone**: Centered at `(7, 0)`, radius 2 (bounds: `q` from 5 to 9, `r` from -2 to +2). Contains Core `(7, 0)`, Spawner `(5, 0)`, and Hero spawn hexes.
-- **Minion Waypoints**:
-  - **Team 0 Minions**: `(-5, 0) -> (-3, 0) -> (0, 0) -> (3, 0) -> (5, 0) -> (7, 0)`.
-  - **Team 1 Minions**: `(5, 0) -> (3, 0) -> (0, 0) -> (-3, 0) -> (-5, 0) -> (-7, 0)`.
-  - When minions arrive within attack range of the opposing Core, they lock on and siege it. Minions ignore the neutral Vault at `(0, 0)`.
+- **Team 0 (Azure) Base Zone**: Centered at `(-7, 0)`, radius 2 (bounds: 19 hexes spanning $q$ from -9 to -5, $r$ from -2 to +2). Contains the Sovereign Core at `(-7, 0)`, flanked by Spawners at `(-6, -1)` and `(-6, 1)`, with outer defensive towers anchoring the perimeter at `(-4, -1)` and `(-4, 1)`.
+- **Team 1 (Crimson) Base Zone**: Centered at `(7, 0)`, radius 2 (bounds: 19 hexes spanning $q$ from 5 to 9, $r$ from -2 to +2). Contains the Sovereign Core at `(7, 0)`, flanked by Spawners at `(6, -1)` and `(6, 1)`, with outer defensive towers anchoring the perimeter at `(4, -1)` and `(4, 1)`.
+- **Minion Waypoints & Corridors**:
+  - **Azure Waves**: Spawn at `(-6, -1)` and `(-6, 1)`, advance past outer towers `(-4, -1)` / `(-4, 1)` into the central river/Vault corridor toward opposing towers `(4, -1)` / `(4, 1)`, breaching through spawners `(6, -1)` / `(6, 1)` to siege the Crimson Core at `(7, 0)`.
+  - **Crimson Waves**: Spawn at `(6, -1)` and `(6, 1)`, advance past outer towers `(4, -1)` / `(4, 1)` into the central river/Vault corridor toward Azure towers `(-4, -1)` / `(-4, 1)`, breaching through spawners `(-6, -1)` / `(-6, 1)` to siege the Azure Core at `(-7, 0)`.
+  - When minions arrive within basic attack range of the opposing Core, they lock on and siege it. Minions strictly ignore the neutral Vault at `(0, 0)`.
 
 ---
 
@@ -1104,7 +1105,7 @@ use serde::{Deserialize, Serialize};
 use crate::dto::{HexDto, UnitId, TeamId};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "data")]
+#[serde(tag = "type")]
 pub enum ServerEventDto {
     HeroDied {
         unit_id: UnitId,

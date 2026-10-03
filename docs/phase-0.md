@@ -666,7 +666,7 @@ resolver = "2"
 [package]
 name = "hexabellum-core"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -678,7 +678,7 @@ serde_json = "1.0"
 [package]
 name = "hexabellum-wasm"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

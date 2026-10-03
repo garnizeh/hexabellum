@@ -284,18 +284,18 @@ The battle arena is a radius-6 regular hexagonal grid containing 127 hex cells. 
 
 | Entity / Landmark | Coordinates `(q, r)` | Team | Attributes & Role |
 |---|---|---|---|
-| **Team 0 Spawner** | `(-5, 0)` | Team 0 | 200 HP, spawns 1 minion every 2 rounds, repairable, does not attack. |
-| **Team 0 Tower** | `(-3, 0)` | Team 0 | 150 HP, attack range 3, 20 damage, requires LOS, repairable. |
-| **Team 0 Vanguard** | `(-4, -1)` | Team 0 | Hero A: 120 HP, 3 AP, 5 Energy, Cleave (AOE melee damage). |
-| **Team 0 Ranger** | `(-4, 0)` | Team 0 | Hero B: 80 HP, 3 AP, 5 Energy, Bolt (ranged sniper beam). |
-| **Team 0 Warden** | `(-4, 1)` | Team 0 | Hero C: 100 HP, 3 AP, 5 Energy, Mend (allied hero heal). |
-| **Team 1 Spawner** | `(5, 0)` | Team 1 | 200 HP, spawns 1 minion every 2 rounds, repairable, does not attack. |
-| **Team 1 Tower** | `(3, 0)` | Team 1 | 150 HP, attack range 3, 20 damage, requires LOS, repairable. |
-| **Team 1 Vanguard** | `(4, -1)` | Team 1 | Hero A: 120 HP, 3 AP, 5 Energy, Cleave (AOE melee damage). |
-| **Team 1 Ranger** | `(4, 0)` | Team 1 | Hero B: 80 HP, 3 AP, 5 Energy, Bolt (ranged sniper beam). |
-| **Team 1 Warden** | `(4, 1)` | Team 1 | Hero C: 100 HP, 3 AP, 5 Energy, Mend (allied hero heal). |
-| **Neutral Camp Alpha** | `(0, 3)` | Neutral | Camp shrine hosting Neutral Guardian Alpha (80 HP, 12 DMG). |
-| **Neutral Camp Beta** | `(0, -3)` | Neutral | Camp shrine hosting Neutral Guardian Beta (80 HP, 12 DMG). |
+| **Team 0 Spawner** | `(-5, 0)` | Team 0 | 150 HP, spawns 2 minions every 2 rounds, repairable, does not attack. |
+| **Team 0 Tower** | `(-3, 0)` | Team 0 | 100 HP, attack range 3, 25 damage, requires LOS, repairable. |
+| **Team 0 Vanguard** | `(-4, -1)` | Team 0 | Hero A: 140 HP, 3 AP, 5 Energy, Cleave (AOE melee damage). |
+| **Team 0 Ranger** | `(-4, 0)` | Team 0 | Hero B: 90 HP, 3 AP, 5 Energy, Bolt (ranged sniper beam). |
+| **Team 0 Warden** | `(-4, 1)` | Team 0 | Hero C: 100 HP, 3 AP, 6 Energy, Mend (allied hero heal). |
+| **Team 1 Spawner** | `(5, 0)` | Team 1 | 150 HP, spawns 2 minions every 2 rounds, repairable, does not attack. |
+| **Team 1 Tower** | `(3, 0)` | Team 1 | 100 HP, attack range 3, 25 damage, requires LOS, repairable. |
+| **Team 1 Vanguard** | `(4, -1)` | Team 1 | Hero A: 140 HP, 3 AP, 5 Energy, Cleave (AOE melee damage). |
+| **Team 1 Ranger** | `(4, 0)` | Team 1 | Hero B: 90 HP, 3 AP, 5 Energy, Bolt (ranged sniper beam). |
+| **Team 1 Warden** | `(4, 1)` | Team 1 | Hero C: 100 HP, 3 AP, 6 Energy, Mend (allied hero heal). |
+| **Neutral Camp Alpha** | `(0, 3)` | Neutral | Camp shrine hosting Neutral Guardian Alpha (60 HP, 15 DMG). |
+| **Neutral Camp Beta** | `(0, -3)` | Neutral | Camp shrine hosting Neutral Guardian Beta (60 HP, 15 DMG). |
 | **Dense Stone Wall** | `(0, 2)` & `(0, -2)` | None | **Blocks Movement: Yes, Blocks Vision: Yes**. Solid monoliths flank mid lane. |
 | **Smoke Pillar** | `(2, 2)` & `(-2, -2)` | None | **Blocks Movement: No, Blocks Vision: Yes**. Ambush clouds; walkthrough cover. |
 | **Low Boulders** | `(0, 1)` & `(0, -1)` | None | **Blocks Movement: Yes, Blocks Vision: No**. Obstacles allowing ranged projectile fire. |
@@ -379,12 +379,12 @@ impl Unit {
             kind: UnitKind::Hero,
             team,
             pos,
-            hp: 120,
-            max_hp: 120,
+            hp: 140,
+            max_hp: 140,
             ap: 3,
             max_ap: 3,
             initiative,
-            attack_damage: 20,
+            attack_damage: 18,
             attack_range: 1,
             vision_range: 3,
             energy: 5,
@@ -409,13 +409,13 @@ impl Unit {
             kind: UnitKind::Hero,
             team,
             pos,
-            hp: 80,
-            max_hp: 80,
+            hp: 90,
+            max_hp: 90,
             ap: 3,
             max_ap: 3,
             initiative,
-            attack_damage: 15,
-            attack_range: 3,
+            attack_damage: 16,
+            attack_range: 2,
             vision_range: 4,
             energy: 5,
             max_energy: 5,
@@ -446,9 +446,9 @@ impl Unit {
             initiative,
             attack_damage: 12,
             attack_range: 1,
-            vision_range: 3,
-            energy: 5,
-            max_energy: 5,
+            vision_range: 4,
+            energy: 6,
+            max_energy: 6,
             energy_regen: 1,
             cooldowns,
             statuses: Vec::new(),
@@ -466,12 +466,12 @@ impl Unit {
             kind: UnitKind::NeutralGuardian,
             team: TEAM_NEUTRAL,
             pos,
-            hp: 80,
-            max_hp: 80,
+            hp: 60,
+            max_hp: 60,
             ap: 2,
             max_ap: 2,
             initiative: 2,
-            attack_damage: 12,
+            attack_damage: 15,
             attack_range: 1,
             vision_range: 3,
             energy: 0,
@@ -1684,7 +1684,7 @@ pub enum SpellTargetDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type")]
 pub enum ActionDto {
     Wait,
     Attack { target_id: UnitId },
@@ -1711,7 +1711,7 @@ pub struct NeutralCampDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "event", content = "data")]
+#[serde(tag = "type")]
 pub enum GameEventDto {
     RoundStarted { round: u32 },
     UnitMoved { unit_id: UnitId, from: HexDto, to: HexDto },

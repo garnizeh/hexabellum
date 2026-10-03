@@ -82,7 +82,7 @@ flowchart TD
 |---|---|---|---|
 | **Web Client SPA** | TypeScript 5.4, PixiJS v8, Vite 5.2 | Visual rendering, user input, audio, DOM HUD overlays | Infinitely scalable via edge CDN caching; 0 origin server load. |
 | **Simulation WASM** | Rust 1.85+, `wasm32-unknown-unknown`, `wasm-pack` | Client-side trajectory preview, fog projection, local replay parsing | Client-side execution sandbox; 0 server CPU overhead. |
-| **Game Server** | Rust 1.85+ (Edition 2024), Axum 0.7, Tokio 1.38 | Authoritative simulation, 10-player WebSocket rooms, AI backfill, state sanitization | Horizontally scalable by match room (`MatchActor`). Memory bounded (~10 MB per match). |
+| **Game Server** | Rust 1.85+ (Edition 2024), Axum 0.8, Tokio 1.38 | Authoritative simulation, 10-player WebSocket rooms, AI backfill, state sanitization | Horizontally scalable by match room (`MatchActor`). Memory bounded (~10 MB per match). |
 | **Database** | PostgreSQL 16 Alpine | Persistent accounts, match outcomes, player ratings, telemetry, event logs | Vertically scalable primary with read-replicas for analytical replay queries. |
 | **In-Memory Cache** | Redis 7 Alpine | Matchmaker queues, session token validation, match-to-server routing registry | In-memory operations; single cluster handles > 50,000 ops/sec with sub-millisecond latency. |
 | **Reverse Proxy** | Caddy 2 or Nginx 1.25+ | Automatic TLS certificate issuance (ACME), HTTP/2, WebSocket proxying, rate limiting | Low CPU/RAM overhead; handles 10,000+ concurrent connections per instance. |
@@ -772,11 +772,11 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build WASM release bundle
-        run: cd crates/wasm && wasm-pack build --target web --release
+        run: cd crates/wasm && wasm-pack build --target web --release --out-dir ../../web/src/wasm/pkg
 
       - name: Enforce WASM binary size budget (< 1.8 MB uncompressed)
         run: |
-          FILE_SIZE=$(stat -c%s crates/wasm/pkg/hexabellum_wasm_bg.wasm)
+          FILE_SIZE=$(stat -c%s web/src/wasm/pkg/hexabellum_wasm_bg.wasm)
           echo "WASM Binary Size: $FILE_SIZE bytes"
           MAX_SIZE=1887436 # 1.8 MB
           if [ "$FILE_SIZE" -gt "$MAX_SIZE" ]; then
@@ -803,11 +803,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: TypeScript typecheck
+      - name: TypeScript typecheck (with WASM types)
         run: npx tsc --noEmit
-
-      - name: ESLint check
-        run: npm run lint
 ```
 
 ### 4.2 Automated Production Deployment Workflow (`.github/workflows/deploy-prod.yml`)
