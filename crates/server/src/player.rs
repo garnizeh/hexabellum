@@ -27,10 +27,13 @@ impl PlayerConnection {
 
     pub fn send(&self, msg: ServerMessage) {
         if let Some(ref tx) = self.sender {
-            let tx = tx.clone();
-            tokio::spawn(async move {
-                let _ = tx.send(msg).await;
-            });
+            if let Err(err) = tx.try_send(msg) {
+                tracing::warn!(
+                    "Failed to deliver ServerMessage to player {}: {:?}",
+                    self.player_id,
+                    err
+                );
+            }
         }
     }
 }

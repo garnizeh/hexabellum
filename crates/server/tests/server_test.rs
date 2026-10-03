@@ -363,3 +363,60 @@ async fn test_websocket_pvai_mode() {
 
     server_task.abort();
 }
+
+#[tokio::test]
+async fn test_reconnect_authorization_and_unknown_match() {
+    let registry: MatchRegistry = Arc::new(DashMap::new());
+    let match_id = "test-auth-match".to_string();
+
+    let mut config = BattleConfig::default();
+    config.enable_ai_team_1 = true;
+
+    let handle = MatchActorHandle::new(match_id.clone(), config);
+    registry.insert(match_id.clone(), handle);
+
+    let (addr, server_task) = start_test_server(registry).await;
+
+    // 1. Connect to non-existing match -> expect MatchNotFound error
+    let unknown_url = format!("ws://{}/ws/match/nonexistent-match?player_id=p1", addr);
+    let (mut ws_unknown, _) = connect_async(&unknown_url).await.unwrap();
+    let err_msg = ws_unknown.next().await.unwrap().unwrap();
+    let smsg_err: ServerMessage = serde_json::from_str(err_msg.to_text().unwrap()).unwrap();
+    match smsg_err {
+        ServerMessage::Error { error_code, .. } => {
+            assert_eq!(error_code, hexabellum_protocol::ProtocolErrorCode::MatchNotFound);
+        }
+        other => panic!("Expected Error::MatchNotFound, got {:?}", other),
+    }
+
+    // 2. Connect legitimate player to test-auth-match
+    let valid_url = format!("ws://{}/ws/match/{}?player_id=p1", addr, match_id);
+    let (mut ws_p1, _) = connect_async(&valid_url).await.unwrap();
+
+    let msg1 = ws_p1.next().await.unwrap().unwrap();
+    let smsg1: ServerMessage = serde_json::from_str(msg1.to_text().unwrap()).unwrap();
+    let _token = match smsg1 {
+        ServerMessage::HelloAck { reconnect_token, .. } => reconnect_token,
+        other => panic!("Expected HelloAck, got {:?}", other),
+    };
+
+    drop(ws_p1);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // 3. Attempt reconnection with WRONG reconnect_token
+    let wrong_token_url = format!(
+        "ws://{}/ws/match/{}?player_id=p1&reconnect_token=WRONG-TOKEN",
+        addr, match_id
+    );
+    let (mut ws_wrong, _) = connect_async(&wrong_token_url).await.unwrap();
+    let auth_err_msg = ws_wrong.next().await.unwrap().unwrap();
+    let smsg_auth_err: ServerMessage = serde_json::from_str(auth_err_msg.to_text().unwrap()).unwrap();
+    match smsg_auth_err {
+        ServerMessage::Error { error_code, .. } => {
+            assert_eq!(error_code, hexabellum_protocol::ProtocolErrorCode::NotAuthorized);
+        }
+        other => panic!("Expected Error::NotAuthorized, got {:?}", other),
+    }
+
+    server_task.abort();
+}

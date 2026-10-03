@@ -30,11 +30,17 @@ export class NetworkBridge {
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
   private wsBaseUrl?: string;
+  private shouldStopReconnecting = false;
 
   constructor() {
-    this.playerId = localStorage.getItem('hb_player_id') ?? crypto.randomUUID();
-    localStorage.setItem('hb_player_id', this.playerId);
-    this.reconnectToken = localStorage.getItem('hb_reconnect_token');
+    const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const urlPlayerId = urlParams?.get('player_id');
+
+    this.playerId =
+      urlPlayerId ??
+      sessionStorage.getItem('hb_player_id') ??
+      crypto.randomUUID();
+    sessionStorage.setItem('hb_player_id', this.playerId);
   }
 
   setCallbacks(callbacks: Partial<NetworkCallbacks>): void {
@@ -59,21 +65,24 @@ export class NetworkBridge {
 
   connect(matchId: string, wsBaseUrl?: string): void {
     this.matchId = matchId;
+    this.shouldStopReconnecting = false;
     if (wsBaseUrl) this.wsBaseUrl = wsBaseUrl;
     this.cleanupSocket();
     this.setConnectionState('CONNECTING');
 
+    this.reconnectToken = sessionStorage.getItem(`hb_reconnect_token_${matchId}`);
+
     let url: string;
     if (this.wsBaseUrl) {
-      url = `${this.wsBaseUrl}/ws/match/${matchId}?player_id=${this.playerId}`;
+      url = `${this.wsBaseUrl}/ws/match/${matchId}?player_id=${encodeURIComponent(this.playerId)}`;
     } else {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      url = `${protocol}//${host}/ws/match/${matchId}?player_id=${this.playerId}`;
+      url = `${protocol}//${host}/ws/match/${matchId}?player_id=${encodeURIComponent(this.playerId)}`;
     }
 
     if (this.reconnectToken) {
-      url += `&reconnect_token=${this.reconnectToken}`;
+      url += `&reconnect_token=${encodeURIComponent(this.reconnectToken)}`;
     }
 
     try {
@@ -126,6 +135,7 @@ export class NetworkBridge {
   disconnect(): void {
     this.cleanupSocket();
     this.matchId = null;
+    this.shouldStopReconnecting = true;
     this.setConnectionState('DISCONNECTED');
   }
 
@@ -133,7 +143,9 @@ export class NetworkBridge {
     switch (msg.type) {
       case 'HelloAck':
         this.reconnectToken = msg.reconnect_token;
-        localStorage.setItem('hb_reconnect_token', msg.reconnect_token);
+        if (this.matchId) {
+          sessionStorage.setItem(`hb_reconnect_token_${this.matchId}`, msg.reconnect_token);
+        }
         break;
 
       case 'MatchJoined':
@@ -161,6 +173,13 @@ export class NetworkBridge {
         break;
 
       case 'Error':
+        if (
+          msg.error_code === 'MatchNotFound' ||
+          msg.error_code === 'MatchFull' ||
+          msg.error_code === 'NotAuthorized'
+        ) {
+          this.shouldStopReconnecting = true;
+        }
         this.callbacks.onError?.(msg.message);
         break;
     }
@@ -173,14 +192,17 @@ export class NetworkBridge {
   }
 
   private scheduleReconnect(): void {
-    if (!this.matchId) return;
+    if (!this.matchId || this.shouldStopReconnecting) {
+      this.setConnectionState('DISCONNECTED');
+      return;
+    }
     this.setConnectionState('RECONNECTING');
 
     const backoff = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 10000);
     this.reconnectAttempts++;
 
     this.reconnectTimer = window.setTimeout(() => {
-      if (this.matchId) {
+      if (this.matchId && !this.shouldStopReconnecting) {
         this.connect(this.matchId, this.wsBaseUrl);
       }
     }, backoff);

@@ -52,6 +52,14 @@ async fn handle_socket(
                 "Rejected WebSocket connection for unknown match: {}",
                 match_id
             );
+            let (mut ws_sink, _) = socket.split();
+            let err_msg = ServerMessage::Error {
+                error_code: hexabellum_protocol::ProtocolErrorCode::MatchNotFound,
+                message: format!("Match '{}' not found", match_id),
+            };
+            if let Ok(json) = serde_json::to_string(&err_msg) {
+                let _ = ws_sink.send(Message::Text(json.into())).await;
+            }
             return;
         }
     };

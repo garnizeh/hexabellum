@@ -47,6 +47,10 @@ export class InputHandler {
     this.updateInspector(null);
   }
 
+  getIsResolving(): boolean {
+    return this.isResolving;
+  }
+
   private getState(): GameState {
     if (this.session) {
       return this.session.getGameState() ?? getPlayerState(0);

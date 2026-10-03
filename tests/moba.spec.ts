@@ -16,6 +16,10 @@ test.describe('Hexabellum Phase 2 MOBA E2E', () => {
     const canvas = page.locator('#game-canvas');
     await expect(canvas).toBeVisible();
 
+    // Ensure connection is established and Round 0 is initialized before clicking
+    await expect(page.locator('#conn-pill')).toHaveClass(/connected/, { timeout: 10000 });
+    await expect(page.locator('#round-val')).toHaveText('Round 0', { timeout: 10000 });
+
     const box = await canvas.boundingBox();
     expect(box).not.toBeNull();
     const cx = box!.width / 2;

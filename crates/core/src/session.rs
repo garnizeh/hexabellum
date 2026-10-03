@@ -49,6 +49,7 @@ pub struct BattleSession {
     pub staged_orders: HashMap<TeamId, HashMap<UnitId, UnitOrder>>,
     pub submitted_teams: HashSet<TeamId>,
     pub config: BattleConfig,
+    pub unit_registry: HashMap<UnitId, (TeamId, UnitKind, HexCoord)>,
 }
 
 impl BattleSession {
@@ -104,6 +105,11 @@ impl BattleSession {
         // Initialize vision
         state.update_fog();
 
+        let mut unit_registry = HashMap::new();
+        for unit in state.units.values() {
+            unit_registry.insert(unit.id, (unit.team, unit.kind, unit.pos));
+        }
+
         Self {
             match_id,
             state,
@@ -111,6 +117,7 @@ impl BattleSession {
             staged_orders: HashMap::new(),
             submitted_teams: HashSet::new(),
             config,
+            unit_registry,
         }
     }
 
@@ -228,6 +235,28 @@ impl BattleSession {
 
         let events = TurnProcessor::resolve_turn(&mut self.state, combined_orders);
 
+        // Update unit_registry with events from this turn
+        for event in &events {
+            match event {
+                GameEvent::UnitSpawned {
+                    unit_id,
+                    unit_kind,
+                    team,
+                    pos,
+                    ..
+                } => {
+                    self.unit_registry
+                        .insert(*unit_id, (*team, *unit_kind, *pos));
+                }
+                GameEvent::UnitMoved { unit_id, to, .. } => {
+                    if let Some(meta) = self.unit_registry.get_mut(unit_id) {
+                        meta.2 = *to;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         if self.state.winner.is_none() {
             self.state.phase = Phase::Planning;
         } else {
@@ -245,6 +274,16 @@ impl BattleSession {
     ) -> Vec<SanitizedGameEvent> {
         let visible_hexes = self.state.fog.visible_hexes(team);
         let mut sanitized = Vec::new();
+
+        let get_unit_meta = |id: &UnitId| {
+            if let Some(m) = self.unit_registry.get(id) {
+                Some((m.0, m.1, m.2))
+            } else if let Some(u) = self.state.get_unit(*id) {
+                Some((u.team, u.kind, u.pos))
+            } else {
+                None
+            }
+        };
 
         for event in events {
             match event {
@@ -275,8 +314,7 @@ impl BattleSession {
                     path,
                     ap_spent,
                 } => {
-                    let unit_opt = self.state.get_unit(*unit_id);
-                    let is_own_unit = unit_opt.map_or(false, |u| u.team == team);
+                    let is_own_unit = get_unit_meta(unit_id).map_or(false, |m| m.0 == team);
                     let from_vis = visible_hexes.contains(from);
                     let to_vis = visible_hexes.contains(to);
 
@@ -297,13 +335,13 @@ impl BattleSession {
                     damage,
                     target_hp_remaining,
                 } => {
-                    let att = self.state.get_unit(*attacker_id);
-                    let tgt = self.state.get_unit(*target_id);
+                    let att_meta = get_unit_meta(attacker_id);
+                    let tgt_meta = get_unit_meta(target_id);
 
                     let att_vis =
-                        att.map_or(false, |u| u.team == team || visible_hexes.contains(&u.pos));
+                        att_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
                     let tgt_vis =
-                        tgt.map_or(false, |u| u.team == team || visible_hexes.contains(&u.pos));
+                        tgt_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
 
                     if att_vis || tgt_vis {
                         sanitized.push(SanitizedGameEvent::UnitAttacked {
@@ -320,13 +358,13 @@ impl BattleSession {
                     damage,
                     target_hp_remaining,
                 } => {
-                    let tower = self.state.get_unit(*tower_id);
-                    let tgt = self.state.get_unit(*target_id);
+                    let tower_meta = get_unit_meta(tower_id);
+                    let tgt_meta = get_unit_meta(target_id);
 
                     let tower_vis =
-                        tower.map_or(false, |u| u.team == team || visible_hexes.contains(&u.pos));
+                        tower_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
                     let tgt_vis =
-                        tgt.map_or(false, |u| u.team == team || visible_hexes.contains(&u.pos));
+                        tgt_meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
 
                     if tower_vis || tgt_vis {
                         sanitized.push(SanitizedGameEvent::TowerAttacked {
@@ -342,17 +380,25 @@ impl BattleSession {
                     unit_kind,
                     killed_by,
                 } => {
-                    sanitized.push(SanitizedGameEvent::UnitDied {
-                        unit_id: *unit_id,
-                        unit_kind: unit_kind.to_string(),
-                        killed_by: *killed_by,
-                    });
+                    let meta = get_unit_meta(unit_id);
+                    let is_own = meta.map_or(false, |m| m.0 == team);
+                    let is_vis = meta.map_or(false, |m| visible_hexes.contains(&m.2));
+
+                    if is_own || is_vis {
+                        sanitized.push(SanitizedGameEvent::UnitDied {
+                            unit_id: *unit_id,
+                            unit_kind: unit_kind.to_string(),
+                            killed_by: *killed_by,
+                        });
+                    }
                 }
                 GameEvent::UnitWaited { unit_id } => {
-                    if let Some(unit) = self.state.get_unit(*unit_id) {
-                        if unit.team == team || visible_hexes.contains(&unit.pos) {
-                            sanitized.push(SanitizedGameEvent::UnitWaited { unit_id: *unit_id });
-                        }
+                    let meta = get_unit_meta(unit_id);
+                    let is_own = meta.map_or(false, |m| m.0 == team);
+                    let is_vis = meta.map_or(false, |m| visible_hexes.contains(&m.2));
+
+                    if is_own || is_vis {
+                        sanitized.push(SanitizedGameEvent::UnitWaited { unit_id: *unit_id });
                     }
                 }
                 GameEvent::RoundEnded { round } => {
@@ -442,6 +488,7 @@ impl BattleSession {
     pub fn state_hash(&self) -> String {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&self.state.round.to_le_bytes());
+        hasher.update(&[self.state.phase as u8]);
         hasher.update(&[self.state.winner.unwrap_or(255)]);
 
         let mut unit_ids: Vec<UnitId> = self.state.units.keys().copied().collect();

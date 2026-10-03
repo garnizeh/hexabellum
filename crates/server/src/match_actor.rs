@@ -29,6 +29,7 @@ pub enum MatchCommand {
     },
     GracePeriodFired {
         round: Round,
+        seq: u64,
     },
 }
 
@@ -58,6 +59,7 @@ pub struct MatchActor {
     pub human_teams: Vec<TeamId>,
     pub turn_deadline_unix_ms: Option<u64>,
     pub grace_timer_active: bool,
+    pub grace_period_seq: u64,
     pub self_tx: mpsc::Sender<MatchCommand>,
 }
 
@@ -75,6 +77,7 @@ impl MatchActor {
             human_teams: Vec::new(),
             turn_deadline_unix_ms: None,
             grace_timer_active: false,
+            grace_period_seq: 0,
             self_tx,
         }
     }
@@ -111,11 +114,14 @@ impl MatchActor {
                         self.resolve_round().await;
                     }
                 }
-                MatchCommand::GracePeriodFired { round } => {
-                    if self.session.state.round == round && self.grace_timer_active {
+                MatchCommand::GracePeriodFired { round, seq } => {
+                    if self.session.state.round == round
+                        && self.grace_timer_active
+                        && self.grace_period_seq == seq
+                    {
                         info!(
-                            "MatchActor [{}] Early resolution grace period elapsed for round {}",
-                            self.match_id, round
+                            "MatchActor [{}] Early resolution grace period elapsed for round {} (seq {})",
+                            self.match_id, round, seq
                         );
                         self.resolve_round().await;
                     }
@@ -135,7 +141,7 @@ impl MatchActor {
         // Reconnection check
         if let Some(conn) = self.players.get_mut(&player_id) {
             let valid_token = reconnect_token.as_ref() == Some(&conn.reconnect_token);
-            if valid_token || !conn.is_connected {
+            if valid_token {
                 conn.sender = Some(sender.clone());
                 conn.is_connected = true;
                 conn.last_seen = Instant::now();
@@ -169,6 +175,14 @@ impl MatchActor {
                         })
                         .await;
                 }
+                return;
+            } else {
+                let _ = sender
+                    .send(ServerMessage::Error {
+                        error_code: ProtocolErrorCode::NotAuthorized,
+                        message: "Invalid reconnect token".into(),
+                    })
+                    .await;
                 return;
             }
         }
@@ -267,6 +281,17 @@ impl MatchActor {
         round: Round,
         orders: Vec<OrderDto>,
     ) {
+        if self.turn_deadline_unix_ms.is_none() {
+            if let Some(conn) = self.players.get(&player_id) {
+                conn.send(ServerMessage::OrderRejected {
+                    round,
+                    error_code: ProtocolErrorCode::InvalidPhase,
+                    reason: "Match is waiting for players or already resolving".into(),
+                });
+            }
+            return;
+        }
+
         let team = match self.players.get(&player_id) {
             Some(conn) => conn.team,
             None => return,
@@ -281,21 +306,21 @@ impl MatchActor {
                     conn.send(ServerMessage::OrdersAccepted { round });
                 }
 
-                // Check early resolution
-                if self.session.all_human_teams_submitted(&self.human_teams)
-                    && !self.grace_timer_active
-                {
+                // Check early resolution with debouncing
+                if self.session.all_human_teams_submitted(&self.human_teams) {
                     self.grace_timer_active = true;
+                    self.grace_period_seq += 1;
+                    let seq = self.grace_period_seq;
                     let tx = self.self_tx.clone();
                     let grace_ms = self.session.config.early_resolution_grace_ms;
                     info!(
-                        "All human orders submitted for round {}. Triggering {}ms grace period",
-                        round, grace_ms
+                        "All human orders submitted for round {}. Triggering {}ms grace period (seq {})",
+                        round, grace_ms, seq
                     );
 
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(grace_ms)).await;
-                        let _ = tx.send(MatchCommand::GracePeriodFired { round }).await;
+                        let _ = tx.send(MatchCommand::GracePeriodFired { round, seq }).await;
                     });
                 }
             }

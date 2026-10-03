@@ -60,10 +60,19 @@ export class ClientSession {
   private currentTeam: number = 0;
   private stagedOrders = new Map<number, OrderDto>();
   private events: Partial<ClientSessionEvents> = {};
+  private isPvAi: boolean = false;
 
   constructor() {
     this.net = new NetworkBridge();
     this.setupNetworkCallbacks();
+  }
+
+  getIsPvAI(): boolean {
+    return this.isPvAi;
+  }
+
+  setIsPvAI(val: boolean): void {
+    this.isPvAi = val;
   }
 
   setEvents(events: Partial<ClientSessionEvents>): void {
@@ -102,6 +111,7 @@ export class ClientSession {
   }
 
   async createMatch(enableAiTeam1: boolean = true, turnDurationSecs: number = 30): Promise<string> {
+    this.isPvAi = enableAiTeam1;
     const res = await fetch('/api/matches', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

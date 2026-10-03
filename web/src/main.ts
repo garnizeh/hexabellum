@@ -142,6 +142,31 @@ async function main() {
     }
   };
 
+  let pendingRoundStarted: { round: number; deadlineUnixMs: number; snapshot: SnapshotDto } | null = null;
+  let pendingMatchEnded: { winner: number | null; snapshot: SnapshotDto } | null = null;
+
+  const applyRoundStarted = (round: number, deadlineUnixMs: number, _snapshot: SnapshotDto) => {
+    isOnline = true;
+    input.setSession(session);
+    renderer.setPlayerTeam(session.getCurrentTeam());
+    renderCurrentState();
+
+    if (statusEl) {
+      statusEl.textContent = 'Planning Phase — Submit orders before timer expires';
+      statusEl.style.color = '#00d2ff';
+    }
+    if (endTurnBtn) {
+      endTurnBtn.disabled = false;
+      endTurnBtn.textContent = 'End Turn';
+    }
+
+    timer.startWithDeadline(deadlineUnixMs, () => {
+      if (!endTurnBtn.disabled) {
+        endTurnBtn.click();
+      }
+    });
+  };
+
   // Wire network event callbacks
   session.setEvents({
     onConnectionChange: (state) => {
@@ -155,10 +180,11 @@ async function main() {
         }
       }
     },
-    onMatchJoined: (matchId, team, snapshot) => {
+    onMatchJoined: (matchId, team, _snapshot) => {
       isOnline = true;
       input.setSession(session);
-      localStorage.setItem('hb_current_match', matchId);
+      renderer.setPlayerTeam(team);
+      sessionStorage.setItem('hb_current_match', matchId);
       hud.setMatchInfo(matchId, false);
       renderCurrentState();
       if (statusEl) {
@@ -168,42 +194,55 @@ async function main() {
     onRoundStarted: (round, deadlineUnixMs, snapshot) => {
       isOnline = true;
       input.setSession(session);
-      renderCurrentState();
+      renderer.setPlayerTeam(session.getCurrentTeam());
+      hud.setOpponentStatus(session.getIsPvAI() ? 'ai' : 'ready');
 
-      if (statusEl) {
-        statusEl.textContent = 'Planning Phase — Submit orders before timer expires';
-        statusEl.style.color = '#00d2ff';
+      if (input.getIsResolving()) {
+        pendingRoundStarted = { round, deadlineUnixMs, snapshot };
+        timer.startWithDeadline(deadlineUnixMs, () => {
+          if (!endTurnBtn.disabled) {
+            endTurnBtn.click();
+          }
+        });
+      } else {
+        applyRoundStarted(round, deadlineUnixMs, snapshot);
       }
-      if (endTurnBtn) endTurnBtn.disabled = false;
-
-      timer.startWithDeadline(deadlineUnixMs, () => {
-        if (!endTurnBtn.disabled) {
-          endTurnBtn.click();
-        }
-      });
     },
     onOrdersAccepted: (round) => {
       if (statusEl) {
-        statusEl.textContent = `Orders locked in for Round ${round}. Awaiting resolution...`;
+        statusEl.textContent = `Orders locked in for Round ${round}. Awaiting opponent...`;
         statusEl.style.color = '#ffea00';
       }
     },
-    onOrderRejected: (round, code, reason) => {
+    onOrderRejected: (_round, _code, reason) => {
       hud.showToast(`Order rejected: ${reason}`);
       if (endTurnBtn) endTurnBtn.disabled = false;
     },
-    onRoundResolved: (round, events, snapshot) => {
-      timer.stop();
+    onRoundResolved: (round, events, _snapshot) => {
       if (endTurnBtn) endTurnBtn.disabled = true;
       if (statusEl) statusEl.textContent = `Resolving Round ${round}...`;
 
       input.handleServerResolved(events, animator, () => {
-        renderCurrentState();
+        if (pendingMatchEnded) {
+          timer.stop();
+          renderCurrentState();
+          pendingMatchEnded = null;
+        } else if (pendingRoundStarted) {
+          const { round: r, deadlineUnixMs, snapshot: snap } = pendingRoundStarted;
+          pendingRoundStarted = null;
+          applyRoundStarted(r, deadlineUnixMs, snap);
+        } else {
+          renderCurrentState();
+        }
       });
     },
     onMatchEnded: (winner, snapshot) => {
-      timer.stop();
-      renderCurrentState();
+      if (input.getIsResolving()) {
+        pendingMatchEnded = { winner, snapshot };
+      } else {
+        timer.stop();
+        renderCurrentState();
+      }
     },
     onError: (msg) => {
       hud.showToast(`Error: ${msg}`);
@@ -211,13 +250,13 @@ async function main() {
   });
 
   const handleEndTurn = () => {
-    timer.stop();
     endTurnBtn.disabled = true;
-    if (statusEl) statusEl.textContent = 'Submitting & resolving simultaneous turn...';
+    if (statusEl) statusEl.textContent = 'Orders submitted. Awaiting resolution...';
 
     if (isOnline) {
       session.submitOrders();
     } else {
+      timer.stop();
       input.endTurnWithAnimation(animator, () => {
         renderCurrentState();
       });
@@ -230,6 +269,13 @@ async function main() {
 
   const handleRestart = () => {
     input.reset();
+    sessionStorage.removeItem('hb_current_match');
+    if (typeof window !== 'undefined' && window.history) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('match');
+      url.searchParams.delete('mode');
+      window.history.replaceState(null, '', url.toString());
+    }
     if (isOnline) {
       startNewPvAIMatch();
     } else if (wasmLoaded) {
@@ -248,6 +294,13 @@ async function main() {
     try {
       if (statusEl) statusEl.textContent = 'Creating PvAI match on server...';
       const matchId = await session.createMatch(true, 30);
+      if (typeof window !== 'undefined' && window.history) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('match', matchId);
+        url.searchParams.delete('mode');
+        window.history.replaceState(null, '', url.toString());
+      }
+      sessionStorage.setItem('hb_current_match', matchId);
       hud.setMatchInfo(matchId, true);
       hud.setOpponentStatus('ai');
       session.joinMatch(matchId);
@@ -262,6 +315,13 @@ async function main() {
     try {
       if (statusEl) statusEl.textContent = 'Hosting 1v1 PvP match...';
       const matchId = await session.createMatch(false, 30);
+      if (typeof window !== 'undefined' && window.history) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('match', matchId);
+        url.searchParams.delete('mode');
+        window.history.replaceState(null, '', url.toString());
+      }
+      sessionStorage.setItem('hb_current_match', matchId);
       hud.setMatchInfo(matchId, false);
       hud.setOpponentStatus('waiting');
       session.joinMatch(matchId);
@@ -274,8 +334,17 @@ async function main() {
 
   const joinExistingMatch = (id: string) => {
     if (!id.trim()) return;
-    hud.setMatchInfo(id.trim(), false);
-    session.joinMatch(id.trim());
+    const cleanId = id.trim();
+    if (typeof window !== 'undefined' && window.history) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('match', cleanId);
+      url.searchParams.delete('mode');
+      window.history.replaceState(null, '', url.toString());
+    }
+    sessionStorage.setItem('hb_current_match', cleanId);
+    session.setIsPvAI(false);
+    hud.setMatchInfo(cleanId, false);
+    session.joinMatch(cleanId);
     if (matchModal) matchModal.style.display = 'none';
   };
 
@@ -309,19 +378,23 @@ async function main() {
     }
   };
 
-  // Check URL query parameters for match join or mode (e.g. ?match=123 or ?mode=pvai)
+  // Check URL query parameters for match join or mode (e.g. ?match=123 or ?mode=pvp or ?offline=1)
   const urlParams = new URLSearchParams(window.location.search);
   const matchParam = urlParams.get('match');
   const modeParam = urlParams.get('mode');
+  const offlineParam = urlParams.get('offline');
+  const cachedMatch = sessionStorage.getItem('hb_current_match');
+
   if (matchParam) {
     joinExistingMatch(matchParam);
-  } else if (modeParam === 'pvai') {
-    startNewPvAIMatch();
   } else if (modeParam === 'pvp') {
     startNewPvPMatch();
-  } else if (wasmLoaded) {
+  } else if (cachedMatch && offlineParam !== '1') {
+    joinExistingMatch(cachedMatch);
+  } else if (offlineParam === '1' && wasmLoaded) {
     fallbackToLocalWasm();
   } else {
+    // Default: Deploy into authoritative server PvAI battle (auto-falls back to WASM if server offline)
     startNewPvAIMatch();
   }
 
