@@ -25,6 +25,18 @@ impl UnitKind {
     }
 }
 
+impl std::fmt::Display for UnitKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnitKind::Hero => write!(f, "Hero"),
+            UnitKind::Minion => write!(f, "Minion"),
+            UnitKind::Tower => write!(f, "Tower"),
+            UnitKind::SpawnerTower => write!(f, "SpawnerTower"),
+            UnitKind::Neutral => write!(f, "Neutral"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LaneDirection {
     None,

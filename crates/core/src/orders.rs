@@ -34,6 +34,10 @@ impl TurnOrders {
         self.orders.push(order);
     }
 
+    pub fn set_order(&mut self, _unit_id: UnitId, order: UnitOrder) {
+        self.add_order(order);
+    }
+
     pub fn get_order(&self, unit_id: UnitId) -> Option<&UnitOrder> {
         self.orders.iter().find(|o| o.unit_id == unit_id)
     }

@@ -151,6 +151,12 @@ impl GameAI {
 
         orders
     }
+
+    /// Generate a tactical fallback order for a single hero.
+    pub fn generate_fallback_order(state: &GameState, unit_id: UnitId) -> UnitOrder {
+        let occupied = state.occupied_hexes();
+        Self::generate_hero_order(state, unit_id, &occupied)
+    }
 }
 
 pub type SimpleAI = GameAI;
