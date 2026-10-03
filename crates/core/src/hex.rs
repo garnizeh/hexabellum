@@ -10,6 +10,16 @@ pub struct HexCoord {
     pub r: i32,
 }
 
+/// The 6 axial unit directions in counter-clockwise cyclic order (pointy-top orientation).
+pub const DIRECTIONS: [(i32, i32); 6] = [
+    (1, 0),  // 0: East
+    (0, 1),  // 1: South-East
+    (-1, 1), // 2: South-West
+    (-1, 0), // 3: West
+    (0, -1), // 4: North-West
+    (1, -1), // 5: North-East
+];
+
 impl HexCoord {
     pub fn new(q: i32, r: i32) -> Self {
         Self { q, r }
@@ -26,35 +36,31 @@ impl HexCoord {
     /// Get all 6 neighboring hexes.
     pub fn neighbors(&self) -> [HexCoord; 6] {
         [
-            HexCoord::new(self.q + 1, self.r),
-            HexCoord::new(self.q - 1, self.r),
-            HexCoord::new(self.q, self.r + 1),
-            HexCoord::new(self.q, self.r - 1),
-            HexCoord::new(self.q + 1, self.r - 1),
-            HexCoord::new(self.q - 1, self.r + 1),
+            HexCoord::new(self.q + DIRECTIONS[0].0, self.r + DIRECTIONS[0].1),
+            HexCoord::new(self.q + DIRECTIONS[1].0, self.r + DIRECTIONS[1].1),
+            HexCoord::new(self.q + DIRECTIONS[2].0, self.r + DIRECTIONS[2].1),
+            HexCoord::new(self.q + DIRECTIONS[3].0, self.r + DIRECTIONS[3].1),
+            HexCoord::new(self.q + DIRECTIONS[4].0, self.r + DIRECTIONS[4].1),
+            HexCoord::new(self.q + DIRECTIONS[5].0, self.r + DIRECTIONS[5].1),
         ]
     }
 
     /// Get all hexes on a ring at the given radius.
+    /// Traverses the 6 sides cyclically, yielding exactly 6 * radius distinct hexes.
     pub fn ring(&self, radius: u32) -> Vec<HexCoord> {
         if radius == 0 {
             return vec![*self];
         }
-        let mut results = Vec::new();
-        // Start from one direction and walk around
-        let directions = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];
-        // Walk to starting position
+        let mut results = Vec::with_capacity((6 * radius) as usize);
+        // Start at corner: self + DIRECTIONS[4] * radius (North-West)
         let mut current = HexCoord::new(
-            self.q + (directions[4].0 * radius as i32),
-            self.r + (directions[4].1 * radius as i32),
+            self.q + (DIRECTIONS[4].0 * radius as i32),
+            self.r + (DIRECTIONS[4].1 * radius as i32),
         );
-        for i in 0..6 {
+        for dir in DIRECTIONS {
             for _ in 0..radius {
                 results.push(current);
-                current = HexCoord::new(
-                    current.q + directions[i].0,
-                    current.r + directions[i].1,
-                );
+                current = HexCoord::new(current.q + dir.0, current.r + dir.1);
             }
         }
         results
@@ -62,7 +68,9 @@ impl HexCoord {
 
     /// Get all hexes in a filled radius (for map generation).
     pub fn spiral(&self, radius: u32) -> Vec<HexCoord> {
-        let mut results = vec![*self];
+        let count = 1 + 3 * radius * (radius + 1);
+        let mut results = Vec::with_capacity(count as usize);
+        results.push(*self);
         for r in 1..=radius {
             results.extend(self.ring(r));
         }
@@ -109,11 +117,7 @@ impl HexMap {
     /// `TurnProcessor`). Returning None means no walkable path exists at all
     /// (e.g. the goal is off-map or blocked by an obstacle).
     /// Returns None if no path exists.
-    pub fn find_path(
-        &self,
-        start: HexCoord,
-        goal: HexCoord,
-    ) -> Option<Vec<HexCoord>> {
+    pub fn find_path(&self, start: HexCoord, goal: HexCoord) -> Option<Vec<HexCoord>> {
         if start == goal {
             return Some(vec![start]);
         }
@@ -242,6 +246,15 @@ mod tests {
         assert_eq!(a.ring(1).len(), 6);
         assert_eq!(a.ring(2).len(), 12);
         assert_eq!(a.ring(3).len(), 18);
+
+        for r in 1..=4 {
+            let ring = a.ring(r);
+            let unique: HashSet<_> = ring.iter().copied().collect();
+            assert_eq!(unique.len(), (6 * r) as usize);
+            for h in &ring {
+                assert_eq!(a.distance(h), r);
+            }
+        }
     }
 
     #[test]
@@ -249,6 +262,13 @@ mod tests {
         let a = HexCoord::new(0, 0);
         // radius 4 => 61 hexes
         assert_eq!(a.spiral(4).len(), 61);
+        let unique4: HashSet<_> = a.spiral(4).into_iter().collect();
+        assert_eq!(unique4.len(), 61);
+
+        // radius 5 => 91 hexes
+        assert_eq!(a.spiral(5).len(), 91);
+        let unique5: HashSet<_> = a.spiral(5).into_iter().collect();
+        assert_eq!(unique5.len(), 91);
     }
 
     #[test]
@@ -263,7 +283,9 @@ mod tests {
     #[test]
     fn test_find_path_straight() {
         let map = HexMap::new(4);
-        let path = map.find_path(HexCoord::new(-3, 0), HexCoord::new(0, 0)).unwrap();
+        let path = map
+            .find_path(HexCoord::new(-3, 0), HexCoord::new(0, 0))
+            .unwrap();
         // Shortest path length = distance + 1 (includes start)
         assert_eq!(path.len(), 4);
         assert_eq!(path[0], HexCoord::new(-3, 0));
@@ -277,7 +299,9 @@ mod tests {
     #[test]
     fn test_find_path_same_start_goal() {
         let map = HexMap::new(4);
-        let path = map.find_path(HexCoord::new(1, 1), HexCoord::new(1, 1)).unwrap();
+        let path = map
+            .find_path(HexCoord::new(1, 1), HexCoord::new(1, 1))
+            .unwrap();
         assert_eq!(path, vec![HexCoord::new(1, 1)]);
     }
 
@@ -290,15 +314,17 @@ mod tests {
                 map.obstacles.insert(h);
             }
         }
-        assert!(map
-            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0))
-            .is_some());
+        assert!(
+            map.find_path(HexCoord::new(0, 0), HexCoord::new(1, 0))
+                .is_some()
+        );
 
         // Goal unreachable because every route is blocked by obstacles
         map.obstacles.insert(HexCoord::new(1, 0));
-        assert!(map
-            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0))
-            .is_none());
+        assert!(
+            map.find_path(HexCoord::new(0, 0), HexCoord::new(1, 0))
+                .is_none()
+        );
     }
 
     #[test]
@@ -310,7 +336,7 @@ mod tests {
         // Doesn't include start
         assert!(!reachable.contains_key(&start));
         // All costs within budget
-        for (_hex, cost) in &reachable {
+        for cost in reachable.values() {
             assert!(*cost >= 1 && *cost <= 2);
         }
         // A hex at distance 3 is not reachable with AP 2

@@ -161,77 +161,86 @@ impl GameEngine {
             if o.unit_id == unit_id {
                 continue;
             }
-            if let Some(mt) = o.move_target {
-                if let Some(u) = self.state.get_unit(o.unit_id) {
-                    if u.is_alive() && u.team == PLAYER_TEAM && u.pos != mt {
-                        vacated.insert(u.pos);
-                    }
-                }
+            if let Some(mt) = o.move_target
+                && let Some(u) = self.state.get_unit(o.unit_id)
+                && u.is_alive()
+                && u.team == PLAYER_TEAM
+                && u.pos != mt
+            {
+                vacated.insert(u.pos);
             }
         }
-        if let Some(cur_move) = self.pending_orders.get_order(unit_id).and_then(|o| o.move_target) {
-            if cur_move != target {
-                // The unit's own previous destination must stay free so the
-                // mover can always back out of a stale plan (re-plan to an
-                // adjacent hex or its current position) without being blocked
-                // by the ghost of its own earlier order.
-                vacated.insert(cur_move);
-            }
+        if let Some(cur_move) = self
+            .pending_orders
+            .get_order(unit_id)
+            .and_then(|o| o.move_target)
+            && cur_move != target
+        {
+            // The unit's own previous destination must stay free so the
+            // mover can always back out of a stale plan (re-plan to an
+            // adjacent hex or its current position) without being blocked
+            // by the ghost of its own earlier order.
+            vacated.insert(cur_move);
         }
 
         // Validate unit exists, is alive, and belongs to the player team
-        if let Some(unit) = self.state.get_unit(unit_id) {
-            if unit.is_alive() && unit.team == PLAYER_TEAM && self.state.phase == Phase::Planning {
-                // Reserve 1 AP for an attack when one is already planned or may
-                // still be added alongside this move, so that move + attack
-                // orders are valid no matter which one was set first.
-                let has_planned_attack = self
+        if let Some(unit) = self.state.get_unit(unit_id)
+            && unit.is_alive()
+            && unit.team == PLAYER_TEAM
+            && self.state.phase == Phase::Planning
+        {
+            // Reserve 1 AP for an attack when one is already planned or may
+            // still be added alongside this move, so that move + attack
+            // orders are valid no matter which one was set first.
+            let has_planned_attack = self
+                .pending_orders
+                .get_order(unit_id)
+                .map(|o| matches!(o.action, Action::Attack { .. }))
+                .unwrap_or(false);
+            let move_budget = if has_planned_attack || reserve_attack_ap {
+                unit.ap.saturating_sub(1)
+            } else {
+                unit.ap
+            };
+
+            // Check if target is reachable within the AP budget.
+            // The mover's own hex must not block its path, and the
+            // destination may currently be held by another unit that will
+            // itself move this round (all moves are validated against
+            // planning-time positions, matching the AI), so entering a
+            // contested hex is allowed at order time; resolution performs
+            // the final occupancy check via A*.
+            let mut occupied: HashSet<HexCoord> = self
+                .state
+                .units
+                .values()
+                .filter(|u| u.is_alive() && u.id != unit_id)
+                .map(|u| u.pos)
+                .collect();
+            occupied.retain(|h| !vacated.contains(h));
+            occupied.remove(&target); // may be entered even if contested
+            let reachable = self
+                .state
+                .map
+                .reachable_hexes(unit.pos, move_budget, &occupied);
+
+            if reachable.contains_key(&target) || target == unit.pos {
+                // Update or create order (preserving any planned action)
+                if let Some(order) = self
                     .pending_orders
-                    .get_order(unit_id)
-                    .map(|o| matches!(o.action, Action::Attack { .. }))
-                    .unwrap_or(false);
-                let move_budget = if has_planned_attack || reserve_attack_ap {
-                    unit.ap.saturating_sub(1)
+                    .orders
+                    .iter_mut()
+                    .find(|o| o.unit_id == unit_id)
+                {
+                    order.move_target = Some(target);
                 } else {
-                    unit.ap
-                };
-
-                // Check if target is reachable within the AP budget.
-                // The mover's own hex must not block its path, and the
-                // destination may currently be held by another unit that will
-                // itself move this round (all moves are validated against
-                // planning-time positions, matching the AI), so entering a
-                // contested hex is allowed at order time; resolution performs
-                // the final occupancy check via A*.
-                let mut occupied: HashSet<HexCoord> = self
-                    .state
-                    .units
-                    .values()
-                    .filter(|u| u.is_alive() && u.id != unit_id)
-                    .map(|u| u.pos)
-                    .collect();
-                occupied.retain(|h| !vacated.contains(h));
-                occupied.remove(&target); // may be entered even if contested
-                let reachable = self
-                    .state
-                    .map
-                    .reachable_hexes(unit.pos, move_budget, &occupied);
-
-                if reachable.contains_key(&target) || target == unit.pos {
-                    // Update or create order (preserving any planned action)
-                    if let Some(order) =
-                        self.pending_orders.orders.iter_mut().find(|o| o.unit_id == unit_id)
-                    {
-                        order.move_target = Some(target);
-                    } else {
-                        self.pending_orders.add_order(UnitOrder {
-                            unit_id,
-                            move_target: Some(target),
-                            action: Action::Wait,
-                        });
-                    }
-                    return true;
+                    self.pending_orders.add_order(UnitOrder {
+                        unit_id,
+                        move_target: Some(target),
+                        action: Action::Wait,
+                    });
                 }
+                return true;
             }
         }
         false
@@ -272,12 +281,13 @@ impl GameEngine {
             if o.unit_id == unit_id {
                 continue;
             }
-            if let Some(mt) = o.move_target {
-                if let Some(u) = self.state.get_unit(o.unit_id) {
-                    if u.is_alive() && u.team == PLAYER_TEAM && u.pos != mt {
-                        vacated.insert(u.pos);
-                    }
-                }
+            if let Some(mt) = o.move_target
+                && let Some(u) = self.state.get_unit(o.unit_id)
+                && u.is_alive()
+                && u.team == PLAYER_TEAM
+                && u.pos != mt
+            {
+                vacated.insert(u.pos);
             }
         }
 
@@ -294,12 +304,11 @@ impl GameEngine {
                     .map(|u| u.pos)
                     .collect();
                 occupied.retain(|h| !occ.contains(h));
-                let reachable = self
-                    .state
-                    .map
-                    .reachable_hexes(from_pos, unit.ap.saturating_sub(1), &occupied);
-                reachable.contains_key(&hex)
-                    && hex.distance(&target_pos) <= unit.attack_range
+                let reachable =
+                    self.state
+                        .map
+                        .reachable_hexes(from_pos, unit.ap.saturating_sub(1), &occupied);
+                reachable.contains_key(&hex) && hex.distance(&target_pos) <= unit.attack_range
             }
             // The unit plans to stay put but its current hex is currently
             // contested: another friendly unit has planned a move onto it.
@@ -358,24 +367,25 @@ impl GameEngine {
 
     /// Set wait order for a unit.
     pub fn set_wait_order(&mut self, unit_id: UnitId) -> bool {
-        if let Some(unit) = self.state.get_unit(unit_id) {
-            if unit.is_alive() && unit.team == PLAYER_TEAM {
-                if let Some(order) = self
-                    .pending_orders
-                    .orders
-                    .iter_mut()
-                    .find(|o| o.unit_id == unit_id)
-                {
-                    order.action = Action::Wait;
-                } else {
-                    self.pending_orders.add_order(UnitOrder {
-                        unit_id,
-                        move_target: None,
-                        action: Action::Wait,
-                    });
-                }
-                return true;
+        if let Some(unit) = self.state.get_unit(unit_id)
+            && unit.is_alive()
+            && unit.team == PLAYER_TEAM
+        {
+            if let Some(order) = self
+                .pending_orders
+                .orders
+                .iter_mut()
+                .find(|o| o.unit_id == unit_id)
+            {
+                order.action = Action::Wait;
+            } else {
+                self.pending_orders.add_order(UnitOrder {
+                    unit_id,
+                    move_target: None,
+                    action: Action::Wait,
+                });
             }
+            return true;
         }
         false
     }
@@ -478,11 +488,13 @@ mod tests {
         // Plan a move that puts hero 1 adjacent to an enemy? Not possible in one round here.
         // Instead directly place units adjacent via a fresh engine state manipulation:
         let mut e2 = GameEngine::new();
-        e2.state.add_unit(Unit::new_hero(7, ENEMY_TEAM, HexCoord::new(-3, 0), 1));
+        e2.state
+            .add_unit(Unit::new_hero(7, ENEMY_TEAM, HexCoord::new(-3, 0), 1));
         assert!(e2.set_attack_order(1, 7)); // adjacent, can afford
         // Attack after planned move
         let mut e3 = GameEngine::new();
-        e3.state.add_unit(Unit::new_hero(8, ENEMY_TEAM, HexCoord::new(-1, 0), 1));
+        e3.state
+            .add_unit(Unit::new_hero(8, ENEMY_TEAM, HexCoord::new(-1, 0), 1));
         assert!(e3.set_move_order(1, -2, 0)); // move 2 AP, leaves 1 AP
         assert!(e3.set_attack_order(1, 8)); // adjacent to -2,0 -> valid
     }
@@ -499,9 +511,11 @@ mod tests {
 
         let events: Vec<GameEvent> = serde_json::from_str(&engine.end_turn()).unwrap();
         // AI should have acted; player waited
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, GameEvent::UnitWaited { unit_id: 1 })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, GameEvent::UnitWaited { unit_id: 1 }))
+        );
         assert_eq!(engine.state.round, 1);
         assert!(engine.pending_orders.orders.is_empty());
     }
@@ -562,8 +576,7 @@ mod tests {
                     }
 
                     // Fallback: advance toward the enemy using pathfinding
-                    if !planned_attack
-                        && let Some(path) = engine.state.map.find_path(pos, tgt_pos)
+                    if !planned_attack && let Some(path) = engine.state.map.find_path(pos, tgt_pos)
                     {
                         let unit = engine.state.get_unit(id).unwrap();
                         let max_step = (unit.ap as usize).min(path.len().saturating_sub(2));
@@ -624,5 +637,4 @@ mod tests {
             "scripted battle should reach a winner within the round cap"
         );
     }
-
 }

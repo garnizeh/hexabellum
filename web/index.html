@@ -3,71 +3,201 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hexabellum - Phase 0</title>
+  <title>Hexabellum — Phase 1 Tactical Slice</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0a0e17;
+      --panel-bg: rgba(16, 24, 39, 0.85);
+      --panel-border: rgba(0, 210, 255, 0.25);
+      --primary: #00d2ff;
+      --accent: #00e676;
+      --danger: #ff3366;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
     body {
-      background: #0a0a1a;
-      color: #eee;
-      font-family: 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
       overflow: hidden;
+      width: 100vw;
+      height: 100vh;
     }
     #game-canvas {
       display: block;
       width: 100vw;
       height: 100vh;
     }
+    /* Top Left Status HUD */
     #hud {
       position: fixed;
-      top: 10px;
-      left: 10px;
+      top: 20px;
+      left: 20px;
       z-index: 10;
       display: flex;
       flex-direction: column;
+      gap: 12px;
+    }
+    .panel {
+      background: var(--panel-bg);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    #round-counter {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--primary);
+      text-transform: uppercase;
+    }
+    #status-message {
+      font-size: 14px;
+      color: var(--muted);
+      max-width: 320px;
+      line-height: 1.4;
+      margin-top: 4px;
+    }
+    .hud-controls {
+      display: flex;
       gap: 10px;
+      margin-top: 8px;
     }
-    #round {
-      font-size: 18px;
-      font-weight: bold;
-      color: #4fc3f7;
-    }
-    #selection {
+    .btn {
+      padding: 10px 20px;
+      font-family: 'Outfit', sans-serif;
       font-size: 14px;
-      color: #9fd8ff;
-    }
-    #end-turn {
-      padding: 12px 24px;
-      background: #0f3460;
-      color: #4fc3f7;
-      border: 2px solid #4fc3f7;
+      font-weight: 600;
       border-radius: 8px;
-      font-size: 16px;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: all 0.2s ease;
+      outline: none;
     }
-    #end-turn:hover {
-      background: #4fc3f7;
-      color: #0a0a1a;
+    .btn-primary {
+      background: rgba(0, 210, 255, 0.15);
+      border: 1.5px solid var(--primary);
+      color: var(--primary);
     }
-    #instructions {
+    .btn-primary:hover {
+      background: var(--primary);
+      color: var(--bg);
+    }
+    .btn-primary.ready {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #000;
+      animation: pulse 1.5s infinite;
+    }
+    .btn-secondary {
+      background: rgba(148, 163, 184, 0.1);
+      border: 1px solid var(--muted);
+      color: var(--muted);
+    }
+    .btn-secondary:hover {
+      background: var(--muted);
+      color: var(--bg);
+    }
+    /* Right Unit Inspector */
+    #unit-inspector {
       position: fixed;
-      bottom: 10px;
-      left: 10px;
-      font-size: 14px;
-      color: #888;
+      top: 20px;
+      right: 20px;
+      z-index: 10;
+      min-width: 220px;
+      display: none;
+    }
+    #unit-inspector h3 {
+      font-size: 16px;
+      color: var(--primary);
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--panel-border);
+      padding-bottom: 6px;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      margin: 6px 0;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .stat-label { color: var(--muted); }
+    .stat-val { font-weight: 600; }
+    /* Bottom Guide */
+    #guide {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      z-index: 10;
+      font-size: 12px;
+      color: var(--muted);
+      background: rgba(10, 14, 23, 0.7);
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.05);
+    }
+    /* Victory / Defeat Modal */
+    #game-over-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
+      backdrop-filter: blur(10px);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+    }
+    #game-over-title {
+      font-size: 54px;
+      font-weight: 700;
+      letter-spacing: 2px;
+    }
+    #game-over-title.victory { color: var(--accent); text-shadow: 0 0 30px rgba(0, 230, 118, 0.4); }
+    #game-over-title.defeat { color: var(--danger); text-shadow: 0 0 30px rgba(255, 51, 102, 0.4); }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.6); }
+      70% { box-shadow: 0 0 0 10px rgba(0, 230, 118, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(0, 230, 118, 0); }
     }
   </style>
 </head>
 <body>
-  <div id="hud">
-    <div id="round">Round 0</div>
-    <div id="selection"></div>
-    <button id="end-turn">End Turn</button>
+  <div id="hud" class="panel">
+    <div id="round-counter">Round 0</div>
+    <div id="status-message">Select a blue hero to issue orders.</div>
+    <div class="hud-controls">
+      <button id="end-turn" class="btn btn-primary">End Turn</button>
+      <button id="btn-quick-reset" class="btn btn-secondary">Restart</button>
+    </div>
   </div>
+
+  <div id="unit-inspector" class="panel">
+    <h3 id="insp-name">Hero Info</h3>
+    <div class="stat-row"><span class="stat-label">Team:</span><span class="stat-val" id="insp-team">-</span></div>
+    <div class="stat-row"><span class="stat-label">Health:</span><span class="stat-val" id="insp-hp">-</span></div>
+    <div class="stat-row"><span class="stat-label">AP:</span><span class="stat-val" id="insp-ap">-</span></div>
+    <div class="stat-row"><span class="stat-label">Initiative:</span><span class="stat-val" id="insp-init">-</span></div>
+    <div class="stat-row"><span class="stat-label">Damage:</span><span class="stat-val" id="insp-dmg">-</span></div>
+    <div class="stat-row"><span class="stat-label">Range:</span><span class="stat-val" id="insp-range">-</span></div>
+  </div>
+
+  <div id="guide">
+    <strong>Controls:</strong> Click Blue Hero → Click Green Hex to Move (or self to stay) → Click Red Crosshair to Attack (or click ground to Wait) → Click End Turn.
+  </div>
+
+  <div id="game-over-modal">
+    <h1 id="game-over-title">VICTORY</h1>
+    <button id="btn-restart-modal" class="btn btn-primary" style="padding: 14px 32px; font-size: 18px;">Play Again</button>
+  </div>
+
   <canvas id="game-canvas"></canvas>
-  <div id="instructions">
-    Click a blue unit to select → Click a hex to plan move → End Turn to resolve
-  </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

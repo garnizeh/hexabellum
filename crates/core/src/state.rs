@@ -47,7 +47,9 @@ impl GameState {
     }
 
     pub fn get_unit_at(&self, coord: &HexCoord) -> Option<&Unit> {
-        self.units.values().find(|u| u.pos == *coord && u.is_alive())
+        self.units
+            .values()
+            .find(|u| u.pos == *coord && u.is_alive())
     }
 
     /// Check if a hex is occupied by any alive unit.
@@ -87,9 +89,9 @@ impl GameState {
 
     /// Check if a team has any alive heroes.
     pub fn team_has_heroes(&self, team: TeamId) -> bool {
-        self.units.values().any(|u| {
-            u.team == team && u.is_alive() && u.kind == UnitKind::Hero
-        })
+        self.units
+            .values()
+            .any(|u| u.team == team && u.is_alive() && u.kind == UnitKind::Hero)
     }
 
     /// Check win condition.

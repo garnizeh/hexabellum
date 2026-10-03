@@ -3,7 +3,7 @@ use crate::event::GameEvent;
 use crate::hex::HexCoord;
 use crate::orders::{Action, TurnOrders, UnitOrder};
 use crate::state::{GameState, Phase};
-use crate::unit::{UnitId, ATTACK_AP_COST};
+use crate::unit::{ATTACK_AP_COST, UnitId};
 use std::collections::{HashMap, HashSet};
 
 /// The turn processor.
@@ -54,6 +54,7 @@ impl TurnProcessor {
         let mut unit_ids: Vec<UnitId> = all_orders.orders.iter().map(|o| o.unit_id).collect();
         unit_ids.sort_unstable();
         unit_ids.dedup();
+        unit_ids.retain(|id| snapshot.get_unit(*id).is_some());
 
         // Sort by initiative (descending), then by unit_id for determinism
         unit_ids.sort_by(|a, b| {
@@ -65,25 +66,19 @@ impl TurnProcessor {
                 .then_with(|| a.cmp(b))
         });
 
-        // Destination claims: every planned move destination is claimed by its
-        // mover up-front, so no two units can ever land on the same hex this
-        // round. Units that still need to relocate are tracked separately;
-        // while one has not yet moved, the hex it stands on counts as blocking
-        // for anyone who wants to pass through or land there — unless that
-        // hex is exactly where the waiting unit itself plans to go. This set
-        // of invariants is what keeps occupancy consistent and prevents the
-        // front line from shuffling in lockstep forever without combat ever
-        // resolving.
+        // Destination claims: every planned move destination is claimed in
+        // initiative order (higher initiative gets priority on contention).
         let mut claims: HashMap<HexCoord, UnitId> = HashMap::new();
         let mut pending_movers: HashSet<UnitId> = HashSet::new();
-        for o in &all_orders.orders {
-            if let Some(dest) = o.move_target {
-                if let Some(u) = snapshot.get_unit(o.unit_id) {
-                    if u.is_alive() && dest != u.pos {
-                        claims.insert(dest, o.unit_id);
-                        pending_movers.insert(o.unit_id);
-                    }
-                }
+        for &id in &unit_ids {
+            if let Some(o) = all_orders.get_order(id)
+                && let Some(dest) = o.move_target
+                && let Some(u) = snapshot.get_unit(id)
+                && u.is_alive()
+                && dest != u.pos
+            {
+                claims.entry(dest).or_insert(id);
+                pending_movers.insert(id);
             }
         }
 
@@ -94,21 +89,25 @@ impl TurnProcessor {
             // earlier (higher-initiative) unit this round. Drop its *entire*
             // order — movement included — so corpses never "walk" across the
             // board, and release any claim it still holds on a destination.
-            if !state.get_unit(unit_id).map(|u| u.is_alive()).unwrap_or(false) {
-                if let Some(dest) = order.move_target {
-                    if claims.get(&dest) == Some(&unit_id) {
-                        claims.remove(&dest);
-                    }
+            if !state
+                .get_unit(unit_id)
+                .map(|u| u.is_alive())
+                .unwrap_or(false)
+            {
+                if let Some(dest) = order.move_target
+                    && claims.get(&dest) == Some(&unit_id)
+                {
+                    claims.remove(&dest);
                 }
                 continue;
             }
             // Release this unit's claim on its own destination: it is about to
             // try to occupy it anyway, and if its move fails the claim must
             // not linger and block someone else's entry check.
-            if let Some(dest) = order.move_target {
-                if claims.get(&dest) == Some(&unit_id) {
-                    claims.remove(&dest);
-                }
+            if let Some(dest) = order.move_target
+                && claims.get(&dest) == Some(&unit_id)
+            {
+                claims.remove(&dest);
             }
             // Once a unit takes its turn, whatever hex it still stands on is
             // no longer "on loan" to anyone: any later mover that was told it
@@ -169,23 +168,24 @@ impl TurnProcessor {
             // Claimed as somebody else's destination means that unit is on
             // its way here; treat the hex as blocked even if the occupant is
             // also leaving, so paths never cross a committed landing zone.
-            if let Some(&claimer) = claims.get(hex) {
-                if claimer != mover_id {
-                    return EntryCheck::Blocked;
-                }
+            if let Some(&claimer) = claims.get(hex)
+                && claimer != mover_id
+            {
+                return EntryCheck::Blocked;
             }
             if pending.contains(&u.id) {
-                if mover_final_dest == Some(*hex) {
+                let mover_team = state.get_unit(mover_id).map(|m| m.team);
+                if mover_team == Some(u.team) && mover_final_dest == Some(*hex) {
                     return EntryCheck::WillLeave;
                 }
                 return EntryCheck::Blocked;
             }
             return EntryCheck::Blocked;
         }
-        if let Some(&claimer) = claims.get(hex) {
-            if claimer != mover_id {
-                return EntryCheck::Blocked;
-            }
+        if let Some(&claimer) = claims.get(hex)
+            && claimer != mover_id
+        {
+            return EntryCheck::Blocked;
         }
         EntryCheck::Free
     }
@@ -203,39 +203,71 @@ impl TurnProcessor {
         mover_final_dest: Option<HexCoord>,
         step: HexCoord,
         ap_cost: u32,
+        events: &mut Vec<GameEvent>,
     ) -> bool {
-        match Self::check_entry(
-            state, claims, pending, mover_id, mover_final_dest, &step,
-        ) {
+        match Self::check_entry(state, claims, pending, mover_id, mover_final_dest, &step) {
             EntryCheck::Free => {}
             EntryCheck::WillLeave => {
-                // `step` is our final destination and the blocker sitting on
-                // it still needs to relocate. Give it our current hex — which
-                // we are vacating right now — as its next step and resolve it
-                // in place. This swap keeps both plans valid instead of
-                // deadlocking until the next round.
                 let blocker_id = state.get_unit_at(&step).map(|u| u.id).unwrap();
                 let my_pos = state.get_unit(mover_id).unwrap().pos;
-                let blocker_dest = all_orders
-                    .get_order(blocker_id)
-                    .and_then(|o| o.move_target);
-                // If the blocker is itself headed to my hex, the two units
-                // simply trade places when each takes its own turn later; no
-                // forced relocation needed (and none would be legal here).
-                if blocker_dest != Some(my_pos) {
-                    if !Self::enter_step(
-                        state,
-                        all_orders,
-                        claims,
-                        pending,
-                        blocker_id,
-                        blocker_dest,
-                        my_pos,
-                        ap_cost,
-                    ) {
+                let blocker_dest = all_orders.get_order(blocker_id).and_then(|o| o.move_target);
+
+                if blocker_dest == Some(my_pos) {
+                    // Mutual cooperative swap between friendly units:
+                    // Trade positions atomically.
+                    if let Some(blocker) = state.get_unit_mut(blocker_id) {
+                        blocker.pos = my_pos;
+                        blocker.spend_ap(ap_cost);
+                    }
+                    if let Some(mover) = state.get_unit_mut(mover_id) {
+                        mover.pos = step;
+                        mover.spend_ap(ap_cost);
+                    }
+                    claims.remove(&step);
+                    claims.remove(&my_pos);
+                    pending.remove(&mover_id);
+                    pending.remove(&blocker_id);
+
+                    events.push(GameEvent::UnitMoved {
+                        unit_id: blocker_id,
+                        from: step,
+                        to: my_pos,
+                        path: vec![step, my_pos],
+                        ap_spent: ap_cost,
+                    });
+                    return true;
+                } else if let Some(b_dest) = blocker_dest {
+                    let b_pos = state.get_unit(blocker_id).unwrap().pos;
+                    if let Some(b_path) = state.map.find_path(b_pos, b_dest) {
+                        if b_path.len() > 1 {
+                            let next_b_step = b_path[1];
+                            if next_b_step != my_pos
+                                && Self::enter_step(
+                                    state,
+                                    all_orders,
+                                    claims,
+                                    pending,
+                                    blocker_id,
+                                    Some(b_dest),
+                                    next_b_step,
+                                    ap_cost,
+                                    events,
+                                )
+                            {
+                                // Blocker stepped along its path
+                            } else {
+                                return false;
+                            }
+                        } else {
+                            return false;
+                        }
+                    } else {
                         return false;
                     }
+                } else {
+                    return false;
                 }
+
                 // Re-check ourselves after shuffling the blocker away.
                 if Self::check_entry(state, claims, pending, mover_id, mover_final_dest, &step)
                     != EntryCheck::Free
@@ -301,50 +333,51 @@ impl TurnProcessor {
         let ap_budget = planned_unit.ap.max(unit.ap);
 
         // Phase 1: Movement
-        if let Some(move_target) = order.move_target {
-            if move_target != start_pos {
-                // Walk the geometric shortest path one hex at a time. Each
-                // intermediate hex must either be free now or become free by
-                // the end of the round (its occupant is moving away too).
-                // Because movement costs exactly one AP per step, executing
-                // the walk incrementally is equivalent to validating the whole
-                // path up front — and it lets a blocked step fall back to
-                // walking around instead of cancelling the entire move.
-                if let Some(path) = state.map.find_path(planned_unit.pos, move_target) {
-                    let path_cost = (path.len() - 1) as u32; // -1 because path includes start
+        if let Some(move_target) = order.move_target
+            && move_target != start_pos
+        {
+            // Walk the geometric shortest path one hex at a time. Each
+            // intermediate hex must either be free now or become free by
+            // the end of the round (its occupant is moving away too).
+            // Because movement costs exactly one AP per step, executing
+            // the walk incrementally is equivalent to validating the whole
+            // path up front — and it lets a blocked step fall back to
+            // walking around instead of cancelling the entire move.
+            if let Some(path) = state.map.find_path(planned_unit.pos, move_target) {
+                let path_cost = (path.len() - 1) as u32; // -1 because path includes start
 
-                    if path_cost <= ap_budget {
-                        let mut walked: Vec<HexCoord> = vec![planned_unit.pos];
-                        for &step in &path[1..] {
-                            if Self::enter_step(
-                                state,
-                                all_orders,
-                                claims,
-                                pending,
-                                unit_id,
-                                Some(move_target),
-                                step,
-                                1,
-                            ) {
-                                walked.push(step);
-                            } else {
-                                break;
-                            }
+                if path_cost <= ap_budget {
+                    let mut walked: Vec<HexCoord> = vec![planned_unit.pos];
+                    for &step in &path[1..] {
+                        if Self::enter_step(
+                            state,
+                            all_orders,
+                            claims,
+                            pending,
+                            unit_id,
+                            Some(move_target),
+                            step,
+                            1,
+                            &mut events,
+                        ) {
+                            walked.push(step);
+                        } else {
+                            break;
                         }
-                        // Report whatever progress was legally made (each step
-                        // was independently valid) rather than teleporting
-                        // back to the start.
-                        let final_pos = state.get_unit(unit_id).unwrap().pos;
-                        if final_pos != start_pos {
-                            let ap_spent = (walked.len() - 1) as u32;
-                            events.push(GameEvent::UnitMoved {
-                                unit_id,
-                                from: start_pos,
-                                to: final_pos,
-                                path: walked,
-                                ap_spent,
-                            });
-                        }
+                    }
+                    // Report whatever progress was legally made (each step
+                    // was independently valid) rather than teleporting
+                    // back to the start.
+                    let final_pos = state.get_unit(unit_id).unwrap().pos;
+                    if final_pos != start_pos {
+                        let ap_spent = (walked.len() - 1) as u32;
+                        events.push(GameEvent::UnitMoved {
+                            unit_id,
+                            from: start_pos,
+                            to: final_pos,
+                            path: walked,
+                            ap_spent,
+                        });
                     }
                 }
             }
@@ -541,7 +574,11 @@ mod tests {
         });
 
         let events = TurnProcessor::resolve(&mut state, &orders);
-        assert!(!events.iter().any(|e| matches!(e, GameEvent::UnitAttacked { .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, GameEvent::UnitAttacked { .. }))
+        );
         assert_eq!(state.get_unit(2).unwrap().hp, 100);
     }
 
@@ -579,9 +616,11 @@ mod tests {
             .unwrap();
         assert!(attacked_idx < died_idx);
         // Unit 1 dies before acting -> no attack event from it
-        assert!(!events
-            .iter()
-            .any(|e| matches!(e, GameEvent::UnitAttacked { attacker_id: 1, .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, GameEvent::UnitAttacked { attacker_id: 1, .. }))
+        );
         assert_eq!(state.get_unit(2).unwrap().hp, 100);
     }
 
@@ -611,9 +650,11 @@ mod tests {
         let events = TurnProcessor::resolve(&mut state, &orders);
 
         assert!(state.get_unit(2).is_none());
-        assert!(!events
-            .iter()
-            .any(|e| matches!(e, GameEvent::UnitAttacked { attacker_id: 2, .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, GameEvent::UnitAttacked { attacker_id: 2, .. }))
+        );
     }
 
     #[test]
@@ -627,9 +668,14 @@ mod tests {
         let events = TurnProcessor::resolve(&mut state, &orders);
 
         // AI unit 2 should have moved closer and attacked unit 1
-        assert!(events.iter().any(
-            |e| matches!(e, GameEvent::UnitAttacked { attacker_id: 2, target_id: 1, .. })
-        ));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            GameEvent::UnitAttacked {
+                attacker_id: 2,
+                target_id: 1,
+                ..
+            }
+        )));
         assert_eq!(state.get_unit(1).unwrap().hp, 80);
     }
 
@@ -654,9 +700,11 @@ mod tests {
 
         assert_eq!(state.winner, Some(0));
         assert_eq!(state.phase, Phase::MatchEnd);
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, GameEvent::MatchEnded { winner: Some(0) })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, GameEvent::MatchEnded { winner: Some(0) }))
+        );
 
         // Normal round increments
         let mut state2 = base_state();
@@ -665,5 +713,81 @@ mod tests {
         TurnProcessor::resolve(&mut state2, &TurnOrders::new());
         assert_eq!(state2.round, 1);
         assert_eq!(state2.phase, Phase::Planning);
+    }
+
+    #[test]
+    fn test_cooperative_position_swap() {
+        let mut state = base_state();
+        state.add_unit(Unit::new_hero(1, 0, HexCoord::new(0, 0), 5));
+        state.add_unit(Unit::new_hero(2, 0, HexCoord::new(1, 0), 3));
+
+        let mut orders = TurnOrders::new();
+        // Unit 1 wants to move to Unit 2's hex (1, 0)
+        orders.add_order(UnitOrder {
+            unit_id: 1,
+            move_target: Some(HexCoord::new(1, 0)),
+            action: Action::Wait,
+        });
+        // Unit 2 wants to move to Unit 1's hex (0, 0)
+        orders.add_order(UnitOrder {
+            unit_id: 2,
+            move_target: Some(HexCoord::new(0, 0)),
+            action: Action::Wait,
+        });
+
+        let events = TurnProcessor::resolve(&mut state, &orders);
+
+        // Both units should have successfully swapped places
+        assert_eq!(state.get_unit(1).unwrap().pos, HexCoord::new(1, 0));
+        assert_eq!(state.get_unit(2).unwrap().pos, HexCoord::new(0, 0));
+        assert_eq!(state.get_unit(1).unwrap().ap, 2);
+        assert_eq!(state.get_unit(2).unwrap().ap, 2);
+
+        // Both UnitMoved events should be emitted
+        assert!(events.iter().any(|e| matches!(
+            e,
+            GameEvent::UnitMoved {
+                unit_id: 1,
+                from: HexCoord { q: 0, r: 0 },
+                to: HexCoord { q: 1, r: 0 },
+                ..
+            }
+        )));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            GameEvent::UnitMoved {
+                unit_id: 2,
+                from: HexCoord { q: 1, r: 0 },
+                to: HexCoord { q: 0, r: 0 },
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn test_destination_claims_favor_higher_initiative() {
+        let mut state = base_state();
+        // Unit 1 has higher initiative (10 > 2)
+        state.add_unit(Unit::new_hero(1, 0, HexCoord::new(-1, 0), 10));
+        state.add_unit(Unit::new_hero(2, 0, HexCoord::new(1, 0), 2));
+
+        let mut orders = TurnOrders::new();
+        // Both want to move to (0, 0)
+        orders.add_order(UnitOrder {
+            unit_id: 2,
+            move_target: Some(HexCoord::new(0, 0)),
+            action: Action::Wait,
+        });
+        orders.add_order(UnitOrder {
+            unit_id: 1,
+            move_target: Some(HexCoord::new(0, 0)),
+            action: Action::Wait,
+        });
+
+        TurnProcessor::resolve(&mut state, &orders);
+
+        // Unit 1 should land at (0, 0) due to higher initiative; Unit 2 must be blocked
+        assert_eq!(state.get_unit(1).unwrap().pos, HexCoord::new(0, 0));
+        assert_eq!(state.get_unit(2).unwrap().pos, HexCoord::new(1, 0));
     }
 }

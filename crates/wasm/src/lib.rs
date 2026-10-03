@@ -38,6 +38,34 @@ impl WasmGame {
     pub fn get_move_targets(&self, unit_id: u64) -> String {
         self.engine.get_move_targets(unit_id)
     }
+
+    pub fn get_attack_targets(&self, unit_id: u64, from_q: i32, from_r: i32) -> String {
+        self.engine.get_attack_targets(unit_id, from_q, from_r)
+    }
+
+    pub fn set_attack_order(&mut self, unit_id: u64, target_id: u64) -> bool {
+        self.engine.set_attack_order(unit_id, target_id)
+    }
+
+    pub fn set_wait_order(&mut self, unit_id: u64) -> bool {
+        self.engine.set_wait_order(unit_id)
+    }
+
+    pub fn get_pending_orders(&self) -> String {
+        self.engine.get_pending_orders()
+    }
+
+    pub fn all_units_ordered(&self) -> bool {
+        self.engine.all_units_ordered()
+    }
+
+    pub fn clear_orders(&mut self, unit_id: u64) {
+        self.engine.clear_orders(unit_id);
+    }
+
+    pub fn restart(&mut self) {
+        self.engine.restart();
+    }
 }
 
 impl Default for WasmGame {

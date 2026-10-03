@@ -1,18 +1,24 @@
+import * as PIXI from 'pixi.js';
 import { initGame, getState, getMapHexes, getObstacles } from './game/bridge';
 import { HexRenderer } from './game/renderer';
 import { InputHandler } from './game/input';
 
-async function main() {
-  // Initialize WASM
+async function bootstrap() {
   await initGame();
 
-  // Create canvas
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
+  const app = new PIXI.Application();
+  await app.init({
+    canvas,
+    resizeTo: window,
+    backgroundColor: 0x0a0e17,
+    antialias: true,
+  });
 
-  // Create renderer
-  const renderer = new HexRenderer(canvas);
+  const renderer = new HexRenderer(app);
+  const input = new InputHandler(renderer);
 
-  // Draw initial state
+  // Initial draw
   const hexes = getMapHexes();
   const obstacles = getObstacles();
   const state = getState();
@@ -20,29 +26,23 @@ async function main() {
   renderer.drawMap(hexes, obstacles);
   renderer.drawUnits(state);
 
-  // Create input handler
-  const input = new InputHandler(renderer);
-
-  // HUD elements
+  // Wire UI buttons
   const endTurnBtn = document.getElementById('end-turn') as HTMLButtonElement;
-  const roundDisplay = document.getElementById('round') as HTMLElement;
-  const selectionDisplay = document.getElementById('selection') as HTMLElement;
+  if (endTurnBtn) {
+    endTurnBtn.addEventListener('click', () => input.endTurn());
+  }
 
-  const updateHud = () => {
-    const currentState = getState();
-    roundDisplay.textContent = `Round ${currentState.round}`;
-    const sel = input.getSelectedUnit();
-    selectionDisplay.textContent = sel !== null ? `Selected: Hero #${sel}` : '';
-  };
+  const restartBtn = document.getElementById('btn-restart-modal') as HTMLButtonElement;
+  if (restartBtn) {
+    restartBtn.addEventListener('click', () => input.restartGame());
+  }
 
-  endTurnBtn.addEventListener('click', () => {
-    input.endTurn();
-    updateHud();
-  });
+  const resetBtn = document.getElementById('btn-quick-reset') as HTMLButtonElement;
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => input.restartGame());
+  }
 
-  updateHud();
-
-  console.log("Hexabellum Phase 0 initialized!");
+  console.log('Hexabellum Phase 1 Initialized');
 }
 
-main().catch(console.error);
+bootstrap().catch(console.error);
