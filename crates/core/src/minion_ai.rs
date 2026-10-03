@@ -1,7 +1,7 @@
 use crate::hex::HexCoord;
 use crate::orders::{Action, UnitOrder};
 use crate::state::GameState;
-use crate::unit::{Unit, UnitId, UnitKind};
+use crate::unit::{Unit, UnitId};
 use std::collections::HashSet;
 
 pub struct MinionAI;
@@ -77,37 +77,47 @@ impl MinionAI {
         Self::advance_down_lane(state, unit, occupied)
     }
 
-    /// Multi-tier target priority: Minions > Heroes > Structures, with (dist, unit_id) tie-breaking.
+    /// Multi-tier target priority: Minions > Heroes > Structures, with (PriorityClass, dist, hp, unit_id) tie-breaking.
     pub fn select_target<'a>(unit: &Unit, enemies: &[&'a Unit]) -> Option<&'a Unit> {
-        let mut minions: Vec<&'a Unit> = enemies.iter().filter(|e| e.kind == UnitKind::Minion).copied().collect();
-        let mut heroes: Vec<&'a Unit> = enemies.iter().filter(|e| e.kind == UnitKind::Hero).copied().collect();
-        let mut structures: Vec<&'a Unit> = enemies.iter().filter(|e| e.kind.is_structure()).copied().collect();
-
-        let sort_fn = |a: &&'a Unit, b: &&'a Unit| {
+        let mut sorted: Vec<&'a Unit> = enemies.to_vec();
+        sorted.sort_by(|a, b| {
+            let prio_a = crate::priority::evaluate_minion_target_priority(a);
+            let prio_b = crate::priority::evaluate_minion_target_priority(b);
             let dist_a = unit.pos.distance(&a.pos);
             let dist_b = unit.pos.distance(&b.pos);
-            dist_a.cmp(&dist_b).then_with(|| a.id.cmp(&b.id))
-        };
-
-        minions.sort_by(sort_fn);
-        heroes.sort_by(sort_fn);
-        structures.sort_by(sort_fn);
-
-        minions.first().or(heroes.first()).or(structures.first()).copied()
+            prio_a
+                .cmp(&prio_b)
+                .then_with(|| dist_a.cmp(&dist_b))
+                .then_with(|| a.hp.cmp(&b.hp))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        sorted.first().copied()
     }
 
-    /// Move toward the enemy base coordinate along the main horizontal lane corridor.
+    /// Move toward the next lane waypoint along the central corridor, falling back to enemy base.
     fn advance_down_lane(
         state: &GameState,
         unit: &Unit,
         occupied: &HashSet<HexCoord>,
     ) -> UnitOrder {
-        let goal_q = if unit.team == 0 {
-            state.map.radius as i32
+        let lane = crate::lane::LaneDef::central_lane();
+        let goal_pos = if let Some(idx) = unit.waypoint_index {
+            lane.waypoints.get(idx).copied().unwrap_or_else(|| {
+                let goal_q = if unit.team == 0 {
+                    state.map.radius as i32
+                } else {
+                    -(state.map.radius as i32)
+                };
+                HexCoord::new(goal_q, 0)
+            })
         } else {
-            -(state.map.radius as i32)
+            let goal_q = if unit.team == 0 {
+                state.map.radius as i32
+            } else {
+                -(state.map.radius as i32)
+            };
+            HexCoord::new(goal_q, 0)
         };
-        let goal_pos = HexCoord::new(goal_q, 0);
 
         let reachable = state.map.reachable_hexes(unit.pos, unit.ap, occupied);
         let mut moves: Vec<(HexCoord, u32)> = reachable.into_iter().collect();

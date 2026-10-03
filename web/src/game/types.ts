@@ -111,7 +111,10 @@ export type ProtocolErrorCode =
   | 'UnitDead'
   | 'InvalidTarget'
   | 'TimerExpired'
-  | 'InternalError';
+  | 'InternalError'
+  | 'InsufficientResources'
+  | 'CooldownActive'
+  | 'MissingLineOfSight';
 
 export type ServerMessage =
   | { type: 'HelloAck'; player_id: string; reconnect_token: string }

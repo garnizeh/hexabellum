@@ -142,9 +142,22 @@ export class InputHandler {
         this.triggerAttackMode();
       } else if (e.code === 'Space') {
         e.preventDefault();
-        const endBtn = document.getElementById('end-turn-btn') as HTMLButtonElement;
-        if (endBtn && !endBtn.disabled) {
-          endBtn.click();
+        if (this.selectedUnit !== null) {
+          if (this.session) {
+            this.session.stageWaitOrder(this.selectedUnit);
+          } else {
+            setWaitOrder(this.selectedUnit);
+          }
+          this.showToast(`Hero #${this.selectedUnit} holding position (Wait queued)`);
+          this.selectedUnit = null;
+          this.renderer.clearOverlays();
+          this.updateInspector(null);
+          this.onUnitSelectedChange?.(null);
+        } else {
+          const endBtn = document.getElementById('end-turn-btn') as HTMLButtonElement;
+          if (endBtn && !endBtn.disabled) {
+            endBtn.click();
+          }
         }
       } else if (e.key === 'Escape') {
         this.cancelTargeting();

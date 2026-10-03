@@ -42,6 +42,14 @@ impl TurnProcessor {
         let spawn_events = SpawnerSystem::process_spawns(state);
         events.extend(spawn_events);
 
+        // Update lane waypoints for all living minions
+        let lane = LaneDef::central_lane();
+        for unit in state.units.values_mut() {
+            if unit.is_alive() && unit.kind == UnitKind::Minion {
+                lane.update_minion_waypoint(unit);
+            }
+        }
+
         // Pre-resolution snapshot for stable AI planning
         let snapshot = state.clone();
 
@@ -84,6 +92,14 @@ impl TurnProcessor {
         // 1. Process Spawner waves
         let spawn_events = SpawnerSystem::process_spawns(state);
         events.extend(spawn_events);
+
+        // Update lane waypoints for all living minions
+        let lane = LaneDef::central_lane();
+        for unit in state.units.values_mut() {
+            if unit.is_alive() && unit.kind == UnitKind::Minion {
+                lane.update_minion_waypoint(unit);
+            }
+        }
 
         // Pre-resolution snapshot for stable AI planning
         let snapshot = state.clone();
@@ -981,11 +997,12 @@ impl TurnProcessor {
         // Phase A: Movement (Mobile units only)
         if !is_stationary {
             if let Some(dest) = order.move_target {
-                if dest != start_pos {
-                    if let Some(full_path) = snapshot.map.find_path(start_pos, dest) {
-                        let path_cost = (full_path.len() - 1) as u32;
-                        let planned_unit = snapshot.get_unit(unit_id).unwrap();
-                        let ap_budget = planned_unit.ap.max(unit.ap);
+                if dest != start_pos
+                    && let Some(full_path) = snapshot.map.find_path(start_pos, dest)
+                {
+                    let path_cost = (full_path.len() - 1) as u32;
+                    let planned_unit = snapshot.get_unit(unit_id).unwrap();
+                    let ap_budget = planned_unit.ap.max(unit.ap);
 
                         if path_cost <= ap_budget {
                             let mut walked = vec![start_pos];
@@ -1022,7 +1039,6 @@ impl TurnProcessor {
                     }
                 }
             }
-        }
 
         // Phase B: Action Resolution
         let blockers = state.map.vision_blockers();

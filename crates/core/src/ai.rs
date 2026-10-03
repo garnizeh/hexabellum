@@ -70,9 +70,15 @@ impl GameAI {
 
         let mut sorted_targets = target_pool;
         sorted_targets.sort_by(|a, b| {
+            let prio_a = crate::priority::evaluate_hero_ai_target_priority(a);
+            let prio_b = crate::priority::evaluate_hero_ai_target_priority(b);
             let dist_a = unit.pos.distance(&a.pos);
             let dist_b = unit.pos.distance(&b.pos);
-            dist_a.cmp(&dist_b).then_with(|| a.id.cmp(&b.id))
+            prio_a
+                .cmp(&prio_b)
+                .then_with(|| dist_a.cmp(&dist_b))
+                .then_with(|| a.hp.cmp(&b.hp))
+                .then_with(|| a.id.cmp(&b.id))
         });
 
         let target = sorted_targets[0];

@@ -1107,5 +1107,89 @@ mod tests {
             .unwrap_err();
         assert_eq!(err_friendly.code, ProtocolErrorCode::InvalidTarget);
         assert_eq!(err_friendly.unit_id, Some(1));
+
+        // 5. Valid Cleave Cast order for Vanguard (1 AP, 3 Energy)
+        let cleave_order = OrderDto {
+            unit_id: 1,
+            move_target: None,
+            action: ActionDto::Cast {
+                spell_id: "cleave".to_string(),
+                target: hexabellum_protocol::SpellTargetDto::None,
+            },
+        };
+        let res_cleave = session.submit_player_orders(&player_p1, 0, 0, vec![cleave_order]);
+        assert!(res_cleave.is_ok());
+
+        // 6. Reject Cast if insufficient Energy
+        let mut session_no_energy = BattleSession::new("energy_test".into(), BattleConfig::default());
+        session_no_energy.assign_team_player(0, player_p1.clone());
+        session_no_energy.state.get_unit_mut(1).unwrap().energy = 0;
+        let err_energy = session_no_energy
+            .submit_player_orders(
+                &player_p1,
+                0,
+                0,
+                vec![OrderDto {
+                    unit_id: 1,
+                    move_target: None,
+                    action: ActionDto::Cast {
+                        spell_id: "cleave".to_string(),
+                        target: hexabellum_protocol::SpellTargetDto::None,
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(err_energy.code, ProtocolErrorCode::InsufficientResources);
+
+        // 7. Reject Cast if on cooldown
+        let mut session_cd = BattleSession::new("cd_test".into(), BattleConfig::default());
+        session_cd.assign_team_player(0, player_p1.clone());
+        session_cd.state.get_unit_mut(1).unwrap().cooldowns.insert("cleave".to_string(), 2);
+        let err_cd = session_cd
+            .submit_player_orders(
+                &player_p1,
+                0,
+                0,
+                vec![OrderDto {
+                    unit_id: 1,
+                    move_target: None,
+                    action: ActionDto::Cast {
+                        spell_id: "cleave".to_string(),
+                        target: hexabellum_protocol::SpellTargetDto::None,
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(err_cd.code, ProtocolErrorCode::CooldownActive);
+
+        // 8. Reject Repair if structure is already at full health
+        let err_full_repair = session
+            .submit_player_orders(
+                &player_p1,
+                0,
+                0,
+                vec![OrderDto {
+                    unit_id: 1,
+                    move_target: Some(HexDto::new(-4, 0)),
+                    action: ActionDto::Repair { target_id: 11 },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(err_full_repair.code, ProtocolErrorCode::InvalidTarget);
+        assert!(err_full_repair.reason.contains("full health"));
+
+        // 9. Accept Repair if structure is damaged and adjacent
+        session.state.get_unit_mut(11).unwrap().hp = 50;
+        let valid_repair = session.submit_player_orders(
+            &player_p1,
+            0,
+            0,
+            vec![OrderDto {
+                unit_id: 1,
+                move_target: Some(HexDto::new(-4, 0)),
+                action: ActionDto::Repair { target_id: 11 },
+            }],
+        );
+        assert!(valid_repair.is_ok());
     }
 }

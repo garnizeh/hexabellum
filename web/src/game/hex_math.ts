@@ -219,7 +219,7 @@ export function getSpellTargets(
   if (spellId === 'bolt') {
     const validUnitIds: number[] = [];
     const obstructedUnitIds: number[] = [];
-    const range = 2;
+    const range = 3;
 
     for (const [idStr, u] of Object.entries(units)) {
       if (u.team !== caster.team && u.hp > 0) {
@@ -227,7 +227,7 @@ export function getSpellTargets(
           continue;
         }
         const dist = axialDistance(caster.pos, u.pos);
-        if (dist <= range) {
+        if (dist >= 1 && dist <= range) {
           const id = Number(idStr);
           if (hasLineOfSight(visionBlockers, caster.pos, u.pos)) {
             validUnitIds.push(id);
