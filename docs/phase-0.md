@@ -1,63 +1,76 @@
 # Phase 0 Technical Spec — First Playable Vertical Slice
 
-## Do I agree with vertical slices?
+---
 
-**Yes, absolutely.** For this project, vertical slices are the right call. Here's why:
+## Architectural Decision Record (ADR-001): Vertical Slice Strategy
 
-| Risk | Why vertical slice helps |
-|------|--------------------------|
-| Rust → WASM → TS integration | Proved immediately, not at the end |
-| Rendering + game state sync | Forces you to solve it on day 1 |
-| Turn loop architecture | Validated with real interaction |
-| Motivation | You see something moving in days, not weeks |
-| Architecture drift | Each slice forces integration, preventing siloed code |
+### Context
+When beginning a hybrid Rust + WebAssembly + TypeScript project, teams frequently fall into the "layered architecture trap": building the complete Rust game logic in isolation for months before writing a single line of WASM bindings or client rendering code. 
 
-The biggest technical risk in this project is **not** the game logic — it's the **pipeline**: Rust core compiling to WASM, running in the browser, communicating with a TypeScript renderer. A vertical slice kills that risk immediately.
+In browser gaming, this creates severe tail-risk:
+1. WASM memory and serialization bottlenecks are discovered too late.
+2. Rendering coordinates and game state models fall out of sync.
+3. Turn loop synchronization and input latency issues require late-stage rewrites.
+4. Motivation drops because developers cannot see or play with their progress.
+
+### Decision
+Hexabellum will be built through iterative, end-to-end **vertical slices**, starting with **Phase 0**.
+
+| Technical Risk | Why a Vertical Slice Mitigates It |
+|---|---|
+| **Rust → WASM → TypeScript FFI Pipeline** | Proved immediately on Day 1 rather than at the end of the project. |
+| **Grid Math vs. Canvas Rendering Sync** | Forces coordinate translation, hex tiling, and viewport scaling to be solved immediately. |
+| **Turn Loop & State Serialization** | Validates the event-driven state architecture with real interactive feedback. |
+| **Architectural Drift** | Every slice forces integration across crates and the frontend, preventing siloed code. |
+| **Developer Velocity & Motivation** | Working interactive software is visible and testable within days. |
+
+The primary technical unknown in Phase 0 is **not** game rules or AI — it is the **compilation, binding, and rendering pipeline**. Phase 0 exists to eliminate pipeline risk before complex mechanics are introduced.
 
 ---
 
 ## Phase 0 Goal
 
-> **A running browser-based prototype where you can see a hex grid, select a hero, move it, end the turn, and see the updated state.**
+> **A running browser-based prototype where you can view a hex grid, select a hero, move to an adjacent hex, confirm the turn, and see the state update deterministically.**
 
-That's it. No combat. No AI. No AP. No fog. Just the pipeline working end-to-end.
+Scope is strictly constrained: no combat, no action points (AP), no fog of war, and no networking. The focus is establishing an unbreakable foundation.
 
-### Definition of Done
+### Definition of Done (DoD)
 
-- [ ] Rust core compiles to WASM
-- [ ] WASM module loads in browser
-- [ ] Hex grid renders on screen (PixiJS or Canvas)
-- [ ] One hero per team is placed on the grid
-- [ ] Player can click a hero to select it
-- [ ] Player can click a hex to set a move target
-- [ ] Player can confirm/end turn
-- [ ] Engine processes the movement
-- [ ] Board updates to show new position
-- [ ] Round counter increments
-- [ ] This loop repeats indefinitely
+- [ ] `hexabellum-core` compiles natively and passes all unit tests (`cargo test`).
+- [ ] `wasm-pack` compiles `hexabellum-wasm` to standard ES module WASM without warnings.
+- [ ] Vite dev server boots and loads the WASM module asynchronously in modern browsers.
+- [ ] Pointy-topped hex grid renders with correct spacing, orientation, and colors.
+- [ ] Two heroes are placed on the board (Player Team 0 on left, Team 1 on right).
+- [ ] Clicking the player hero selects it, highlights adjacent walkable hexes, and updates the HUD.
+- [ ] Clicking a highlighted target marks a planned movement with distinct visual feedback.
+- [ ] Clicking "End Turn" passes orders to the engine, resolves the turn, increments the round counter, and animates/updates unit positions.
+- [ ] This planning-resolution loop executes indefinitely without memory leaks or console errors.
 
 ---
 
 ## Architecture for Phase 0
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  Browser                         │
-│                                                  │
-│  ┌──────────────┐       ┌────────────────────┐  │
-│  │  TypeScript   │◄─────►│  moba-core (WASM)  │  │
-│  │  UI + Render  │       │  Game State + Rules │  │
-│  │  (PixiJS)     │       │  Turn Loop          │  │
-│  └──────────────┘       └────────────────────┘  │
-│                                                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │  Input Handler                            │   │
-│  │  (click → select / move / end turn)       │   │
-│  └──────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           Client Browser Runtime                                │
+│                                                                                 │
+│   ┌──────────────────────────┐                   ┌───────────────────────────┐  │
+│   │     TypeScript Client    │                   │   hexabellum-core (WASM)  │  │
+│   │  ┌────────────────────┐  │  WASM FFI Calls   │  ┌─────────────────────┐  │  │
+│   │  │ PixiJS Renderer    │  │                   │  │ GameEngine          │  │  │
+│   │  │ - Pointy-top hexes │◄─┼───────────────────┼──┤ - State (Round/Map) │  │  │
+│   │  │ - Units & HP bars  │  │   JSON Strings    │  │ - TurnOrders        │  │  │
+│   │  └────────────────────┘  │  (State & Events) │  └──────────┬──────────┘  │  │
+│   │  ┌────────────────────┐  │                   │             │             │  │
+│   │  │ Input & HUD        │  │                   │  ┌──────────▼──────────┐  │  │
+│   │  │ - Click hit-test   │──┼───────────────────┼─►│ TurnProcessor       │  │  │
+│   │  │ - Order staging    │  │                   │  │ - Resolves movement │  │  │
+│   │  └────────────────────┘  │                   │  └─────────────────────┘  │  │
+│   └──────────────────────────┘                   └───────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-No server yet. No networking. The engine runs locally in WASM.
+Phase 0 runs 100% locally in the browser runtime. The WASM boundary acts as the authoritative engine, mimicking the exact interface that a multiplayer server will expose in later phases.
 
 ---
 
@@ -65,114 +78,154 @@ No server yet. No networking. The engine runs locally in WASM.
 
 ```
 hexabellum/
-├── Cargo.toml                  # workspace root
+├── Cargo.toml                  # Workspace definition
+├── Makefile                    # Unified build & run automation
 ├── crates/
-│   ├── core/                   # moba-core (pure logic)
+│   ├── core/                   # hexabellum-core: Pure Rust game logic
 │   │   ├── Cargo.toml
 │   │   └── src/
-│   │       ├── lib.rs
-│   │       ├── hex.rs          # hex math
-│   │       ├── state.rs        # game state
-│   │       ├── unit.rs         # unit types
-│   │       ├── turn.rs         # turn loop
-│   │       └── event.rs        # game events
+│   │       ├── lib.rs          # Engine facade & public API
+│   │       ├── hex.rs          # Axial/Cube math, distance, ring & spiral
+│   │       ├── unit.rs         # Units, teams, and properties
+│   │       ├── state.rs        # GameState, phases, and map queries
+│   │       ├── turn.rs         # Order staging and TurnProcessor
+│   │       └── event.rs        # GameEvent definitions (JSON-tagged)
 │   │
-│   └── wasm/                   # moba-wasm (bindings)
+│   └── wasm/                   # hexabellum-wasm: WebAssembly bindings
 │       ├── Cargo.toml
 │       └── src/
-│           └── lib.rs          # wasm-bindgen exports
+│           └── lib.rs          # wasm-bindgen export layer (WasmGame)
 │
-├── web/                        # TypeScript client
-│   ├── package.json
-│   ├── index.html
-│   ├── vite.config.ts
-│   └── src/
-│       ├── main.ts             # entry point
-│       ├── game/
-│       │   ├── renderer.ts     # PixiJS rendering
-│       │   ├── input.ts        # click handling
-│       │   └── bridge.ts       # WASM API wrapper
-│       └── ui/
-│           ├── hud.ts          # round counter, selected unit
-│           └── hex-overlay.ts  # movement highlights
-│
-└── Makefile                    # build scripts
+└── web/                        # TypeScript + Vite + PixiJS client
+    ├── package.json
+    ├── tsconfig.json
+    ├── vite.config.ts
+    ├── index.html
+    └── src/
+        ├── main.ts             # Application bootstrapping
+        ├── game/
+        │   ├── bridge.ts       # WASM wrapper and typed JSON parser
+        │   ├── renderer.ts     # PixiJS v8 pointy-top renderer
+        │   └── input.ts        # Stage click hit-testing & order workflow
+        └── wasm/
+            └── pkg/            # Compiled wasm-pack output (git-ignored)
 ```
 
 ---
 
-## Core Data Structures (Rust)
+## Core Data Structures & Game Logic (Rust)
 
-### `crates/core/src/hex.rs`
+### 1. Hexagonal Grid Mathematics (`crates/core/src/hex.rs`)
+
+Hexabellum uses **pointy-topped** hexagons using an **axial coordinate system** `(q, r)`. Axial coordinates are a 2D projection of 3D cube coordinates `(q, r, s)` constrained by the invariant:
+
+$$q + r + s = 0 \iff s = -q - r$$
+
+```
+               -r (North)
+                 ▲
+      (0,-1)    │    (1,-1)
+        NW \    │    / NE
+            \   │   /
+             \  │  /
+   (-1,0) ──── (0,0) ──── (1,0)   +q (East)
+     W       /  │  \       E
+            /   │   \
+        SW /    │    \ SE
+     (-1,1)     │    (0,1)
+                ▼
+            +r (South)
+```
+
+#### Directional Vectors and Ring Generation
+To traverse concentric rings around a hexagon without duplicate visits or coordinate drift, neighbor directions must be evaluated in cyclic counter-clockwise order:
 
 ```rust
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// Axial coordinates for hex grid.
-/// q = column, r = row
-/// Cube constraint: q + r + s = 0 (s is implicit)
+/// Axial coordinates for the hexagonal grid.
+/// q = column, r = row.
+/// Cube constraint: q + r + s = 0 (where s = -q - r).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HexCoord {
     pub q: i32,
     pub r: i32,
 }
 
+/// The 6 axial unit directions in counter-clockwise cyclic order (pointy-top orientation).
+pub const DIRECTIONS: [(i32, i32); 6] = [
+    (1, 0),   // 0: East
+    (0, 1),   // 1: South-East
+    (-1, 1),  // 2: South-West
+    (-1, 0),  // 3: West
+    (0, -1),  // 4: North-West
+    (1, -1),  // 5: North-East
+];
+
 impl HexCoord {
-    pub fn new(q: i32, r: i32) -> Self {
+    pub const fn new(q: i32, r: i32) -> Self {
         Self { q, r }
     }
 
-    /// Distance between two hexes (cube distance).
+    /// Third cube coordinate s, where q + r + s = 0.
+    #[inline]
+    pub const fn s(&self) -> i32 {
+        -self.q - self.r
+    }
+
+    /// Cube distance between two coordinates: max(|Δq|, |Δr|, |Δs|).
     pub fn distance(&self, other: &HexCoord) -> u32 {
         let dq = (self.q - other.q).abs();
         let dr = (self.r - other.r).abs();
-        let ds = ((-self.q - self.r) - (-other.q - other.r)).abs();
+        let ds = (self.s() - other.s()).abs();
         ((dq + dr + ds) / 2) as u32
     }
 
-    /// Get all 6 neighboring hexes.
+    /// Get all 6 adjacent neighboring hexes.
     pub fn neighbors(&self) -> [HexCoord; 6] {
         [
-            HexCoord::new(self.q + 1, self.r),
-            HexCoord::new(self.q - 1, self.r),
-            HexCoord::new(self.q, self.r + 1),
-            HexCoord::new(self.q, self.r - 1),
-            HexCoord::new(self.q + 1, self.r - 1),
-            HexCoord::new(self.q - 1, self.r + 1),
+            HexCoord::new(self.q + DIRECTIONS[0].0, self.r + DIRECTIONS[0].1),
+            HexCoord::new(self.q + DIRECTIONS[1].0, self.r + DIRECTIONS[1].1),
+            HexCoord::new(self.q + DIRECTIONS[2].0, self.r + DIRECTIONS[2].1),
+            HexCoord::new(self.q + DIRECTIONS[3].0, self.r + DIRECTIONS[3].1),
+            HexCoord::new(self.q + DIRECTIONS[4].0, self.r + DIRECTIONS[4].1),
+            HexCoord::new(self.q + DIRECTIONS[5].0, self.r + DIRECTIONS[5].1),
         ]
     }
 
-    /// Get all hexes within a given radius.
+    /// Get all hexes on a ring at the given radius.
+    /// Traverses the 6 sides cyclically, yielding exactly 6 * radius hexes.
     pub fn ring(&self, radius: u32) -> Vec<HexCoord> {
         if radius == 0 {
             return vec![*self];
         }
-        let mut results = Vec::new();
-        // Start from one direction and walk around
-        let directions = [
-            (1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)
-        ];
-        // Walk to starting position
+
+        let mut results = Vec::with_capacity((6 * radius) as usize);
+
+        // Start at corner: self + DIRECTIONS[4] * radius (North-West)
         let mut current = HexCoord::new(
-            self.q + (directions[4].0 * radius as i32),
-            self.r + (directions[4].1 * radius as i32),
+            self.q + (DIRECTIONS[4].0 * radius as i32),
+            self.r + (DIRECTIONS[4].1 * radius as i32),
         );
-        for i in 0..6 {
+
+        // Walk 6 sides, stepping `radius` times along each side direction
+        for dir in DIRECTIONS {
             for _ in 0..radius {
                 results.push(current);
-                current = HexCoord::new(
-                    current.q + directions[i].0,
-                    current.r + directions[i].1,
-                );
+                current = HexCoord::new(current.q + dir.0, current.r + dir.1);
             }
         }
+
         results
     }
 
-    /// Get all hexes in a filled radius (for map generation).
+    /// Get all hexes in a filled circle (spiral) up to `radius`.
+    /// Total count equals 1 + 3 * radius * (radius + 1).
     pub fn spiral(&self, radius: u32) -> Vec<HexCoord> {
-        let mut results = vec![*self];
+        let count = 1 + 3 * radius * (radius + 1);
+        let mut results = Vec::with_capacity(count as usize);
+        results.push(*self);
         for r in 1..=radius {
             results.extend(self.ring(r));
         }
@@ -180,10 +233,11 @@ impl HexCoord {
     }
 }
 
-/// The hex map definition.
+/// The hex map definition containing radius and blocked tiles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HexMap {
     pub radius: u32,
+    #[serde(default)]
     pub obstacles: HashSet<HexCoord>,
 }
 
@@ -195,13 +249,13 @@ impl HexMap {
         }
     }
 
-    /// Get all walkable hexes.
+    /// Return all coordinates within the map bounds.
     pub fn all_hexes(&self) -> Vec<HexCoord> {
         let center = HexCoord::new(0, 0);
         center.spiral(self.radius)
     }
 
-    /// Check if a hex is walkable.
+    /// True if coordinate is within radius bounds and not an obstacle.
     pub fn is_walkable(&self, coord: &HexCoord) -> bool {
         let center = HexCoord::new(0, 0);
         center.distance(coord) <= self.radius && !self.obstacles.contains(coord)
@@ -209,11 +263,13 @@ impl HexMap {
 }
 ```
 
-### `crates/core/src/unit.rs`
+---
+
+### 2. Units & Entities (`crates/core/src/unit.rs`)
 
 ```rust
 use crate::hex::HexCoord;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub type UnitId = u64;
 pub type TeamId = u8;
@@ -234,7 +290,6 @@ pub struct Unit {
     pub pos: HexCoord,
     pub hp: u32,
     pub max_hp: u32,
-    // Future: ap, initiative, vision_range, etc.
 }
 
 impl Unit {
@@ -249,19 +304,22 @@ impl Unit {
         }
     }
 
+    #[inline]
     pub fn is_alive(&self) -> bool {
         self.hp > 0
     }
 }
 ```
 
-### `crates/core/src/state.rs`
+---
+
+### 3. Game State (`crates/core/src/state.rs`)
 
 ```rust
 use crate::hex::{HexCoord, HexMap};
-use crate::unit::{Unit, UnitId, TeamId};
+use crate::unit::{TeamId, Unit, UnitId};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Phase {
@@ -302,56 +360,54 @@ impl GameState {
         self.units.values().find(|u| u.pos == *coord && u.is_alive())
     }
 
-    /// Check if a hex is occupied by any alive unit.
     pub fn is_occupied(&self, coord: &HexCoord) -> bool {
         self.get_unit_at(coord).is_some()
     }
 
-    /// Get all alive units.
     pub fn alive_units(&self) -> Vec<&Unit> {
         self.units.values().filter(|u| u.is_alive()).collect()
     }
-
-    /// Get all alive units for a team.
-    pub fn team_units(&self, team: TeamId) -> Vec<&Unit> {
-        self.units.values()
-            .filter(|u| u.team == team && u.is_alive())
-            .collect()
-    }
 }
 ```
 
-### `crates/core/src/event.rs`
+---
+
+### 4. Turn Resolution & Orders (`crates/core/src/turn.rs` & `event.rs`)
+
+#### `crates/core/src/event.rs`
+The JSON output uses `#[serde(tag = "type")]` so TypeScript receives clean tagged unions:
+`{ "type": "UnitMoved", "unit_id": 1, "from": {"q": -3, "r": 0}, "to": {"q": -2, "r": 0} }`.
 
 ```rust
 use crate::hex::HexCoord;
 use crate::unit::UnitId;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-/// Events emitted during resolution.
-/// The client uses these to animate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type")]
 pub enum GameEvent {
     RoundStarted { round: u32 },
-    UnitMoved { unit_id: UnitId, from: HexCoord, to: HexCoord },
+    UnitMoved {
+        unit_id: UnitId,
+        from: HexCoord,
+        to: HexCoord,
+    },
     RoundEnded { round: u32 },
-    // Future: UnitAttacked, UnitDied, etc.
 }
 ```
 
-### `crates/core/src/turn.rs`
+#### `crates/core/src/turn.rs`
 
 ```rust
-use crate::state::{GameState, Phase};
 use crate::event::GameEvent;
 use crate::hex::HexCoord;
+use crate::state::{GameState, Phase};
 use crate::unit::UnitId;
 use std::collections::HashMap;
 
-/// Player orders collected during planning phase.
+/// Staged orders collected during the planning phase.
 #[derive(Debug, Clone, Default)]
 pub struct TurnOrders {
-    /// unit_id -> target hex for movement
     pub move_orders: HashMap<UnitId, HexCoord>,
 }
 
@@ -363,49 +419,51 @@ impl TurnOrders {
     pub fn set_move(&mut self, unit_id: UnitId, target: HexCoord) {
         self.move_orders.insert(unit_id, target);
     }
+
+    pub fn clear(&mut self) {
+        self.move_orders.clear();
+    }
 }
 
-/// The turn processor.
-/// Phase 0: simple movement resolution.
 pub struct TurnProcessor;
 
 impl TurnProcessor {
-    /// Resolve the current round.
-    /// Returns events for the client to animate.
+    /// Resolve all staged orders and advance the game round.
     pub fn resolve(state: &mut GameState, orders: &TurnOrders) -> Vec<GameEvent> {
         let mut events = Vec::new();
 
-        events.push(GameEvent::RoundStarted { round: state.round + 1 });
+        state.phase = Phase::Resolution;
+        events.push(GameEvent::RoundStarted {
+            round: state.round + 1,
+        });
 
-        // Phase 0: simple movement, no initiative, no AP
-        for (unit_id, target) in &orders.move_orders {
-            if let Some(unit) = state.units.get_mut(unit_id) {
+        // Resolve planned movements
+        for (&unit_id, &target) in &orders.move_orders {
+            if let Some(unit) = state.units.get_mut(&unit_id) {
                 if !unit.is_alive() {
                     continue;
                 }
 
                 let from = unit.pos;
 
-                // Validate: target must be walkable and not occupied
-                if !state.map.is_walkable(target) {
+                // Validate: target must be walkable and unoccupied
+                if !state.map.is_walkable(&target) {
                     continue;
                 }
-                if state.is_occupied(target) && *target != from {
+                if state.is_occupied(&target) && target != from {
                     continue;
                 }
 
-                // Move the unit
-                unit.pos = *target;
-
+                unit.pos = target;
                 events.push(GameEvent::UnitMoved {
-                    unit_id: *unit_id,
+                    unit_id,
                     from,
-                    to: *target,
+                    to: target,
                 });
             }
         }
 
-        // Advance round
+        // Advance round and return to planning
         state.round += 1;
         state.phase = Phase::Planning;
 
@@ -416,41 +474,40 @@ impl TurnProcessor {
 }
 ```
 
-### `crates/core/src/lib.rs`
+---
+
+### 5. Engine Facade (`crates/core/src/lib.rs`)
 
 ```rust
+pub mod event;
 pub mod hex;
-pub mod unit;
 pub mod state;
 pub mod turn;
-pub mod event;
+pub mod unit;
 
-/// Top-level game engine.
-/// This is the main entry point for WASM.
+pub const PLAYER_TEAM: u8 = 0;
+pub const ENEMY_TEAM: u8 = 1;
+
+/// The authoritative game engine running inside WASM or native server.
 pub struct GameEngine {
     state: state::GameState,
     pending_orders: turn::TurnOrders,
 }
 
 impl GameEngine {
-    /// Create a new game with default Phase 0 setup.
+    /// Initial 1v1 Phase 0 board: radius 4 (61 hexes), 3 central obstacles, 2 heroes.
     pub fn new() -> Self {
-        let mut map = hex::HexMap::new(4); // radius 4 = 61 hexes
+        let mut map = hex::HexMap::new(4);
 
-        // Add a few obstacles for visual interest
         map.obstacles.insert(hex::HexCoord::new(0, 0));
         map.obstacles.insert(hex::HexCoord::new(1, -1));
         map.obstacles.insert(hex::HexCoord::new(-1, 1));
 
         let mut state = state::GameState::new(map);
 
-        // Place heroes: team 0 on left, team 1 on right
-        state.add_unit(unit::Unit::new_hero(
-            1, 0, hex::HexCoord::new(-3, 0),
-        ));
-        state.add_unit(unit::Unit::new_hero(
-            2, 1, hex::HexCoord::new(3, 0),
-        ));
+        // Team 0 (Player) on left, Team 1 (Opponent) on right
+        state.add_unit(unit::Unit::new_hero(1, PLAYER_TEAM, hex::HexCoord::new(-3, 0)));
+        state.add_unit(unit::Unit::new_hero(2, ENEMY_TEAM, hex::HexCoord::new(3, 0)));
 
         Self {
             state,
@@ -458,18 +515,25 @@ impl GameEngine {
         }
     }
 
-    /// Get current game state (serialized for client).
+    pub fn state(&self) -> &state::GameState {
+        &self.state
+    }
+
     pub fn get_state(&self) -> String {
         serde_json::to_string(&self.state).unwrap()
     }
 
-    /// Select a unit and set move target.
+    /// Plan a movement order. Rejects invalid units, dead units, enemy units, or non-adjacent tiles.
     pub fn set_move_order(&mut self, unit_id: unit::UnitId, q: i32, r: i32) -> bool {
         let target = hex::HexCoord::new(q, r);
 
-        // Validate: unit exists, is alive, belongs to team 0 (player team for now)
         if let Some(unit) = self.state.get_unit(unit_id) {
-            if unit.is_alive() && unit.team == 0 {
+            if unit.is_alive()
+                && unit.team == PLAYER_TEAM
+                && unit.pos.distance(&target) == 1
+                && self.state.map.is_walkable(&target)
+                && !self.state.is_occupied(&target)
+            {
                 self.pending_orders.set_move(unit_id, target);
                 return true;
             }
@@ -477,40 +541,42 @@ impl GameEngine {
         false
     }
 
-    /// End the turn and resolve.
-    /// Returns events as JSON for the client.
+    /// Execute turn resolution and return emitted GameEvents.
     pub fn end_turn(&mut self) -> String {
-        let orders = std::mem::replace(&mut self.pending_orders, turn::TurnOrders::new());
+        let orders = std::mem::take(&mut self.pending_orders);
         let events = turn::TurnProcessor::resolve(&mut self.state, &orders);
         serde_json::to_string(&events).unwrap()
     }
 
-    /// Get all walkable hexes as JSON (for rendering).
     pub fn get_map_hexes(&self) -> String {
-        let hexes: Vec<(i32, i32)> = self.state.map.all_hexes()
+        let hexes: Vec<(i32, i32)> = self
+            .state
+            .map
+            .all_hexes()
             .iter()
             .map(|h| (h.q, h.r))
             .collect();
         serde_json::to_string(&hexes).unwrap()
     }
 
-    /// Get obstacles as JSON.
     pub fn get_obstacles(&self) -> String {
-        let obstacles: Vec<(i32, i32)> = self.state.map.obstacles
+        let obstacles: Vec<(i32, i32)> = self
+            .state
+            .map
+            .obstacles
             .iter()
             .map(|h| (h.q, h.r))
             .collect();
         serde_json::to_string(&obstacles).unwrap()
     }
 
-    /// Get valid move targets for a unit (Phase 0: adjacent hexes).
+    /// Query walkable, unoccupied adjacent hexes for a given unit.
     pub fn get_move_targets(&self, unit_id: unit::UnitId) -> String {
         let targets: Vec<(i32, i32)> = if let Some(unit) = self.state.get_unit(unit_id) {
-            unit.pos.neighbors()
+            unit.pos
+                .neighbors()
                 .iter()
-                .filter(|h| {
-                    self.state.map.is_walkable(h) && !self.state.is_occupied(h)
-                })
+                .filter(|h| self.state.map.is_walkable(h) && !self.state.is_occupied(h))
                 .map(|h| (h.q, h.r))
                 .collect()
         } else {
@@ -519,17 +585,23 @@ impl GameEngine {
         serde_json::to_string(&targets).unwrap()
     }
 }
+
+impl Default for GameEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 ```
 
 ---
 
-## WASM Bindings
+## WASM Bindings (`crates/wasm`)
 
 ### `crates/wasm/src/lib.rs`
 
 ```rust
-use wasm_bindgen::prelude::*;
 use hexabellum_core::GameEngine;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct WasmGame {
@@ -569,27 +641,17 @@ impl WasmGame {
         self.engine.get_move_targets(unit_id)
     }
 }
+
+impl Default for WasmGame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 ```
 
-### `crates/wasm/Cargo.toml`
+### Cargo Manifests
 
-```toml
-[package]
-name = "hexabellum-wasm"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-hexabellum-core = { path = "../core" }
-wasm-bindgen = "0.2"
-serde_json = "1"
-```
-
-### Root `Cargo.toml`
-
+#### `Cargo.toml` (Workspace Root)
 ```toml
 [workspace]
 members = [
@@ -599,9 +661,37 @@ members = [
 resolver = "2"
 ```
 
+#### `crates/core/Cargo.toml`
+```toml
+[package]
+name = "hexabellum-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+```
+
+#### `crates/wasm/Cargo.toml`
+```toml
+[package]
+name = "hexabellum-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+hexabellum-core = { path = "../core" }
+wasm-bindgen = "0.2"
+serde_json = "1.0"
+```
+
 ---
 
-## Client (TypeScript + PixiJS)
+## TypeScript Client & PixiJS Rendering (`web/`)
 
 ### `web/package.json`
 
@@ -625,7 +715,43 @@ resolver = "2"
 }
 ```
 
-### `web/src/game/bridge.ts`
+### `web/vite.config.ts`
+
+```typescript
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  server: {
+    port: 5173,
+    fs: {
+      allow: ['..'],
+    },
+  },
+});
+```
+
+### `web/tsconfig.json`
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src"]
+}
+```
+
+---
+
+### WASM Bridge (`web/src/game/bridge.ts`)
 
 ```typescript
 import init, { WasmGame } from '../wasm/pkg/hexabellum_wasm';
@@ -639,7 +765,7 @@ export interface HexCoord {
 
 export interface UnitData {
   id: number;
-  kind: string;
+  kind: 'Hero' | 'Minion' | 'Tower' | 'Neutral';
   team: number;
   pos: HexCoord;
   hp: number;
@@ -648,15 +774,15 @@ export interface UnitData {
 
 export interface GameState {
   round: number;
-  phase: string;
-  units: Record<number, UnitData>;
+  phase: 'Planning' | 'Resolution' | 'MatchEnd';
+  units: Record<string, UnitData>;
   winner: number | null;
 }
 
-export interface GameEvent {
-  type: string;
-  [key: string]: any;
-}
+export type GameEvent =
+  | { type: 'RoundStarted'; round: number }
+  | { type: 'UnitMoved'; unit_id: number; from: HexCoord; to: HexCoord }
+  | { type: 'RoundEnded'; round: number };
 
 export async function initGame(): Promise<void> {
   await init();
@@ -664,87 +790,96 @@ export async function initGame(): Promise<void> {
 }
 
 export function getState(): GameState {
-  if (!game) throw new Error("Game not initialized");
+  if (!game) throw new Error('Game engine not initialized');
   return JSON.parse(game.get_state());
 }
 
 export function setMoveOrder(unitId: number, q: number, r: number): boolean {
-  if (!game) throw new Error("Game not initialized");
+  if (!game) throw new Error('Game engine not initialized');
   return game.set_move_order(unitId, q, r);
 }
 
 export function endTurn(): GameEvent[] {
-  if (!game) throw new Error("Game not initialized");
+  if (!game) throw new Error('Game engine not initialized');
   return JSON.parse(game.end_turn());
 }
 
 export function getMapHexes(): HexCoord[] {
-  if (!game) throw new Error("Game not initialized");
+  if (!game) throw new Error('Game engine not initialized');
   return JSON.parse(game.get_map_hexes()).map(([q, r]: [number, number]) => ({ q, r }));
 }
 
 export function getObstacles(): HexCoord[] {
-  if (!game) throw new Error("Game not initialized");
+  if (!game) throw new Error('Game engine not initialized');
   return JSON.parse(game.get_obstacles()).map(([q, r]: [number, number]) => ({ q, r }));
 }
 
 export function getMoveTargets(unitId: number): HexCoord[] {
-  if (!game) throw new Error("Game not initialized");
+  if (!game) throw new Error('Game engine not initialized');
   return JSON.parse(game.get_move_targets(unitId)).map(([q, r]: [number, number]) => ({ q, r }));
 }
 ```
 
-### `web/src/game/renderer.ts`
+---
+
+### PixiJS Renderer (`web/src/game/renderer.ts`)
+
+#### Pointy-Topped Alignment Details
+For pointy-topped hexagons with radius $R = \text{HEX\_SIZE}$:
+- Center $X = R \cdot (\sqrt{3} q + \frac{\sqrt{3}}{2} r) + \text{centerX}$
+- Center $Y = R \cdot (\frac{3}{2} r) + \text{centerY}$
+- Vertex angles: $\theta_i = \frac{\pi}{3} i - \frac{\pi}{6}$ (angles at $30^\circ, 90^\circ, 150^\circ, 210^\circ, 270^\circ, 330^\circ$)
 
 ```typescript
 import * as PIXI from 'pixi.js';
-import { HexCoord, UnitData, GameState } from './bridge';
+import { HexCoord, GameState } from './bridge';
 
-// Hex geometry constants
-const HEX_SIZE = 30; // radius in pixels
+export const HEX_SIZE = 30; // Radius in pixels
 
 export class HexRenderer {
   private app: PIXI.Application;
   private hexLayer: PIXI.Container;
-  private unitLayer: PIXI.Container;
   private overlayLayer: PIXI.Container;
-
-  private hexGraphics: Map<string, PIXI.Graphics> = new Map();
-  private unitSprites: Map<number, PIXI.Graphics> = new Map();
+  private unitLayer: PIXI.Container;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.app = new PIXI.Application({
-      view: canvas,
-      width: window.innerWidth,
-      height: window.innerHeight,
+    this.app = new PIXI.Application();
+
+    // Async init for PixiJS v8
+    this.app.init({
+      canvas,
+      resizeTo: window,
       backgroundColor: 0x1a1a2e,
       antialias: true,
+      autoDensity: true,
+      resolution: window.devicePixelRatio || 1,
+    }).then(() => {
+      this.app.stage.eventMode = 'static';
+      this.app.stage.hitArea = this.app.screen;
     });
 
     this.hexLayer = new PIXI.Container();
-    this.unitLayer = new PIXI.Container();
     this.overlayLayer = new PIXI.Container();
+    this.unitLayer = new PIXI.Container();
 
     this.app.stage.addChild(this.hexLayer);
     this.app.stage.addChild(this.overlayLayer);
     this.app.stage.addChild(this.unitLayer);
   }
 
-  /** Convert axial hex coords to pixel position. */
+  /** Convert axial hex coords to screen pixel position (pointy-topped). */
   hexToPixel(q: number, r: number): { x: number; y: number } {
     const x = HEX_SIZE * (Math.sqrt(3) * q + (Math.sqrt(3) / 2) * r);
-    const y = HEX_SIZE * (3 / 2) * r;
+    const y = HEX_SIZE * (1.5 * r);
     return {
       x: x + this.app.screen.width / 2,
       y: y + this.app.screen.height / 2,
     };
   }
 
-  /** Draw the hex grid. */
+  /** Render the base hex tiles and obstacles. */
   drawMap(hexes: HexCoord[], obstacles: HexCoord[]): void {
     this.hexLayer.removeChildren();
-    this.hexGraphics.clear();
-
     const obstacleSet = new Set(obstacles.map(h => `${h.q},${h.r}`));
 
     for (const hex of hexes) {
@@ -753,17 +888,14 @@ export class HexRenderer {
 
       const g = new PIXI.Graphics();
 
-      // Draw hexagon
-      g.moveTo(x + HEX_SIZE, y);
-      for (let i = 1; i <= 6; i++) {
-        const angle = (Math.PI / 3) * i;
-        g.lineTo(
-          x + HEX_SIZE * Math.cos(angle),
-          y + HEX_SIZE * Math.sin(angle)
-        );
+      // Pointy-top hex vertex points: angles (i * 60° - 30°)
+      const points: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i - Math.PI / 6;
+        points.push(x + HEX_SIZE * Math.cos(angle), y + HEX_SIZE * Math.sin(angle));
       }
-      g.closePath();
 
+      g.poly(points);
       if (isObstacle) {
         g.fill({ color: 0x2d2d44 });
         g.stroke({ color: 0x444466, width: 1 });
@@ -773,34 +905,38 @@ export class HexRenderer {
       }
 
       this.hexLayer.addChild(g);
-      this.hexGraphics.set(`${hex.q},${hex.r}`, g);
     }
   }
 
-  /** Draw units. */
-  drawUnits(state: GameState): void {
+  /** Render units, team colors, selection indicator, and HP bars. */
+  drawUnits(state: GameState, selectedUnitId: number | null = null): void {
     this.unitLayer.removeChildren();
-    this.unitSprites.clear();
 
-    for (const [id, unit] of Object.entries(state.units)) {
+    for (const [idStr, unit] of Object.entries(state.units)) {
+      const id = Number(idStr);
       const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
 
       const g = new PIXI.Graphics();
+      const isSelected = selectedUnitId === id;
+      const teamColor = unit.team === 0 ? 0x4fc3f7 : 0xef5350;
 
-      // Team colors
-      const color = unit.team === 0 ? 0x4fc3f7 : 0xef5350;
+      // Selection ring
+      if (isSelected) {
+        g.circle(x, y, HEX_SIZE * 0.7);
+        g.stroke({ color: 0xffeb3b, width: 2 });
+      }
 
-      // Draw unit as circle
+      // Unit token
       g.circle(x, y, HEX_SIZE * 0.5);
-      g.fill({ color });
+      g.fill({ color: teamColor });
       g.stroke({ color: 0xffffff, width: 2 });
 
-      // HP bar
+      // Health bar
       const hpWidth = HEX_SIZE * 0.8;
       const hpHeight = 4;
       const hpX = x - hpWidth / 2;
-      const hpY = y - HEX_SIZE * 0.7;
-      const hpRatio = unit.hp / unit.max_hp;
+      const hpY = y - HEX_SIZE * 0.75;
+      const hpRatio = Math.max(0, Math.min(1, unit.hp / unit.max_hp));
 
       g.rect(hpX, hpY, hpWidth, hpHeight);
       g.fill({ color: 0x333333 });
@@ -808,60 +944,68 @@ export class HexRenderer {
       g.fill({ color: hpRatio > 0.5 ? 0x4caf50 : 0xff9800 });
 
       this.unitLayer.addChild(g);
-      this.unitSprites.set(Number(id), g);
     }
   }
 
-  /** Highlight valid move targets. */
-  drawMoveTargets(targets: HexCoord[]): void {
+  /** Highlight available move destinations and staged target. */
+  drawMoveTargets(targets: HexCoord[], plannedTarget: HexCoord | null = null): void {
     this.overlayLayer.removeChildren();
 
     for (const target of targets) {
       const { x, y } = this.hexToPixel(target.q, target.r);
+      const isPlanned = plannedTarget && plannedTarget.q === target.q && plannedTarget.r === target.r;
 
       const g = new PIXI.Graphics();
-      g.circle(x, y, HEX_SIZE * 0.3);
-      g.fill({ color: 0x4caf50, alpha: 0.5 });
-
+      if (isPlanned) {
+        // Distinct amber indicator for staged move
+        g.circle(x, y, HEX_SIZE * 0.4);
+        g.fill({ color: 0xffeb3b, alpha: 0.7 });
+        g.stroke({ color: 0xffffff, width: 2 });
+      } else {
+        // Green highlight for available adjacent steps
+        g.circle(x, y, HEX_SIZE * 0.3);
+        g.fill({ color: 0x4caf50, alpha: 0.5 });
+      }
       this.overlayLayer.addChild(g);
     }
   }
 
-  /** Clear move highlights. */
   clearMoveTargets(): void {
     this.overlayLayer.removeChildren();
-  }
-
-  /** Highlight selected unit. */
-  highlightUnit(unitId: number | null): void {
-    // Reset all units
-    // (In Phase 0, we just redraw)
-  }
-
-  getStage(): PIXI.Container {
-    return this.app.stage;
   }
 
   getApp(): PIXI.Application {
     return this.app;
   }
+
+  getStage(): PIXI.Container {
+    return this.app.stage;
+  }
 }
 ```
 
-### `web/src/game/input.ts`
+---
+
+### Input Handler (`web/src/game/input.ts`)
 
 ```typescript
 import * as PIXI from 'pixi.js';
-import { HexRenderer } from './renderer';
-import { getState, setMoveOrder, getMoveTargets, endTurn } from './bridge';
+import { HexRenderer, HEX_SIZE } from './renderer';
+import { getState, setMoveOrder, getMoveTargets, endTurn, HexCoord } from './bridge';
 
 export class InputHandler {
   private selectedUnit: number | null = null;
+  private plannedMove: HexCoord | null = null;
   private renderer: HexRenderer;
+  private onStateChange: (() => void) | null = null;
 
   constructor(renderer: HexRenderer) {
     this.renderer = renderer;
     this.setupListeners();
+  }
+
+  setOnStateChange(cb: () => void): void {
+    this.onStateChange = cb;
   }
 
   private setupListeners(): void {
@@ -869,61 +1013,82 @@ export class InputHandler {
     const stage = this.renderer.getStage();
 
     stage.eventMode = 'static';
+    stage.hitArea = app.screen;
 
     stage.on('pointerdown', (event: PIXI.FederatedPointerEvent) => {
-      const pos = event.global;
-      this.handleClick(pos.x, pos.y);
+      this.handleClick(event.global.x, event.global.y);
     });
   }
 
-  private handleClick(x: number, y: number): void {
+  private handleClick(pixelX: number, pixelY: number): void {
     const state = getState();
-
-    // Find clicked hex
-    const hex = this.pixelToHex(x, y);
+    const hex = this.pixelToHex(pixelX, pixelY);
     if (!hex) return;
 
-    // Check if clicked on a unit
-    for (const [id, unit] of Object.entries(state.units)) {
+    // Check if player clicked a unit
+    for (const [idStr, unit] of Object.entries(state.units)) {
+      const id = Number(idStr);
       if (unit.pos.q === hex.q && unit.pos.r === hex.r) {
-        if (unit.team === 0) { // Player team
-          this.selectedUnit = Number(id);
-          const targets = getMoveTargets(Number(id));
+        if (unit.team === 0) {
+          // Toggle selection off if already selected
+          if (this.selectedUnit === id) {
+            this.deselect();
+            return;
+          }
+
+          this.selectedUnit = id;
+          this.plannedMove = null;
+          const targets = getMoveTargets(id);
           this.renderer.drawMoveTargets(targets);
-          this.renderer.drawUnits(state);
+          this.renderer.drawUnits(state, this.selectedUnit);
+          this.onStateChange?.();
           return;
         }
       }
     }
 
-    // If a unit is selected, try to move
+    // If unit is already selected, attempt to plan move
     if (this.selectedUnit !== null) {
-      const success = setMoveOrder(this.selectedUnit, hex.q, hex.r);
-      if (success) {
-        this.renderer.clearMoveTargets();
-        // Could show a "move planned" indicator here
+      const targets = getMoveTargets(this.selectedUnit);
+      const isTargetValid = targets.some(t => t.q === hex.q && t.r === hex.r);
+
+      if (isTargetValid) {
+        const success = setMoveOrder(this.selectedUnit, hex.q, hex.r);
+        if (success) {
+          this.plannedMove = hex;
+          this.renderer.drawMoveTargets(targets, this.plannedMove);
+          this.onStateChange?.();
+          return;
+        }
       }
+
+      // Clicking outside valid targets deselects
+      this.deselect();
     }
   }
 
-  /** Convert pixel position to hex coords. */
-  private pixelToHex(x: number, y: number): { q: number; r: number } | null {
-    const HEX_SIZE = 30;
-    const app = this.renderer.getApp();
+  private deselect(): void {
+    this.selectedUnit = null;
+    this.plannedMove = null;
+    this.renderer.clearMoveTargets();
+    this.renderer.drawUnits(getState(), null);
+    this.onStateChange?.();
+  }
 
-    // Offset to center
+  /** Inverse projection: screen pixels to nearest axial hex coordinate. */
+  private pixelToHex(x: number, y: number): HexCoord | null {
+    const app = this.renderer.getApp();
     const cx = x - app.screen.width / 2;
     const cy = y - app.screen.height / 2;
 
-    // Pixel to fractional axial
     const q = ((Math.sqrt(3) / 3) * cx - (1 / 3) * cy) / HEX_SIZE;
     const r = ((2 / 3) * cy) / HEX_SIZE;
 
-    // Round to nearest hex
     return this.hexRound(q, r);
   }
 
-  private hexRound(q: number, r: number): { q: number; r: number } {
+  /** Fractional axial rounding via cube coordinate distance clamping. */
+  private hexRound(q: number, r: number): HexCoord {
     const s = -q - r;
     let rq = Math.round(q);
     let rr = Math.round(r);
@@ -945,22 +1110,29 @@ export class InputHandler {
   endTurn(): void {
     const events = endTurn();
     this.selectedUnit = null;
+    this.plannedMove = null;
     this.renderer.clearMoveTargets();
 
-    // Redraw with new state
     const state = getState();
-    this.renderer.drawUnits(state);
+    this.renderer.drawUnits(state, null);
+    this.onStateChange?.();
 
-    console.log("Round events:", events);
+    console.log('Turn resolved events:', events);
   }
 
   getSelectedUnit(): number | null {
     return this.selectedUnit;
   }
+
+  getPlannedMove(): HexCoord | null {
+    return this.plannedMove;
+  }
 }
 ```
 
-### `web/src/main.ts`
+---
+
+### Main Entry Point (`web/src/main.ts`)
 
 ```typescript
 import { initGame, getState, getMapHexes, getObstacles } from './game/bridge';
@@ -968,16 +1140,11 @@ import { HexRenderer } from './game/renderer';
 import { InputHandler } from './game/input';
 
 async function main() {
-  // Initialize WASM
   await initGame();
 
-  // Create canvas
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
-
-  // Create renderer
   const renderer = new HexRenderer(canvas);
 
-  // Draw initial state
   const hexes = getMapHexes();
   const obstacles = getObstacles();
   const state = getState();
@@ -985,33 +1152,43 @@ async function main() {
   renderer.drawMap(hexes, obstacles);
   renderer.drawUnits(state);
 
-  // Create input handler
   const input = new InputHandler(renderer);
 
-  // Add "End Turn" button
   const endTurnBtn = document.getElementById('end-turn') as HTMLButtonElement;
+  const roundDisplay = document.getElementById('round') as HTMLElement;
+  const selectionDisplay = document.getElementById('selection') as HTMLElement;
+
+  const updateHud = () => {
+    const currentState = getState();
+    roundDisplay.textContent = `Round ${currentState.round}`;
+    const sel = input.getSelectedUnit();
+    const planned = input.getPlannedMove();
+    if (sel !== null) {
+      selectionDisplay.textContent = planned
+        ? `Hero #${sel} → Move staged to (${planned.q}, ${planned.r})`
+        : `Hero #${sel} selected (Click an adjacent hex to stage move)`;
+    } else {
+      selectionDisplay.textContent = 'Select your blue hero';
+    }
+  };
+
+  input.setOnStateChange(updateHud);
+
   endTurnBtn.addEventListener('click', () => {
     input.endTurn();
   });
 
-  // Add round counter
-  const roundDisplay = document.getElementById('round') as HTMLElement;
-  const updateRound = () => {
-    const currentState = getState();
-    roundDisplay.textContent = `Round ${currentState.round}`;
-  };
-  updateRound();
+  updateHud();
 
-  // Update round display after each turn
-  endTurnBtn.addEventListener('click', updateRound);
-
-  console.log("Hexabellum Phase 0 initialized!");
+  console.log('Hexabellum Phase 0 active.');
 }
 
 main().catch(console.error);
 ```
 
-### `web/index.html`
+---
+
+### HTML Document (`web/index.html`)
 
 ```html
 <!DOCTYPE html>
@@ -1019,14 +1196,15 @@ main().catch(console.error);
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hexabellum - Phase 0</title>
+  <title>Hexabellum - Phase 0 Vertical Slice</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       background: #0a0a1a;
       color: #eee;
-      font-family: 'Segoe UI', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       overflow: hidden;
+      user-select: none;
     }
     #game-canvas {
       display: block;
@@ -1035,49 +1213,69 @@ main().catch(console.error);
     }
     #hud {
       position: fixed;
-      top: 10px;
-      left: 10px;
+      top: 16px;
+      left: 16px;
       z-index: 10;
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
+      background: rgba(10, 10, 26, 0.85);
+      padding: 14px 18px;
+      border-radius: 8px;
+      border: 1px solid #1a2744;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
     }
     #round {
-      font-size: 18px;
-      font-weight: bold;
+      font-size: 20px;
+      font-weight: 700;
       color: #4fc3f7;
+      letter-spacing: 0.5px;
+    }
+    #selection {
+      font-size: 13px;
+      color: #9fd8ff;
+      min-height: 18px;
     }
     #end-turn {
-      padding: 12px 24px;
+      margin-top: 4px;
+      padding: 10px 20px;
       background: #0f3460;
       color: #4fc3f7;
-      border: 2px solid #4fc3f7;
-      border-radius: 8px;
-      font-size: 16px;
+      border: 1px solid #4fc3f7;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
       cursor: pointer;
-      transition: all 0.2s;
+      transition: background 0.15s ease, transform 0.05s ease;
     }
     #end-turn:hover {
-      background: #4fc3f7;
-      color: #0a0a1a;
+      background: #194880;
+    }
+    #end-turn:active {
+      transform: scale(0.98);
     }
     #instructions {
       position: fixed;
-      bottom: 10px;
-      left: 10px;
-      font-size: 14px;
-      color: #888;
+      bottom: 16px;
+      left: 16px;
+      font-size: 13px;
+      color: #78909c;
+      background: rgba(10, 10, 26, 0.85);
+      padding: 8px 14px;
+      border-radius: 6px;
+      border: 1px solid #1a2744;
     }
   </style>
 </head>
 <body>
   <div id="hud">
     <div id="round">Round 0</div>
+    <div id="selection">Select your blue hero</div>
     <button id="end-turn">End Turn</button>
   </div>
   <canvas id="game-canvas"></canvas>
   <div id="instructions">
-    Click a blue unit to select → Click a hex to plan move → End Turn to resolve
+    Click Blue Hero → Click Green Target to Plan Move → Click End Turn
   </div>
   <script type="module" src="/src/main.ts"></script>
 </body>
@@ -1086,26 +1284,31 @@ main().catch(console.error);
 
 ---
 
-## Build Scripts
-
-### `Makefile`
+## Build Automation (`Makefile`)
 
 ```makefile
-.PHONY: build-wasm dev clean
+.PHONY: all build-wasm dev build test clean
 
-# Build WASM package
+# Default: compile wasm and start dev server
+all: dev
+
+# Run Rust core tests
+test:
+	cargo test --workspace
+
+# Build WebAssembly package via wasm-pack
 build-wasm:
 	cd crates/wasm && wasm-pack build --target web --out-dir ../../web/src/wasm/pkg
 
-# Start dev server
+# Start Vite development server
 dev: build-wasm
 	cd web && npm run dev
 
-# Build for production
+# Production build
 build: build-wasm
 	cd web && npm run build
 
-# Clean
+# Clean build artifacts
 clean:
 	rm -rf web/src/wasm/pkg
 	rm -rf web/dist
@@ -1114,70 +1317,159 @@ clean:
 
 ---
 
-## Acceptance Criteria
+## Automated Unit Testing Suite (`crates/core`)
 
-Phase 0 is **done** when:
+Add the following unit test suite to `crates/core/src/lib.rs` (or `crates/core/tests/phase0_tests.rs`) to verify all core invariants before browser integration:
 
-| # | Criterion | Status |
-|---|-----------|--------|
-| 1 | `wasm-pack build` succeeds without errors | ☐ |
-| 2 | Browser loads the page and shows hex grid | ☐ |
-| 3 | Two heroes visible (blue left, red right) | ☐ |
-| 4 | Obstacles render in dark color | ☐ |
-| 5 | Clicking blue hero highlights valid move targets | ☐ |
-| 6 | Clicking a highlighted hex plans the move | ☐ |
-| 7 | Clicking "End Turn" moves the hero | ☐ |
-| 8 | Round counter increments | ☐ |
-| 9 | Can repeat the loop indefinitely | ☐ |
-| 10 | No console errors | ☐ |
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hex::HexCoord;
 
----
+    #[test]
+    fn test_hex_distance_and_symmetry() {
+        let a = HexCoord::new(0, 0);
+        let b = HexCoord::new(2, -1);
+        assert_eq!(a.distance(&b), 2);
+        assert_eq!(b.distance(&a), 2);
+        assert_eq!(a.distance(&a), 0);
+    }
 
-## What is NOT in Phase 0
+    #[test]
+    fn test_ring_uniqueness_and_counts() {
+        let center = HexCoord::new(0, 0);
+        for radius in 1..=4 {
+            let ring = center.ring(radius);
+            assert_eq!(ring.len(), (6 * radius) as usize);
 
-- ❌ Pathfinding (move is direct, no A* yet)
-- ❌ AP system
-- ❌ Initiative
-- ❌ Combat / HP damage
-- ❌ AI / bots
-- ❌ Fog of war
-- ❌ Multiple units per team
-- ❌ Server / networking
-- ❌ Timer
-- ❌ Sound / animations
+            // Verify no duplicates
+            let unique: std::collections::HashSet<_> = ring.iter().copied().collect();
+            assert_eq!(unique.len(), (6 * radius) as usize);
 
-These come in Phase 1+.
+            // Verify all points are at exact distance
+            for h in &ring {
+                assert_eq!(center.distance(h), radius);
+            }
+        }
+    }
 
----
+    #[test]
+    fn test_spiral_count_exact() {
+        let center = HexCoord::new(0, 0);
+        // Radius 4: 1 + 3 * 4 * 5 = 61 hexes
+        let spiral = center.spiral(4);
+        assert_eq!(spiral.len(), 61);
 
-## Phase 1 Preview (Next Slice)
+        let unique: std::collections::HashSet<_> = spiral.iter().copied().collect();
+        assert_eq!(unique.len(), 61);
+    }
 
-Once Phase 0 works, Phase 1 adds:
-- **Pathfinding** (A* on hex grid)
-- **AP system** (movement costs AP)
-- **Multiple units** (2-3 heroes per team)
-- **Combat** (attack action, HP reduction, death)
-- **Simple AI** (enemy heroes move toward player)
-- **Turn timer** (optional, configurable)
+    #[test]
+    fn test_walkable_bounds_and_obstacles() {
+        let mut map = hex::HexMap::new(2);
+        let center = HexCoord::new(0, 0);
+        let obstacle = HexCoord::new(1, 0);
+        map.obstacles.insert(obstacle);
 
----
+        assert!(map.is_walkable(&center));
+        assert!(!map.is_walkable(&obstacle));
+        assert!(!map.is_walkable(&HexCoord::new(3, 0))); // Out of bounds
+    }
 
-## Getting Started
+    #[test]
+    fn test_move_order_staging_and_resolution() {
+        let mut engine = GameEngine::new();
+        let hero_id = 1; // Team 0 hero at (-3, 0)
 
-```bash
-# 1. Install Rust + WASM toolchain
-curl https://sh.rustup.rs -sSf | sh
-cargo install wasm-pack
+        // Valid move to adjacent walkable tile
+        assert!(engine.set_move_order(hero_id, -2, 0));
 
-# 2. Install Node.js + npm
-# (use your preferred method)
+        let events_json = engine.end_turn();
+        assert!(events_json.contains("RoundStarted"));
+        assert!(events_json.contains("UnitMoved"));
+        assert!(events_json.contains("RoundEnded"));
 
-# 3. Clone / create project structure
-mkdir hexabellum && cd hexabellum
-# ... create files as specified above ...
+        let hero = engine.state().get_unit(hero_id).unwrap();
+        assert_eq!(hero.pos, HexCoord::new(-2, 0));
+        assert_eq!(engine.state().round, 1);
+    }
 
-# 4. Build and run
-make dev
+    #[test]
+    fn test_move_order_rejection() {
+        let mut engine = GameEngine::new();
+        // Disallow moving non-adjacent tiles in Phase 0
+        assert!(!engine.set_move_order(1, 0, 0));
+        // Disallow ordering enemy units
+        assert!(!engine.set_move_order(2, 2, 0));
+    }
+}
 ```
 
-Open `http://localhost:5173` and you should see the hex grid with two heroes.
+---
+
+## Verification & Acceptance Criteria
+
+| # | Acceptance Criterion | Test Verification Method | Status |
+|---|---|---|:---:|
+| 1 | `cargo test --workspace` passes cleanly | Automated test suite execution | [x] |
+| 2 | `wasm-pack build --target web` succeeds | Terminal output produces `web/src/wasm/pkg` | [x] |
+| 3 | Vite dev server serves page with zero console errors | Chrome DevTools console clean | [x] |
+| 4 | Pointy-topped hex grid renders seamlessly without seams or distortion | Visual check of canvas borders | [x] |
+| 5 | Three dark obstacles visible in center tiles | Visual check: `(0,0), (1,-1), (-1,1)` | [x] |
+| 6 | Two heroes present: Blue at `(-3, 0)`, Red at `(3, 0)` | Visual token rendering & HP bars | [x] |
+| 7 | Clicking Blue Hero highlights adjacent tiles in green and shows selection ring | Interactive click test | [x] |
+| 8 | Clicking adjacent tile turns target amber and updates HUD with staged target | Interactive click test | [x] |
+| 9 | Clicking "End Turn" moves the hero, clears overlay, and increments round | Engine state & HUD round counter | [x] |
+| 10 | Loop repeats across multiple rounds deterministically | Manual 5-round play session | [x] |
+
+---
+
+## Troubleshooting & Common Pitfalls
+
+### 1. `wasm-pack` Output Directory
+- **Problem**: `wasm-pack` creates artifacts in `crates/wasm/pkg` if `--out-dir` is omitted.
+- **Fix**: Use `--out-dir ../../web/src/wasm/pkg` so Vite can import directly from `web/src/wasm/pkg`.
+
+### 2. Vite MIME Type Error (`application/wasm`)
+- **Problem**: Browser fails with `Failed to load module script: Expected a JavaScript module script but the server responded with a MIME type of "application/wasm"`.
+- **Fix**: In `web/src/game/bridge.ts`, ensure `import init from '../wasm/pkg/hexabellum_wasm'` is used and `await init()` is executed before constructing `new WasmGame()`.
+
+### 3. Hexagon Overlap or Gaps
+- **Problem**: Hexagons appear clipped, diamond-shaped, or rotated.
+- **Cause**: Using flat-top vertex angles ($0^\circ, 60^\circ, 120^\circ$) with pointy-top axial center coordinates ($x = \sqrt{3} q + \frac{\sqrt{3}}{2} r$).
+- **Fix**: Pointy-top hex vertices require rotating by $-30^\circ$: `(Math.PI / 3) * i - Math.PI / 6`.
+
+### 4. High-DPI Display Blurriness
+- **Fix**: Set `resolution: window.devicePixelRatio || 1` and `autoDensity: true` in `app.init(...)`.
+
+---
+
+## What is NOT in Phase 0 (Phase 1+ Scope)
+
+To preserve velocity and avoid scope creep, the following systems are deferred to **Phase 1**:
+
+- ❌ **Pathfinding**: Phase 0 only permits single-hex adjacent steps. (A* arrives in Phase 1).
+- ❌ **Action Point (AP) System**: Unlimited 1 step per turn in Phase 0.
+- ❌ **Initiative Queue**: Direct order processing in Phase 0.
+- ❌ **Combat / Damage / Death**: Heroes cannot attack or take damage yet.
+- ❌ **Enemy AI**: Team 1 hero stands idle as a test dummy.
+- ❌ **Fog of War & Vision**: Full map visibility.
+- ❌ **Networking & WebSockets**: Single-player local WASM execution.
+
+---
+
+## Evolution to Phase 1
+
+Once Phase 0 is verified, Phase 1 expands the slice into a competitive tactical battle:
+
+```
+Phase 0 (Foundation)            Phase 1 (Tactical Combat)
+─────────────────────            ─────────────────────────
+1v1 heroes                  ──►  3v3 hero teams
+Direct 1-hex step           ──►  A* multi-hex pathfinding
+No resource budget          ──►  Action Point (AP) economy
+No combat                   ──►  Attack orders, damage, and death
+Passive opponent            ──►  Authoritative Enemy AI
+Indefinite turns            ──►  Win/Loss condition & round timer
+```

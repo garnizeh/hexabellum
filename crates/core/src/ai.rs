@@ -89,12 +89,11 @@ impl SimpleAI {
             if other.id == unit_id || !other.is_alive() {
                 continue;
             }
-            if let Some(next_order) = orders.get_order(other.id) {
-                if let Some(dest) = next_order.move_target {
-                    if dest != other.pos {
-                        blocked.remove(&other.pos);
-                    }
-                }
+            if let Some(next_order) = orders.get_order(other.id)
+                && let Some(dest) = next_order.move_target
+                && dest != other.pos
+            {
+                blocked.remove(&other.pos);
             }
         }
 
@@ -103,8 +102,10 @@ impl SimpleAI {
             .map
             .reachable_hexes(unit.pos, ap_for_movement, &blocked);
 
-        let mut candidates: Vec<(&HexCoord, u32)> = reachable.iter().map(|(h, c)| (h, *c)).collect();
-        candidates.sort_by_key(|(hex, cost)| (hex.distance(&nearest_enemy.pos), *cost, hex.q, hex.r));
+        let mut candidates: Vec<(&HexCoord, u32)> =
+            reachable.iter().map(|(h, c)| (h, *c)).collect();
+        candidates
+            .sort_by_key(|(hex, cost)| (hex.distance(&nearest_enemy.pos), *cost, hex.q, hex.r));
 
         // Destination must still be free once every planned move this round
         // has completed. A friendly unit that was ordered before this one and
@@ -125,33 +126,31 @@ impl SimpleAI {
                                 .get_order(u.id)
                                 .map(|o| o.move_target != Some(*hex))
                                 .unwrap_or(true)))
-            }) || orders.orders.iter().any(|o| {
-                o.unit_id != unit_id && o.move_target == Some(*hex)
-            })
+            }) || orders
+                .orders
+                .iter()
+                .any(|o| o.unit_id != unit_id && o.move_target == Some(*hex))
         };
 
-        let (move_target, action) = if let Some((best_hex, _)) = candidates
-            .iter()
-            .filter(|(hex, _)| !final_occupancy(hex))
-            .next()
-        {
-            let new_distance = best_hex.distance(&nearest_enemy.pos);
+        let (move_target, action) =
+            if let Some((best_hex, _)) = candidates.iter().find(|(hex, _)| !final_occupancy(hex)) {
+                let new_distance = best_hex.distance(&nearest_enemy.pos);
 
-            if new_distance <= unit.attack_range && ap_for_movement > 0 {
-                // Can attack after moving
-                (
-                    Some(**best_hex),
-                    Action::Attack {
-                        target_id: nearest_enemy.id,
-                    },
-                )
+                if new_distance <= unit.attack_range && ap_for_movement > 0 {
+                    // Can attack after moving
+                    (
+                        Some(**best_hex),
+                        Action::Attack {
+                            target_id: nearest_enemy.id,
+                        },
+                    )
+                } else {
+                    // Just move closer
+                    (Some(**best_hex), Action::Wait)
+                }
             } else {
-                // Just move closer
-                (Some(**best_hex), Action::Wait)
-            }
-        } else {
-            (None, Action::Wait)
-        };
+                (None, Action::Wait)
+            };
 
         UnitOrder {
             unit_id,

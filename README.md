@@ -45,21 +45,21 @@ State synchronization uses a **snapshot + events** model: full state at planning
 
 ## Tech Stack
 
-- **Shared core:** `moba-core` — pure Rust simulation crate, compiles to native (server/tests) and WASM (browser)
-- **WASM bridge:** `moba-wasm` — `wasm-bindgen`, `serde-wasm-bindgen`/`tsify`, `web-sys`
-- **Protocol:** `moba-protocol` — shared client/server message DTOs
+- **Shared core:** `hexabellum-core` — pure Rust simulation crate, compiles to native (server/tests) and WASM (browser)
+- **WASM bridge:** `hexabellum-wasm` — `wasm-bindgen`, `serde-wasm-bindgen`/`tsify`, `web-sys`
+- **Protocol:** `hexabellum-protocol` — shared client/server message DTOs
 - **Server:** Rust — `tokio`, `axum`, `serde`, WebSockets, `tracing`, `thiserror`
-- **Client:** TypeScript + Vite + Svelte/React (HUD) + PixiJS (2D WebGL hex board)
+- **Client:** TypeScript + Vite + PixiJS (2D WebGL hex board) + DOM HUD
 
-### Repository Layout (planned)
+### Repository Layout
 
 ```text
 hexabellum/
   crates/
-    moba-core/        # hex, state, rules, turn, resolution, effects, ai, vision, replay
-    moba-protocol/    # message types & serialization
-    moba-server/      # match rooms, websockets, authoritative execution
-    moba-wasm/        # JS/TS interop, local battle runner
+    core/             # hex, state, rules, turn, resolution, effects, ai, vision, replay
+    protocol/         # message types & serialization (hexabellum-protocol)
+    server/           # match rooms, websockets, authoritative execution (hexabellum-server)
+    wasm/             # JS/TS interop, local battle runner (hexabellum-wasm)
   web/                # Vite + TypeScript + PixiJS client
     src/
       ui/ renderer/ net/ wasm/
@@ -85,20 +85,18 @@ Full architecture details: [`docs/overview.md`](docs/overview.md).
 
 ## Getting Started
 
-> The workspace scaffolding lands with Phase 0. Expected commands once the repo structure exists:
-
 ```bash
-# Build the WASM core
-wasm-pack build crates/moba-wasm --target web
+# Build the WASM package
+make build-wasm
 
 # Run the web client
-cd web && npm install && npm run dev
+make dev
 
 # Run the server (Phase 3+)
-cargo run -p moba-server
+cargo run -p hexabellum-server
 
 # Headless tests / AI-vs-AI simulation
-cargo test -p moba-core
+cargo test -p hexabellum-core
 ```
 
 ## Testing Strategy
