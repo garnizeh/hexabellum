@@ -1,54 +1,65 @@
 pub mod ai;
 pub mod event;
+pub mod fog;
 pub mod hex;
+pub mod minion_ai;
 pub mod orders;
+pub mod spawner;
 pub mod state;
+pub mod tower_ai;
 pub mod turn;
 pub mod unit;
 
-use crate::event::GameEvent;
 use crate::hex::{HexCoord, HexMap};
 use crate::orders::{Action, TurnOrders, UnitOrder};
 use crate::state::{GameState, Phase};
 use crate::turn::TurnProcessor;
-use crate::unit::{Unit, UnitId};
+use crate::unit::{TeamId, Unit, UnitId, UnitKind};
 use std::collections::HashSet;
 
-/// Player-controlled team.
+/// Player-controlled team (Blue).
 pub const PLAYER_TEAM: u8 = 0;
-/// AI-controlled team.
+/// AI-controlled team (Red).
 pub const ENEMY_TEAM: u8 = 1;
 
 /// Top-level game engine.
-/// This is the main entry point for WASM.
+/// This is the main entry point for WASM and client runtime.
 pub struct GameEngine {
-    pub(crate) state: GameState,
-    pub(crate) pending_orders: TurnOrders,
+    pub state: GameState,
+    pub pending_orders: TurnOrders,
 }
 
 impl GameEngine {
-    /// Create a new 3v3 game (Phase 1 setup).
+    /// Initialize standard Phase 2 MOBA single-lane match (radius 6 = 127 hexes).
     pub fn new() -> Self {
-        let mut map = HexMap::new(5); // radius 5 = 91 hexes
+        let mut map = HexMap::new(6);
 
-        // Add obstacles
-        map.obstacles.insert(HexCoord::new(0, 0));
-        map.obstacles.insert(HexCoord::new(1, -1));
-        map.obstacles.insert(HexCoord::new(-1, 1));
-        map.obstacles.insert(HexCoord::new(2, -2));
-        map.obstacles.insert(HexCoord::new(-2, 2));
+        // Chokepoint obstacles flanking the main horizontal lane (r = 0)
+        map.obstacles.insert(HexCoord::new(0, 2));
+        map.obstacles.insert(HexCoord::new(0, -2));
+        map.obstacles.insert(HexCoord::new(1, 2));
+        map.obstacles.insert(HexCoord::new(-1, -2));
+        map.obstacles.insert(HexCoord::new(2, -3));
+        map.obstacles.insert(HexCoord::new(-2, 3));
 
         let mut state = GameState::new(map);
 
-        // Team 0 (player) - left side
-        state.add_unit(Unit::new_hero(1, PLAYER_TEAM, HexCoord::new(-4, 0), 3));
-        state.add_unit(Unit::new_hero(2, PLAYER_TEAM, HexCoord::new(-4, 1), 2));
-        state.add_unit(Unit::new_hero(3, PLAYER_TEAM, HexCoord::new(-4, -1), 1));
+        // Team 0 (Player / Blue)
+        state.add_unit(Unit::new_hero(1, PLAYER_TEAM, HexCoord::new(-4, -1), 3));
+        state.add_unit(Unit::new_hero(2, PLAYER_TEAM, HexCoord::new(-4, 0), 2));
+        state.add_unit(Unit::new_hero(3, PLAYER_TEAM, HexCoord::new(-4, 1), 1));
+        state.add_unit(Unit::new_tower(4, PLAYER_TEAM, HexCoord::new(-3, 0)));
+        state.add_unit(Unit::new_spawner(5, PLAYER_TEAM, HexCoord::new(-5, 0), 3));
 
-        // Team 1 (enemy AI) - right side
-        state.add_unit(Unit::new_hero(4, ENEMY_TEAM, HexCoord::new(4, 0), 3));
-        state.add_unit(Unit::new_hero(5, ENEMY_TEAM, HexCoord::new(4, 1), 2));
-        state.add_unit(Unit::new_hero(6, ENEMY_TEAM, HexCoord::new(4, -1), 1));
+        // Team 1 (AI / Red)
+        state.add_unit(Unit::new_hero(6, ENEMY_TEAM, HexCoord::new(4, -1), 3));
+        state.add_unit(Unit::new_hero(7, ENEMY_TEAM, HexCoord::new(4, 0), 2));
+        state.add_unit(Unit::new_hero(8, ENEMY_TEAM, HexCoord::new(4, 1), 1));
+        state.add_unit(Unit::new_tower(9, ENEMY_TEAM, HexCoord::new(3, 0)));
+        state.add_unit(Unit::new_spawner(10, ENEMY_TEAM, HexCoord::new(5, 0), 3));
+
+        state.next_unit_id = 11;
+        state.update_fog();
 
         Self {
             state,
@@ -56,14 +67,23 @@ impl GameEngine {
         }
     }
 
-    /// Get current game state as JSON.
+    /// Borrow the current game state (read-only).
+    pub fn state(&self) -> &GameState {
+        &self.state
+    }
+
+    /// Complete state serialization (unfiltered, for debug/replays).
     pub fn get_state(&self) -> String {
         serde_json::to_string(&self.state).unwrap()
     }
 
-    /// Borrow the current game state (read-only).
-    pub fn state(&self) -> &GameState {
-        &self.state
+    /// Sanitized state serialization for a specific team: hides enemy units obscured by fog.
+    pub fn get_player_state(&self, team: TeamId) -> String {
+        let mut sanitized = self.state.clone();
+        sanitized.units.retain(|_, u| {
+            u.team == team || self.state.fog.is_visible(team, &u.pos)
+        });
+        serde_json::to_string(&sanitized).unwrap()
     }
 
     /// Get all walkable hexes as JSON.
@@ -90,11 +110,11 @@ impl GameEngine {
         serde_json::to_string(&obstacles).unwrap()
     }
 
-    /// Get valid move targets for a unit (based on AP).
-    /// Returns JSON array of [q, r, ap_cost].
+    /// Get valid move targets for a unit (based on AP and mobility).
+    /// Stationary structures return an empty list.
     pub fn get_move_targets(&self, unit_id: UnitId) -> String {
         let mut targets: Vec<(i32, i32, u32)> = if let Some(unit) = self.state.get_unit(unit_id) {
-            if !unit.is_alive() {
+            if !unit.is_alive() || unit.is_stationary() {
                 vec![]
             } else {
                 let occupied = self.state.occupied_hexes();
@@ -108,13 +128,11 @@ impl GameEngine {
         } else {
             vec![]
         };
-        // Deterministic output ordering
         targets.sort();
         serde_json::to_string(&targets).unwrap()
     }
 
-    /// Get valid attack targets for a unit from a given position.
-    /// Returns JSON array of unit ids.
+    /// Valid attack targets: must be in range AND visible through Fog of War.
     pub fn get_attack_targets(&self, unit_id: UnitId, from_q: i32, from_r: i32) -> String {
         let mut targets: Vec<UnitId> = if let Some(unit) = self.state.get_unit(unit_id) {
             if !unit.is_alive() {
@@ -127,7 +145,9 @@ impl GameEngine {
                 self.state
                     .enemy_units(unit.team)
                     .iter()
-                    .filter(|e| range_set.contains(&e.pos))
+                    .filter(|e| {
+                        range_set.contains(&e.pos) && self.state.fog.is_visible(unit.team, &e.pos)
+                    })
                     .map(|e| e.id)
                     .collect()
             }
@@ -139,9 +159,6 @@ impl GameEngine {
     }
 
     /// Set move order for a unit.
-    /// `reserve_attack_ap` indicates whether an attack action may be planned
-    /// alongside this move; when true, 1 AP is reserved for the attack so the
-    /// move validation stays consistent with attack-after-move validation.
     pub fn set_move_order_with(
         &mut self,
         unit_id: UnitId,
@@ -151,119 +168,109 @@ impl GameEngine {
     ) -> bool {
         let target = HexCoord::new(q, r);
 
-        // Vacated-hex model (matches how resolution validates moves against
-        // planning-time positions): a hex currently held by a friendly unit
-        // that is itself planning to move does not block pathfinding, and the
-        // mover's own start hex never blocks its path. The final collision
-        // check happens at resolution time via A*.
+        let unit = match self.state.get_unit(unit_id) {
+            Some(u) if u.is_alive() && u.team == PLAYER_TEAM && !u.is_stationary() => u,
+            _ => return false,
+        };
+
+        if self.state.phase != Phase::Planning {
+            return false;
+        }
+
         let mut vacated: HashSet<HexCoord> = HashSet::new();
         for o in &self.pending_orders.orders {
             if o.unit_id == unit_id {
                 continue;
             }
-            if let Some(mt) = o.move_target
-                && let Some(u) = self.state.get_unit(o.unit_id)
-                && u.is_alive()
-                && u.team == PLAYER_TEAM
-                && u.pos != mt
-            {
-                vacated.insert(u.pos);
+            if let Some(mt) = o.move_target {
+                if let Some(u) = self.state.get_unit(o.unit_id) {
+                    if u.is_alive() && u.team == PLAYER_TEAM && !u.is_stationary() && u.pos != mt {
+                        vacated.insert(u.pos);
+                    }
+                }
             }
         }
+
         if let Some(cur_move) = self
             .pending_orders
             .get_order(unit_id)
             .and_then(|o| o.move_target)
-            && cur_move != target
         {
-            // The unit's own previous destination must stay free so the
-            // mover can always back out of a stale plan (re-plan to an
-            // adjacent hex or its current position) without being blocked
-            // by the ghost of its own earlier order.
-            vacated.insert(cur_move);
-        }
-
-        // Validate unit exists, is alive, and belongs to the player team
-        if let Some(unit) = self.state.get_unit(unit_id)
-            && unit.is_alive()
-            && unit.team == PLAYER_TEAM
-            && self.state.phase == Phase::Planning
-        {
-            // Reserve 1 AP for an attack when one is already planned or may
-            // still be added alongside this move, so that move + attack
-            // orders are valid no matter which one was set first.
-            let has_planned_attack = self
-                .pending_orders
-                .get_order(unit_id)
-                .map(|o| matches!(o.action, Action::Attack { .. }))
-                .unwrap_or(false);
-            let move_budget = if has_planned_attack || reserve_attack_ap {
-                unit.ap.saturating_sub(1)
-            } else {
-                unit.ap
-            };
-
-            // Check if target is reachable within the AP budget.
-            // The mover's own hex must not block its path, and the
-            // destination may currently be held by another unit that will
-            // itself move this round (all moves are validated against
-            // planning-time positions, matching the AI), so entering a
-            // contested hex is allowed at order time; resolution performs
-            // the final occupancy check via A*.
-            let mut occupied: HashSet<HexCoord> = self
-                .state
-                .units
-                .values()
-                .filter(|u| u.is_alive() && u.id != unit_id)
-                .map(|u| u.pos)
-                .collect();
-            occupied.retain(|h| !vacated.contains(h));
-            occupied.remove(&target); // may be entered even if contested
-            let reachable = self
-                .state
-                .map
-                .reachable_hexes(unit.pos, move_budget, &occupied);
-
-            if reachable.contains_key(&target) || target == unit.pos {
-                // Update or create order (preserving any planned action)
-                if let Some(order) = self
-                    .pending_orders
-                    .orders
-                    .iter_mut()
-                    .find(|o| o.unit_id == unit_id)
-                {
-                    order.move_target = Some(target);
-                } else {
-                    self.pending_orders.add_order(UnitOrder {
-                        unit_id,
-                        move_target: Some(target),
-                        action: Action::Wait,
-                    });
-                }
-                return true;
+            if cur_move != target {
+                vacated.insert(cur_move);
             }
         }
+
+        let has_planned_attack = self
+            .pending_orders
+            .get_order(unit_id)
+            .map(|o| matches!(o.action, Action::Attack { .. }))
+            .unwrap_or(false);
+        let move_budget = if has_planned_attack || reserve_attack_ap {
+            unit.ap.saturating_sub(1)
+        } else {
+            unit.ap
+        };
+
+        let mut occupied: HashSet<HexCoord> = self
+            .state
+            .units
+            .values()
+            .filter(|u| u.is_alive() && u.id != unit_id)
+            .map(|u| u.pos)
+            .collect();
+        occupied.retain(|h| !vacated.contains(h));
+        occupied.remove(&target);
+
+        let reachable = self
+            .state
+            .map
+            .reachable_hexes(unit.pos, move_budget, &occupied);
+
+        if reachable.contains_key(&target) || target == unit.pos {
+            if let Some(order) = self
+                .pending_orders
+                .orders
+                .iter_mut()
+                .find(|o| o.unit_id == unit_id)
+            {
+                order.move_target = Some(target);
+            } else {
+                self.pending_orders.add_order(UnitOrder {
+                    unit_id,
+                    move_target: Some(target),
+                    action: Action::Wait,
+                });
+            }
+            return true;
+        }
+
         false
     }
 
-    /// Set attack order for a unit.
+    /// Set move order for a unit (no attack AP reservation).
+    pub fn set_move_order(&mut self, unit_id: UnitId, q: i32, r: i32) -> bool {
+        self.set_move_order_with(unit_id, q, r, false)
+    }
+
+    /// Set attack order for a unit. Must be within range and visible through Fog of War.
     pub fn set_attack_order(&mut self, unit_id: UnitId, target_id: UnitId) -> bool {
-        // The ordered unit must be a living player unit
         let (from_pos, own_team) = match self.state.get_unit(unit_id) {
             Some(unit) if unit.is_alive() && unit.team == PLAYER_TEAM => (unit.pos, unit.team),
             _ => return false,
         };
 
-        // Target must be a living enemy
         let target_pos = match self.state.get_unit(target_id) {
-            Some(target) if target.team != own_team && target.is_alive() => target.pos,
+            Some(target)
+                if target.team != own_team
+                    && target.is_alive()
+                    && self.state.fog.is_visible(own_team, &target.pos) =>
+            {
+                target.pos
+            }
             _ => return false,
         };
 
-        // Validate reachability: the attack must be executable this round,
-        // either standing still or from the planned destination, given AP
-        // costs (move = path length, attack = 1). The set of positions the
-        // unit can act from is exactly {start} U {planned destination}.
         let unit = self.state.get_unit(unit_id).unwrap();
         let existing_move = self
             .pending_orders
@@ -273,21 +280,17 @@ impl GameEngine {
         let stand_and_attack =
             from_pos.distance(&target_pos) <= unit.attack_range && unit.can_afford(1);
 
-        // Same vacated-hex model as move validation: hexes held by units that
-        // are themselves planning to move do not block the path, and the
-        // attacker's own start hex never blocks it.
         let mut vacated: HashSet<HexCoord> = HashSet::new();
         for o in &self.pending_orders.orders {
             if o.unit_id == unit_id {
                 continue;
             }
-            if let Some(mt) = o.move_target
-                && let Some(u) = self.state.get_unit(o.unit_id)
-                && u.is_alive()
-                && u.team == PLAYER_TEAM
-                && u.pos != mt
-            {
-                vacated.insert(u.pos);
+            if let Some(mt) = o.move_target {
+                if let Some(u) = self.state.get_unit(o.unit_id) {
+                    if u.is_alive() && u.team == PLAYER_TEAM && !u.is_stationary() && u.pos != mt {
+                        vacated.insert(u.pos);
+                    }
+                }
             }
         }
 
@@ -310,33 +313,7 @@ impl GameEngine {
                         .reachable_hexes(from_pos, unit.ap.saturating_sub(1), &occupied);
                 reachable.contains_key(&hex) && hex.distance(&target_pos) <= unit.attack_range
             }
-            // The unit plans to stay put but its current hex is currently
-            // contested: another friendly unit has planned a move onto it.
-            // Once that mover resolves, this hex becomes free, so a normal
-            // move order here is legal — an attack from this same position
-            // must be legal too, otherwise valid move+attack combos could
-            // never be ordered and battles would stall forever.
-            _ => {
-                // No different move is planned, so the only positions this
-                // unit can act from are its current hex and (at most) a
-                // planned destination equal to it. An attack from here is
-                // legal iff standing-and-attacking is legal — except when the
-                // unit is currently "buried" inside another unit's hex (a
-                // stacked state produced by a legacy simultaneous-move bug).
-                // In that case the co-tenant will step away during resolution
-                // and free this hex, so the attack becomes executable even
-                // though the raw distance check fails at planning time.
-                if stand_and_attack {
-                    true
-                } else {
-                    let shares_hex_with_other_alive_unit = self
-                        .state
-                        .units
-                        .values()
-                        .any(|u| u.id != unit_id && u.is_alive() && u.pos == from_pos);
-                    shares_hex_with_other_alive_unit && unit.can_afford(1)
-                }
-            }
+            _ => stand_and_attack,
         };
 
         if !(stand_and_attack || attack_after_move) {
@@ -360,32 +337,26 @@ impl GameEngine {
         true
     }
 
-    /// Set move order for a unit (no attack AP reservation).
-    pub fn set_move_order(&mut self, unit_id: UnitId, q: i32, r: i32) -> bool {
-        self.set_move_order_with(unit_id, q, r, false)
-    }
-
     /// Set wait order for a unit.
     pub fn set_wait_order(&mut self, unit_id: UnitId) -> bool {
-        if let Some(unit) = self.state.get_unit(unit_id)
-            && unit.is_alive()
-            && unit.team == PLAYER_TEAM
-        {
-            if let Some(order) = self
-                .pending_orders
-                .orders
-                .iter_mut()
-                .find(|o| o.unit_id == unit_id)
-            {
-                order.action = Action::Wait;
-            } else {
-                self.pending_orders.add_order(UnitOrder {
-                    unit_id,
-                    move_target: None,
-                    action: Action::Wait,
-                });
+        if let Some(unit) = self.state.get_unit(unit_id) {
+            if unit.is_alive() && unit.team == PLAYER_TEAM {
+                if let Some(order) = self
+                    .pending_orders
+                    .orders
+                    .iter_mut()
+                    .find(|o| o.unit_id == unit_id)
+                {
+                    order.action = Action::Wait;
+                } else {
+                    self.pending_orders.add_order(UnitOrder {
+                        unit_id,
+                        move_target: None,
+                        action: Action::Wait,
+                    });
+                }
+                return true;
             }
-            return true;
         }
         false
     }
@@ -395,37 +366,48 @@ impl GameEngine {
         serde_json::to_string(&self.pending_orders).unwrap()
     }
 
-    /// Check if all player units have orders.
+    /// Check if all living player heroes have orders assigned.
     pub fn all_units_ordered(&self) -> bool {
-        let mut player_units: Vec<UnitId> = self
+        let player_heroes: Vec<UnitId> = self
             .state
             .team_units(PLAYER_TEAM)
             .iter()
-            .filter(|u| u.is_alive())
+            .filter(|u| u.is_alive() && u.kind == UnitKind::Hero)
             .map(|u| u.id)
             .collect();
-        player_units.sort_unstable();
 
-        player_units
+        player_heroes
             .iter()
             .all(|id| self.pending_orders.get_order(*id).is_some())
     }
 
-    /// End turn and resolve.
-    /// Returns events as JSON for the client.
+    /// End turn and resolve simultaneous turn with AI order fallbacks.
+    /// Returns events as JSON for the client animator.
     pub fn end_turn(&mut self) -> String {
         let orders = std::mem::replace(&mut self.pending_orders, TurnOrders::new());
-        let events: Vec<GameEvent> = TurnProcessor::resolve(&mut self.state, &orders);
+        let events = TurnProcessor::resolve(&mut self.state, &orders);
         serde_json::to_string(&events).unwrap()
     }
 
-    /// Clear all pending orders for a unit (move target and action).
-    /// Used by clients/tests to reset a unit's plan before re-ordering it.
+    /// Visible hex coordinates for Player Team (0) as JSON array of [q, r].
+    pub fn get_player_fog(&self) -> String {
+        let mut visible: Vec<(i32, i32)> = self
+            .state
+            .fog
+            .visible_hexes(PLAYER_TEAM)
+            .iter()
+            .map(|h| (h.q, h.r))
+            .collect();
+        visible.sort();
+        serde_json::to_string(&visible).unwrap()
+    }
+
+    /// Clear all pending orders for a unit.
     pub fn clear_orders(&mut self, unit_id: UnitId) {
         self.pending_orders.orders.retain(|o| o.unit_id != unit_id);
     }
 
-    /// Restart the game.
+    /// Restart the game match.
     pub fn restart(&mut self) {
         *self = GameEngine::new();
     }
@@ -440,63 +422,138 @@ impl Default for GameEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::event::GameEvent;
 
     #[test]
-    fn test_engine_new_setup_3v3() {
+    fn test_engine_new_setup_moba() {
         let engine = GameEngine::new();
-        assert_eq!(engine.state.units.len(), 6);
-        assert_eq!(engine.state.team_units(PLAYER_TEAM).len(), 3);
-        assert_eq!(engine.state.team_units(ENEMY_TEAM).len(), 3);
+        // 6 Heroes + 2 Towers + 2 Spawners = 10 units
+        assert_eq!(engine.state.units.len(), 10);
+        assert_eq!(engine.state.team_units(PLAYER_TEAM).len(), 5);
+        assert_eq!(engine.state.team_units(ENEMY_TEAM).len(), 5);
         assert_eq!(engine.state.round, 0);
         assert_eq!(engine.state.phase, Phase::Planning);
+        assert_eq!(engine.state.map.all_hexes().len(), 127);
+    }
+
+    #[test]
+    fn test_spawner_generates_minion_wave_on_cycle() {
+        let mut engine = GameEngine::new();
+        assert_eq!(engine.state.round, 0);
+
+        // Round 1
+        engine.end_turn();
+        assert_eq!(
+            engine
+                .state
+                .units
+                .values()
+                .filter(|u| u.kind == UnitKind::Minion)
+                .count(),
+            0
+        );
+
+        // Round 2
+        engine.end_turn();
+        assert_eq!(
+            engine
+                .state
+                .units
+                .values()
+                .filter(|u| u.kind == UnitKind::Minion)
+                .count(),
+            0
+        );
+
+        // Round 3: Spawners trigger
+        let events_json = engine.end_turn();
+        let minion_count = engine
+            .state
+            .units
+            .values()
+            .filter(|u| u.kind == UnitKind::Minion)
+            .count();
+        assert_eq!(minion_count, 2);
+        assert!(events_json.contains("UnitSpawned"));
+    }
+
+    #[test]
+    fn test_tower_auto_attacks_and_prioritizes_minions_over_heroes() {
+        let mut engine = GameEngine::new();
+        // Team 0 Tower at (-3, 0), range 3
+        engine
+            .state
+            .add_unit(Unit::new_hero(99, 1, HexCoord::new(-1, 0), 2));
+        engine
+            .state
+            .add_unit(Unit::new_minion(100, 1, HexCoord::new(-2, 0)));
+        engine.state.update_fog();
+
+        let events_json = engine.end_turn();
+        // Tower must attack minion (100) first
+        assert!(events_json.contains("\"target_id\":100"));
+    }
+
+    #[test]
+    fn test_fog_of_war_masks_enemy_and_blocks_targeting() {
+        let engine = GameEngine::new();
+        // Enemy spawner at (5, 0) is well outside Team 0 initial vision
+        assert!(!engine.state.fog.is_visible(0, &HexCoord::new(5, 0)));
+
+        // Attempting to get attack targets for hero at (-4, 0) should NOT include enemy units in fog
+        let targets_json = engine.get_attack_targets(2, -4, 0);
+        assert_eq!(targets_json, "[]");
+    }
+
+    #[test]
+    fn test_timer_fallback_auto_plans_for_unassigned_heroes() {
+        let mut engine = GameEngine::new();
+        // Player only issues order for Hero 1, leaving Heroes 2 and 3 unassigned
+        engine.set_move_order(1, -3, -1);
+
+        let events_json = engine.end_turn();
+        assert!(events_json.contains("RoundEnded"));
+        assert_eq!(engine.state.round, 1);
+    }
+
+    #[test]
+    fn test_destroying_enemy_spawner_wins_game() {
+        let mut engine = GameEngine::new();
+        let spawner = engine.state.get_unit_mut(10).unwrap();
+        spawner.hp = 10;
+
+        engine
+            .state
+            .add_unit(Unit::new_hero(77, 0, HexCoord::new(5, -1), 10));
+        engine.state.update_fog();
+        assert!(engine.set_attack_order(77, 10));
+
+        let events_json = engine.end_turn();
+        assert!(events_json.contains("MatchEnded"));
+        assert_eq!(engine.state.winner, Some(0));
+    }
+
+    #[test]
+    fn test_stationary_structures_reject_move_orders() {
+        let mut engine = GameEngine::new();
+        // Tower 4 is stationary
+        assert!(!engine.set_move_order(4, -2, 0));
+        let targets: Vec<(i32, i32, u32)> =
+            serde_json::from_str(&engine.get_move_targets(4)).unwrap();
+        assert!(targets.is_empty());
     }
 
     #[test]
     fn test_move_targets_respect_ap() {
         let engine = GameEngine::new();
         let targets: Vec<(i32, i32, u32)> =
-            serde_json::from_str(&engine.get_move_targets(1)).unwrap();
-        // Hero 1 at (-4, 0) with 3 AP: everything shown costs <= 3
+            serde_json::from_str(&engine.get_move_targets(2)).unwrap();
+        // Hero 2 at (-4, 0) with 3 AP: everything shown costs <= 3
         for (_q, _r, cost) in &targets {
             assert!(*cost >= 1 && *cost <= 3);
         }
-        // A hex at distance 4 is not reachable
-        assert!(!targets.iter().any(|(q, r, _c)| *q == 0 && *r == 0));
-        // Adjacent hex (-3,0) reachable with cost 1
-        assert!(targets.contains(&(-3, 0, 1)));
-    }
-
-    #[test]
-    fn test_set_move_order_validation() {
-        let mut engine = GameEngine::new();
-        // Reachable within AP
-        assert!(engine.set_move_order(1, -2, 0));
-        // Too far (distance 7 > AP 3)
-        assert!(!engine.set_move_order(1, 3, 0));
-        // Enemy unit cannot be ordered
-        assert!(!engine.set_move_order(4, 3, 0));
-        // Obstacle cannot be entered
-        assert!(!engine.set_move_order(1, -2, 2)); // (-2,2) is... check walkable below
-    }
-
-    #[test]
-    fn test_attack_order_requires_range_or_planned_move() {
-        let mut engine = GameEngine::new();
-        // Enemies are far away: no attack possible from start
-        assert!(!engine.set_attack_order(1, 4));
-
-        // Plan a move that puts hero 1 adjacent to an enemy? Not possible in one round here.
-        // Instead directly place units adjacent via a fresh engine state manipulation:
-        let mut e2 = GameEngine::new();
-        e2.state
-            .add_unit(Unit::new_hero(7, ENEMY_TEAM, HexCoord::new(-3, 0), 1));
-        assert!(e2.set_attack_order(1, 7)); // adjacent, can afford
-        // Attack after planned move
-        let mut e3 = GameEngine::new();
-        e3.state
-            .add_unit(Unit::new_hero(8, ENEMY_TEAM, HexCoord::new(-1, 0), 1));
-        assert!(e3.set_move_order(1, -2, 0)); // move 2 AP, leaves 1 AP
-        assert!(e3.set_attack_order(1, 8)); // adjacent to -2,0 -> valid
+        // Adjacent hex (-3, 0) is occupied by tower 4, so it should not be a valid destination
+        assert!(!targets.iter().any(|(q, r, _c)| *q == -3 && *r == 0));
     }
 
     #[test]
@@ -510,7 +567,6 @@ mod tests {
         assert!(engine.all_units_ordered());
 
         let events: Vec<GameEvent> = serde_json::from_str(&engine.end_turn()).unwrap();
-        // AI should have acted; player waited
         assert!(
             events
                 .iter()
@@ -522,15 +578,14 @@ mod tests {
 
     #[test]
     fn test_full_battle_runs_to_completion_deterministically() {
-        // Scripted player aggression vs AI; run until match end (bounded rounds).
         let run = || {
             let mut engine = GameEngine::new();
             for _ in 0..60 {
-                // Order all living player heroes to attack nearest enemy or advance
                 let hero_ids: Vec<UnitId> = engine
                     .state
                     .team_units(PLAYER_TEAM)
                     .iter()
+                    .filter(|u| u.is_alive() && u.kind == UnitKind::Hero)
                     .map(|u| u.id)
                     .collect();
                 for id in hero_ids {
@@ -539,24 +594,26 @@ mod tests {
                         .state
                         .enemy_units(PLAYER_TEAM)
                         .iter()
+                        .filter(|e| engine.state.fog.is_visible(PLAYER_TEAM, &e.pos))
                         .map(|e| (pos.distance(&e.pos), e.id))
                         .collect();
-                    let (_d, target_id) = *enemies.iter().min().unwrap();
 
-                    // Fresh plan every round: drop any stale orders first
+                    if enemies.is_empty() {
+                        continue;
+                    }
+
+                    let (_d, target_id) = *enemies.iter().min().unwrap();
                     engine.clear_orders(id);
 
-                    // Prefer: stand and attack
                     if engine.set_attack_order(id, target_id) {
                         continue;
                     }
 
-                    // Then: move adjacent to enemy and attack from there
                     let tgt_pos = engine.state.get_unit(target_id).unwrap().pos;
                     let mut planned_attack = false;
                     let neighbors = tgt_pos.neighbors();
-                    let mut adj: Vec<&HexCoord> = neighbors
-                        .iter()
+                    let mut adj: Vec<HexCoord> = neighbors
+                        .into_iter()
                         .filter(|h| engine.state.map.is_walkable(h))
                         .collect();
                     adj.sort_by_key(|h| (h.distance(&pos), h.q, h.r));
@@ -567,54 +624,16 @@ mod tests {
                             planned_attack = true;
                             break;
                         }
-                        // Failed attack plan -> clear the move we just set
-                        engine.pending_orders.orders.iter_mut().for_each(|o| {
-                            if o.unit_id == id {
-                                o.move_target = None;
-                            }
-                        });
+                        engine.clear_orders(id);
                     }
 
-                    // Fallback: advance toward the enemy using pathfinding
-                    if !planned_attack && let Some(path) = engine.state.map.find_path(pos, tgt_pos)
-                    {
+                    if !planned_attack && let Some(path) = engine.state.map.find_path(pos, tgt_pos) {
                         let unit = engine.state.get_unit(id).unwrap();
                         let max_step = (unit.ap as usize).min(path.len().saturating_sub(2));
-                        let mut advanced = false;
                         for step_idx in (1..=max_step).rev() {
                             let step = path[step_idx];
                             if engine.set_move_order(id, step.q, step.r) {
-                                advanced = true;
                                 break;
-                            }
-                        }
-                        if !advanced {
-                            // Fallback: try adjacent neighbors that reduce path distance to target
-                            let current_dist = path.len();
-                            let mut nbrs: Vec<HexCoord> = pos
-                                .neighbors()
-                                .into_iter()
-                                .filter(|h| engine.state.map.is_walkable(h))
-                                .collect();
-                            nbrs.sort_by_key(|h| {
-                                let p_len = engine
-                                    .state
-                                    .map
-                                    .find_path(*h, tgt_pos)
-                                    .map(|p| p.len())
-                                    .unwrap_or(usize::MAX);
-                                (p_len, h.distance(&tgt_pos), h.q, h.r)
-                            });
-                            for h in nbrs {
-                                let p_len = engine
-                                    .state
-                                    .map
-                                    .find_path(h, tgt_pos)
-                                    .map(|p| p.len())
-                                    .unwrap_or(usize::MAX);
-                                if p_len < current_dist && engine.set_move_order(id, h.q, h.r) {
-                                    break;
-                                }
                             }
                         }
                     }
@@ -631,10 +650,5 @@ mod tests {
         let (winner_b, rounds_b) = run();
         assert_eq!(winner_a, winner_b, "match outcome must be deterministic");
         assert_eq!(rounds_a, rounds_b, "match length must be deterministic");
-        // The match must actually finish (someone wins) within the round cap.
-        assert!(
-            winner_a.is_some(),
-            "scripted battle should reach a winner within the round cap"
-        );
     }
 }

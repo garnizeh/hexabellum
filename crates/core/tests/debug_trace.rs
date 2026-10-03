@@ -89,7 +89,7 @@ fn trace() {
                     "  ATK {}->{} dmg={} hp={}",
                     attacker_id, target_id, damage, target_hp_remaining
                 ),
-                GameEvent::UnitDied { unit_id, killed_by } => {
+                GameEvent::UnitDied { unit_id, killed_by, .. } => {
                     println!("  DIE {} by {}", unit_id, killed_by)
                 }
                 _ => {}

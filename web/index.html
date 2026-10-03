@@ -3,26 +3,27 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hexabellum — Phase 1 Tactical Slice</title>
+  <title>Hexabellum — Tactical Hex MOBA</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0a0e17;
-      --panel-bg: rgba(16, 24, 39, 0.85);
+      --bg: #090b14;
+      --panel-bg: rgba(13, 17, 30, 0.88);
       --panel-border: rgba(0, 210, 255, 0.25);
       --primary: #00d2ff;
       --accent: #00e676;
-      --danger: #ff3366;
-      --text: #e2e8f0;
+      --warning: #ffea00;
+      --danger: #ff1744;
+      --text: #f1f5f9;
       --muted: #94a3b8;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: 'Outfit', sans-serif;
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       overflow: hidden;
       width: 100vw;
       height: 100vh;
@@ -32,92 +33,114 @@
       width: 100vw;
       height: 100vh;
     }
-    /* Top Left Status HUD */
+
+    /* Top MOBA HUD */
     #hud {
       position: fixed;
-      top: 20px;
-      left: 20px;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .panel {
+      top: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
       background: var(--panel-bg);
-      backdrop-filter: blur(12px);
+      backdrop-filter: blur(14px);
       border: 1px solid var(--panel-border);
-      border-radius: 12px;
-      padding: 16px 20px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      border-radius: 14px;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      box-shadow: 0 10px 35px rgba(0, 0, 0, 0.65), 0 0 15px rgba(0, 210, 255, 0.12);
     }
-    #round-counter {
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
+    .hud-stat {
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.6px;
       color: var(--primary);
       text-transform: uppercase;
     }
-    #status-message {
-      font-size: 14px;
-      color: var(--muted);
-      max-width: 320px;
-      line-height: 1.4;
-      margin-top: 4px;
+    #timer {
+      font-size: 24px;
+      font-weight: 900;
+      font-family: 'JetBrains Mono', monospace;
+      font-variant-numeric: tabular-nums;
+      color: var(--primary);
+      min-width: 60px;
+      text-align: center;
+      transition: color 0.3s ease, text-shadow 0.3s ease;
     }
-    .hud-controls {
-      display: flex;
-      gap: 10px;
-      margin-top: 8px;
+    #status-msg {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: #94a3b8;
+      max-width: 380px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
+
     .btn {
-      padding: 10px 20px;
+      padding: 9px 20px;
       font-family: 'Outfit', sans-serif;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 800;
+      letter-spacing: 0.5px;
       border-radius: 8px;
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       outline: none;
+      border: none;
     }
-    .btn-primary {
-      background: rgba(0, 210, 255, 0.15);
-      border: 1.5px solid var(--primary);
-      color: var(--primary);
+    #end-turn-btn {
+      background: linear-gradient(135deg, #00d2ff, #0088cc);
+      color: #050b14;
+      box-shadow: 0 4px 14px rgba(0, 210, 255, 0.35);
     }
-    .btn-primary:hover {
-      background: var(--primary);
-      color: var(--bg);
+    #end-turn-btn:hover:not(:disabled) {
+      background: linear-gradient(135deg, #38dcfc, #00a2f5);
+      transform: translateY(-1.5px);
+      box-shadow: 0 6px 18px rgba(0, 210, 255, 0.5);
     }
-    .btn-primary.ready {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #000;
-      animation: pulse 1.5s infinite;
+    #end-turn-btn:disabled {
+      background: #252e3d;
+      color: #64748b;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
     }
-    .btn-secondary {
-      background: rgba(148, 163, 184, 0.1);
-      border: 1px solid var(--muted);
-      color: var(--muted);
+    #restart-btn {
+      background: linear-gradient(135deg, #00e676, #00b359);
+      color: #050b14;
+      display: none;
+      box-shadow: 0 4px 14px rgba(0, 230, 118, 0.35);
     }
-    .btn-secondary:hover {
-      background: var(--muted);
-      color: var(--bg);
+    #restart-btn:hover {
+      background: linear-gradient(135deg, #33eb91, #00cc66);
+      transform: translateY(-1.5px);
     }
-    /* Right Unit Inspector */
+
+    /* Right Unit Inspector Panel */
     #unit-inspector {
       position: fixed;
-      top: 20px;
-      right: 20px;
-      z-index: 10;
+      top: 18px;
+      right: 18px;
+      z-index: 15;
       min-width: 220px;
       display: none;
+      background: var(--panel-bg);
+      backdrop-filter: blur(14px);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 16px 18px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
     }
     #unit-inspector h3 {
-      font-size: 16px;
+      font-size: 15px;
+      font-weight: 800;
       color: var(--primary);
       margin-bottom: 12px;
-      border-bottom: 1px solid var(--panel-border);
+      border-bottom: 1px solid rgba(0, 210, 255, 0.2);
       padding-bottom: 6px;
+      letter-spacing: 0.5px;
     }
     .stat-row {
       display: flex;
@@ -127,58 +150,78 @@
       font-family: 'JetBrains Mono', monospace;
     }
     .stat-label { color: var(--muted); }
-    .stat-val { font-weight: 600; }
-    /* Bottom Guide */
-    #guide {
+    .stat-val { font-weight: 700; color: #fff; }
+
+    /* Bottom Left Tactical Guide / Legend */
+    #legend {
       position: fixed;
-      bottom: 20px;
-      left: 20px;
-      z-index: 10;
+      bottom: 18px;
+      left: 18px;
+      z-index: 15;
+      background: var(--panel-bg);
+      backdrop-filter: blur(14px);
+      border: 1px solid rgba(0, 210, 255, 0.2);
+      border-radius: 10px;
+      padding: 12px 18px;
       font-size: 12px;
-      color: var(--muted);
-      background: rgba(10, 14, 23, 0.7);
-      padding: 10px 16px;
-      border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.05);
+      line-height: 1.7;
+      color: #cbd5e1;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
     }
-    /* Victory / Defeat Modal */
+    #legend strong { color: var(--primary); }
+
+    /* Game Over Modal */
     #game-over-modal {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.8);
-      backdrop-filter: blur(10px);
+      background: rgba(4, 7, 15, 0.88);
+      backdrop-filter: blur(16px);
       z-index: 100;
       display: none;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 20px;
+      gap: 24px;
     }
     #game-over-title {
-      font-size: 54px;
-      font-weight: 700;
-      letter-spacing: 2px;
+      font-size: 64px;
+      font-weight: 900;
+      letter-spacing: 3px;
+      text-transform: uppercase;
     }
-    #game-over-title.victory { color: var(--accent); text-shadow: 0 0 30px rgba(0, 230, 118, 0.4); }
-    #game-over-title.defeat { color: var(--danger); text-shadow: 0 0 30px rgba(255, 51, 102, 0.4); }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(0, 230, 118, 0.6); }
-      70% { box-shadow: 0 0 0 10px rgba(0, 230, 118, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(0, 230, 118, 0); }
+    #game-over-title.victory {
+      color: var(--accent);
+      text-shadow: 0 0 35px rgba(0, 230, 118, 0.55);
+    }
+    #game-over-title.defeat {
+      color: var(--danger);
+      text-shadow: 0 0 35px rgba(255, 23, 68, 0.55);
+    }
+    #btn-restart-modal {
+      background: linear-gradient(135deg, #00d2ff, #0088cc);
+      color: #050b14;
+      padding: 14px 38px;
+      font-size: 18px;
+      font-weight: 900;
+      border-radius: 10px;
+      box-shadow: 0 6px 25px rgba(0, 210, 255, 0.4);
+    }
+    #btn-restart-modal:hover {
+      background: linear-gradient(135deg, #38dcfc, #00a2f5);
+      transform: translateY(-2px);
     }
   </style>
 </head>
 <body>
-  <div id="hud" class="panel">
-    <div id="round-counter">Round 0</div>
-    <div id="status-message">Select a blue hero to issue orders.</div>
-    <div class="hud-controls">
-      <button id="end-turn" class="btn btn-primary">End Turn</button>
-      <button id="btn-quick-reset" class="btn btn-secondary">Restart</button>
-    </div>
+  <div id="hud">
+    <div id="round-val" class="hud-stat">Round 0</div>
+    <div id="timer">0:30</div>
+    <div id="status-msg">Initializing battle...</div>
+    <button id="end-turn-btn" class="btn">End Turn</button>
+    <button id="restart-btn" class="btn">Restart Match</button>
   </div>
 
-  <div id="unit-inspector" class="panel">
+  <div id="unit-inspector">
     <h3 id="insp-name">Hero Info</h3>
     <div class="stat-row"><span class="stat-label">Team:</span><span class="stat-val" id="insp-team">-</span></div>
     <div class="stat-row"><span class="stat-label">Health:</span><span class="stat-val" id="insp-hp">-</span></div>
@@ -188,16 +231,19 @@
     <div class="stat-row"><span class="stat-label">Range:</span><span class="stat-val" id="insp-range">-</span></div>
   </div>
 
-  <div id="guide">
-    <strong>Controls:</strong> Click Blue Hero → Click Green Hex to Move (or self to stay) → Click Red Crosshair to Attack (or click ground to Wait) → Click End Turn.
+  <div id="legend">
+    <strong>Tactical Map Guide:</strong><br>
+    🔵 <strong>Blue Circles</strong>: Team 0 Heroes &nbsp;|&nbsp; 🔴 <strong>Red Circles</strong>: Team 1 Heroes<br>
+    🔺 <strong>Triangles</strong>: Minions (Push Lane) &nbsp;|&nbsp; 🏰 <strong>Squares</strong>: Defensive Towers (Auto-Fire)<br>
+    ⭐ <strong>Crystals</strong>: Spawner Towers (Base) &nbsp;|&nbsp; 🌫️ <strong>Dark Shroud</strong>: Fog of War
   </div>
 
   <div id="game-over-modal">
-    <h1 id="game-over-title">VICTORY</h1>
-    <button id="btn-restart-modal" class="btn btn-primary" style="padding: 14px 32px; font-size: 18px;">Play Again</button>
+    <h1 id="game-over-title" class="victory">VICTORY</h1>
+    <button id="btn-restart-modal" class="btn">Play Again</button>
   </div>
 
   <canvas id="game-canvas"></canvas>
-  <script type="module" src="/src/main.ts"></script>
+  <script type="module" src="./src/main.ts"></script>
 </body>
 </html>

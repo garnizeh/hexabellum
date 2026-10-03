@@ -1,3 +1,4 @@
+use crate::fog::FogState;
 use crate::hex::{HexCoord, HexMap};
 use crate::unit::{TeamId, Unit, UnitId, UnitKind};
 use serde::{Deserialize, Serialize};
@@ -16,8 +17,10 @@ pub struct GameState {
     pub phase: Phase,
     pub map: HexMap,
     pub units: HashMap<UnitId, Unit>,
+    pub fog: FogState,
     pub winner: Option<TeamId>,
     pub next_unit_id: UnitId,
+    pub spawners_initialized: bool,
 }
 
 impl GameState {
@@ -27,21 +30,27 @@ impl GameState {
             phase: Phase::Planning,
             map,
             units: HashMap::new(),
+            fog: FogState::new(2),
             winner: None,
             next_unit_id: 1,
+            spawners_initialized: false,
         }
     }
 
     pub fn add_unit(&mut self, unit: Unit) {
-        // Keep next_unit_id ahead of any inserted id
+        if unit.kind == UnitKind::SpawnerTower {
+            self.spawners_initialized = true;
+        }
         self.next_unit_id = self.next_unit_id.max(unit.id + 1);
         self.units.insert(unit.id, unit);
     }
 
+    #[inline]
     pub fn get_unit(&self, id: UnitId) -> Option<&Unit> {
         self.units.get(&id)
     }
 
+    #[inline]
     pub fn get_unit_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
         self.units.get_mut(&id)
     }
@@ -57,7 +66,6 @@ impl GameState {
         self.get_unit_at(coord).is_some()
     }
 
-    /// Get all occupied hexes (for pathfinding).
     pub fn occupied_hexes(&self) -> HashSet<HexCoord> {
         self.units
             .values()
@@ -66,56 +74,87 @@ impl GameState {
             .collect()
     }
 
-    /// Get all alive units.
     pub fn alive_units(&self) -> Vec<&Unit> {
-        self.units.values().filter(|u| u.is_alive()).collect()
+        let mut list: Vec<&Unit> = self.units.values().filter(|u| u.is_alive()).collect();
+        list.sort_by_key(|u| u.id);
+        list
     }
 
-    /// Get all alive units for a team.
     pub fn team_units(&self, team: TeamId) -> Vec<&Unit> {
-        self.units
+        let mut list: Vec<&Unit> = self
+            .units
             .values()
             .filter(|u| u.team == team && u.is_alive())
-            .collect()
+            .collect();
+        list.sort_by_key(|u| u.id);
+        list
     }
 
-    /// Get all alive enemy units for a given team.
     pub fn enemy_units(&self, team: TeamId) -> Vec<&Unit> {
-        self.units
+        let mut list: Vec<&Unit> = self
+            .units
             .values()
             .filter(|u| u.team != team && u.is_alive())
+            .collect();
+        list.sort_by_key(|u| u.id);
+        list
+    }
+
+    pub fn visible_enemy_units(&self, team: TeamId) -> Vec<&Unit> {
+        self.enemy_units(team)
+            .into_iter()
+            .filter(|u| self.fog.is_visible(team, &u.pos))
             .collect()
     }
 
-    /// Check if a team has any alive heroes.
     pub fn team_has_heroes(&self, team: TeamId) -> bool {
-        self.units
-            .values()
-            .any(|u| u.team == team && u.is_alive() && u.kind == UnitKind::Hero)
+        self.units.values().any(|u| {
+            u.team == team && u.is_alive() && u.kind == UnitKind::Hero
+        })
     }
 
-    /// Check win condition.
-    pub fn check_winner(&self) -> Option<TeamId> {
-        let team0_alive = self.team_has_heroes(0);
-        let team1_alive = self.team_has_heroes(1);
+    pub fn team_has_spawner(&self, team: TeamId) -> bool {
+        self.units.values().any(|u| {
+            u.team == team && u.is_alive() && u.kind == UnitKind::SpawnerTower
+        })
+    }
 
-        if !team0_alive && !team1_alive {
-            None // Draw - shouldn't happen in normal play
-        } else if !team0_alive {
-            Some(1) // Team 1 wins
-        } else if !team1_alive {
-            Some(0) // Team 0 wins
+    /// MOBA Dual Victory Check: All heroes dead OR Spawner Tower destroyed.
+    pub fn check_winner(&self) -> Option<TeamId> {
+        let team0_heroes = self.team_has_heroes(0);
+        let team1_heroes = self.team_has_heroes(1);
+        let team0_spawner = self.team_has_spawner(0);
+        let team1_spawner = self.team_has_spawner(1);
+
+        let team0_lost = !team0_heroes || (self.spawners_initialized && !team0_spawner);
+        let team1_lost = !team1_heroes || (self.spawners_initialized && !team1_spawner);
+
+        if team0_lost && team1_lost {
+            None // Draw
+        } else if team0_lost {
+            Some(1)
+        } else if team1_lost {
+            Some(0)
         } else {
             None
         }
     }
 
-    /// Reset AP for all units at start of round.
     pub fn reset_all_ap(&mut self) {
         for unit in self.units.values_mut() {
             if unit.is_alive() {
                 unit.reset_ap();
             }
         }
+    }
+
+    pub fn update_fog(&mut self) {
+        self.fog.update(&self.map, &self.units);
+    }
+
+    pub fn alloc_unit_id(&mut self) -> UnitId {
+        let id = self.next_unit_id;
+        self.next_unit_id += 1;
+        id
     }
 }

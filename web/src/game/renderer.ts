@@ -1,7 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { HexCoord, GameState, MoveTarget } from './bridge';
 
-export const HEX_SIZE = 32;
+export const HEX_SIZE = 30;
 
 export class HexRenderer {
   private app: PIXI.Application;
@@ -9,6 +9,8 @@ export class HexRenderer {
   private overlayLayer = new PIXI.Container();
   private pathLayer = new PIXI.Container();
   private unitLayer = new PIXI.Container();
+  private fogLayer = new PIXI.Container();
+  private fxLayer = new PIXI.Container();
 
   private unitSprites = new Map<number, PIXI.Container>();
 
@@ -18,6 +20,8 @@ export class HexRenderer {
     this.app.stage.addChild(this.overlayLayer);
     this.app.stage.addChild(this.pathLayer);
     this.app.stage.addChild(this.unitLayer);
+    this.app.stage.addChild(this.fogLayer);
+    this.app.stage.addChild(this.fxLayer);
   }
 
   hexToPixel(q: number, r: number): { x: number; y: number } {
@@ -49,11 +53,33 @@ export class HexRenderer {
         g.fill({ color: 0x24243a });
         g.stroke({ color: 0x3d3d5c, width: 1.5 });
       } else {
-        g.fill({ color: 0x121b2d });
-        g.stroke({ color: 0x1f3453, width: 1 });
+        // Highlight central combat lane along r = 0
+        const isLane = hex.r === 0;
+        g.fill({ color: isLane ? 0x162438 : 0x101726 });
+        g.stroke({ color: isLane ? 0x253b5c : 0x1a2638, width: 1 });
       }
 
       this.hexLayer.addChild(g);
+    }
+  }
+
+  drawFog(visibleHexes: HexCoord[], allHexes: HexCoord[]): void {
+    this.fogLayer.removeChildren();
+    const visibleSet = new Set(visibleHexes.map(h => `${h.q},${h.r}`));
+
+    for (const hex of allHexes) {
+      if (!visibleSet.has(`${hex.q},${hex.r}`)) {
+        const { x, y } = this.hexToPixel(hex.q, hex.r);
+        const g = new PIXI.Graphics();
+        const points: number[] = [];
+        for (let i = 0; i < 6; i++) {
+          const angle = (Math.PI / 3) * i - Math.PI / 6;
+          points.push(x + (HEX_SIZE + 0.5) * Math.cos(angle), y + (HEX_SIZE + 0.5) * Math.sin(angle));
+        }
+        g.poly(points);
+        g.fill({ color: 0x05070f, alpha: 0.78 });
+        this.fogLayer.addChild(g);
+      }
     }
   }
 
@@ -73,16 +99,54 @@ export class HexRenderer {
       const isPlayer = unit.team === 0;
       const baseColor = isPlayer ? 0x00d2ff : 0xff3366;
 
-      // Outer glow & unit circle
-      g.circle(0, 0, HEX_SIZE * 0.52);
-      g.fill({ color: baseColor });
-      g.stroke({ color: 0xffffff, width: 2 });
+      // Draw stylized representation based on UnitKind
+      switch (unit.kind) {
+        case 'Hero': {
+          g.circle(0, 0, HEX_SIZE * 0.52);
+          g.fill({ color: baseColor });
+          g.stroke({ color: 0xffffff, width: 2 });
+          // Inner core
+          g.circle(0, 0, HEX_SIZE * 0.2);
+          g.fill({ color: 0xffffff });
+          break;
+        }
+        case 'Minion': {
+          // Creep triangle pointing towards opponent base
+          const tip = isPlayer ? HEX_SIZE * 0.45 : -HEX_SIZE * 0.45;
+          g.poly([tip, 0, -tip * 0.7, -HEX_SIZE * 0.35, -tip * 0.7, HEX_SIZE * 0.35]);
+          g.fill({ color: baseColor });
+          g.stroke({ color: 0xffffff, width: 1.5 });
+          break;
+        }
+        case 'Tower': {
+          // Fortified turret square
+          const size = HEX_SIZE * 0.8;
+          g.rect(-size / 2, -size / 2, size, size);
+          g.fill({ color: baseColor });
+          g.stroke({ color: 0xffffff, width: 2.5 });
+          // Inner core
+          g.rect(-size / 4, -size / 4, size / 2, size / 2);
+          g.fill({ color: 0x111118 });
+          break;
+        }
+        case 'SpawnerTower': {
+          // Spire crystal diamond
+          g.poly([0, -HEX_SIZE * 0.6, HEX_SIZE * 0.5, 0, 0, HEX_SIZE * 0.6, -HEX_SIZE * 0.5, 0]);
+          g.fill({ color: isPlayer ? 0x7c4dff : 0xff9100 });
+          g.stroke({ color: 0xffffff, width: 2 });
+          break;
+        }
+        default:
+          g.circle(0, 0, HEX_SIZE * 0.4);
+          g.fill({ color: 0x888888 });
+          break;
+      }
 
       // HP Bar (Above unit)
       const hpWidth = HEX_SIZE * 0.9;
       const hpHeight = 5;
       const hpX = -hpWidth / 2;
-      const hpY = -HEX_SIZE * 0.75;
+      const hpY = -HEX_SIZE * 0.8;
       const hpRatio = Math.max(0, Math.min(1, unit.hp / unit.max_hp));
 
       g.rect(hpX, hpY, hpWidth, hpHeight);
@@ -90,60 +154,69 @@ export class HexRenderer {
       g.rect(hpX, hpY, hpWidth * hpRatio, hpHeight);
       g.fill({ color: hpRatio > 0.5 ? 0x00e676 : hpRatio > 0.25 ? 0xffea00 : 0xff1744 });
 
-      // AP Pip Dots (Below unit)
-      const apY = HEX_SIZE * 0.72;
-      for (let i = 0; i < unit.max_ap; i++) {
-        const apX = (i - (unit.max_ap - 1) / 2) * 10;
-        g.circle(apX, apY, 3);
-        g.fill({ color: i < unit.ap ? 0xffd600 : 0x424242 });
+      // Spawner wave timer dots or Hero AP dots
+      if (unit.kind === 'SpawnerTower' && unit.spawn_interval) {
+        const dotsY = HEX_SIZE * 0.75;
+        for (let i = 0; i < unit.spawn_interval; i++) {
+          const dotX = (i - (unit.spawn_interval - 1) / 2) * 10;
+          g.circle(dotX, dotsY, 3);
+          g.fill({ color: i < unit.spawn_counter ? 0x7c4dff : 0x333344 });
+        }
+      } else if (unit.kind === 'Hero') {
+        const apY = HEX_SIZE * 0.75;
+        for (let i = 0; i < unit.max_ap; i++) {
+          const apX = (i - (unit.max_ap - 1) / 2) * 10;
+          g.circle(apX, apY, 3);
+          g.fill({ color: i < unit.ap ? 0xffd600 : 0x333344 });
+        }
+
+        // Initiative badge
+        const initText = new PIXI.Text({
+          text: `⚡${unit.initiative}`,
+          style: {
+            fontSize: 9,
+            fill: 0xffffff,
+            fontFamily: 'Outfit, sans-serif',
+            fontWeight: 'bold',
+          },
+        });
+        initText.anchor.set(0.5);
+        initText.y = 0;
+        container.addChild(initText);
       }
 
-      // Initiative badge
-      const initText = new PIXI.Text({
-        text: `⚡${unit.initiative}`,
-        style: {
-          fontSize: 10,
-          fill: 0xffffff,
-          fontFamily: 'Outfit, Inter, sans-serif',
-          fontWeight: 'bold',
-        },
-      });
-      initText.anchor.set(0.5);
-      initText.y = 0;
-
       container.addChild(g);
-      container.addChild(initText);
       this.unitLayer.addChild(container);
       this.unitSprites.set(id, container);
     }
   }
 
-  drawMoveTargets(targets: MoveTarget[]): void {
+  drawMoveTargets(targets: (MoveTarget | HexCoord)[]): void {
     this.overlayLayer.removeChildren();
-
     for (const target of targets) {
       const { x, y } = this.hexToPixel(target.q, target.r);
       const g = new PIXI.Graphics();
+      g.circle(x, y, HEX_SIZE * 0.35);
+      g.fill({ color: 0x00e676, alpha: 0.4 });
+      g.stroke({ color: 0x00e676, width: 2 });
 
-      g.circle(x, y, HEX_SIZE * 0.45);
-      g.fill({ color: 0x00e676, alpha: 0.35 });
-      g.stroke({ color: 0x00e676, width: 2, alpha: 0.8 });
-
-      const costText = new PIXI.Text({
-        text: `${target.cost} AP`,
-        style: {
-          fontSize: 11,
-          fill: 0xffffff,
-          fontFamily: 'Outfit, Inter, sans-serif',
-          fontWeight: 'bold',
-        },
-      });
-      costText.anchor.set(0.5);
-      costText.x = x;
-      costText.y = y;
+      if ('cost' in target) {
+        const costText = new PIXI.Text({
+          text: `${target.cost}`,
+          style: {
+            fontSize: 10,
+            fill: 0xffffff,
+            fontFamily: 'Outfit, sans-serif',
+            fontWeight: 'bold',
+          },
+        });
+        costText.anchor.set(0.5);
+        costText.x = x;
+        costText.y = y;
+        this.overlayLayer.addChild(costText);
+      }
 
       this.overlayLayer.addChild(g);
-      this.overlayLayer.addChild(costText);
     }
   }
 
@@ -154,11 +227,8 @@ export class HexRenderer {
 
       const { x, y } = this.hexToPixel(unit.pos.q, unit.pos.r);
       const g = new PIXI.Graphics();
-
-      // Pulsing crosshair ring
       g.circle(x, y, HEX_SIZE * 0.65);
       g.stroke({ color: 0xff1744, width: 3, alpha: 0.9 });
-
       this.overlayLayer.addChild(g);
     }
   }
@@ -181,18 +251,42 @@ export class HexRenderer {
 
   highlightUnit(unitId: number | null): void {
     for (const [id, container] of this.unitSprites) {
-      const g = container.getChildAt(0) as PIXI.Graphics;
-      if (id === unitId) {
-        g.stroke({ color: 0xffd600, width: 3.5 });
-      } else {
-        g.stroke({ color: 0xffffff, width: 2 });
+      const g = container.getChildAt(container.children.length - 1) as PIXI.Graphics;
+      if (g && typeof g.stroke === 'function') {
+        if (id === unitId) {
+          g.stroke({ color: 0xffd600, width: 3 });
+        }
       }
     }
+  }
+
+  clearMoveTargets(): void {
+    this.overlayLayer.removeChildren();
   }
 
   clearOverlays(): void {
     this.overlayLayer.removeChildren();
     this.pathLayer.removeChildren();
+  }
+
+  getUnitSprite(unitId: number): PIXI.Container | undefined {
+    return this.unitSprites.get(unitId);
+  }
+
+  removeUnitSprite(unitId: number): void {
+    const sprite = this.unitSprites.get(unitId);
+    if (sprite) {
+      this.unitLayer.removeChild(sprite);
+      this.unitSprites.delete(unitId);
+    }
+  }
+
+  getStage(): PIXI.Container {
+    return this.app.stage;
+  }
+
+  getFxLayer(): PIXI.Container {
+    return this.fxLayer;
   }
 
   getApp(): PIXI.Application {
