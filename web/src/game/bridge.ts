@@ -7,9 +7,11 @@ export interface HexCoord {
   r: number;
 }
 
+export type UnitKind = 'Hero' | 'Minion' | 'Tower' | 'SpawnerTower' | 'Neutral';
+
 export interface UnitData {
   id: number;
-  kind: 'Hero' | 'Minion' | 'Tower' | 'Neutral';
+  kind: UnitKind;
   team: number;
   pos: HexCoord;
   hp: number;
@@ -19,6 +21,9 @@ export interface UnitData {
   initiative: number;
   attack_damage: number;
   attack_range: number;
+  vision_range: number;
+  spawn_interval?: number;
+  spawn_counter: number;
 }
 
 export interface GameState {
@@ -26,28 +31,24 @@ export interface GameState {
   phase: 'Planning' | 'Resolution' | 'MatchEnd';
   units: Record<number, UnitData>;
   winner: number | null;
-  next_unit_id: number;
 }
+
+export type GameEvent =
+  | { type: 'RoundStarted'; round: number }
+  | { type: 'UnitSpawned'; unit_id: number; unit_kind: UnitKind; team: number; pos: HexCoord; spawner_id: number }
+  | { type: 'UnitMoved'; unit_id: number; from: HexCoord; to: HexCoord; path: HexCoord[]; ap_spent: number }
+  | { type: 'UnitAttacked'; attacker_id: number; target_id: number; damage: number; target_hp_remaining: number }
+  | { type: 'TowerAttacked'; tower_id: number; target_id: number; damage: number; target_hp_remaining: number }
+  | { type: 'UnitDied'; unit_id: number; unit_kind: UnitKind; killed_by: number }
+  | { type: 'UnitWaited'; unit_id: number }
+  | { type: 'FogUpdated'; team: number; visible_hexes: HexCoord[] }
+  | { type: 'RoundEnded'; round: number }
+  | { type: 'MatchEnded'; winner: number | null };
 
 export interface MoveTarget {
   q: number;
   r: number;
   cost: number;
-}
-
-export interface PendingOrder {
-  unit_id: number;
-  move_target: HexCoord | null;
-  action: 'Wait' | { Attack: { target_id: number } };
-}
-
-export interface TurnOrders {
-  orders: PendingOrder[];
-}
-
-export interface GameEvent {
-  type: string;
-  [key: string]: unknown;
 }
 
 export async function initGame(): Promise<void> {
@@ -58,6 +59,16 @@ export async function initGame(): Promise<void> {
 export function getState(): GameState {
   if (!game) throw new Error("Game not initialized");
   return JSON.parse(game.get_state());
+}
+
+export function getPlayerState(team: number = 0): GameState {
+  if (!game) throw new Error("Game not initialized");
+  return JSON.parse(game.get_player_state(team));
+}
+
+export function getPlayerFog(): HexCoord[] {
+  if (!game) throw new Error("Game not initialized");
+  return JSON.parse(game.get_player_fog()).map(([q, r]: [number, number]) => ({ q, r }));
 }
 
 export function getMapHexes(): HexCoord[] {
@@ -74,6 +85,13 @@ export function getMoveTargets(unitId: number): MoveTarget[] {
   if (!game) throw new Error("Game not initialized");
   return JSON.parse(game.get_move_targets(BigInt(unitId))).map(
     ([q, r, cost]: [number, number, number]) => ({ q, r, cost })
+  );
+}
+
+export function findPath(fromQ: number, fromR: number, toQ: number, toR: number): HexCoord[] {
+  if (!game) throw new Error("Game not initialized");
+  return JSON.parse(game.find_path(fromQ, fromR, toQ, toR)).map(
+    ([q, r]: [number, number]) => ({ q, r })
   );
 }
 
@@ -97,9 +115,9 @@ export function setWaitOrder(unitId: number): boolean {
   return game.set_wait_order(BigInt(unitId));
 }
 
-export function getPendingOrders(): TurnOrders {
+export function getPendingOrders(): string {
   if (!game) throw new Error("Game not initialized");
-  return JSON.parse(game.get_pending_orders());
+  return game.get_pending_orders();
 }
 
 export function allUnitsOrdered(): boolean {
@@ -112,12 +130,12 @@ export function endTurn(): GameEvent[] {
   return JSON.parse(game.end_turn());
 }
 
-export function restart(): void {
-  if (!game) throw new Error("Game not initialized");
-  game.restart();
-}
-
 export function clearOrders(unitId: number): void {
   if (!game) throw new Error("Game not initialized");
   game.clear_orders(BigInt(unitId));
+}
+
+export function restart(): void {
+  if (!game) throw new Error("Game not initialized");
+  game.restart();
 }
