@@ -121,7 +121,16 @@ export class ClientSession {
         turn_duration_secs: turnDurationSecs,
       }),
     });
-    if (!res.ok) throw new Error(`Failed to create match: ${res.statusText}`);
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        if (body?.message) detail = body.message;
+      } catch {
+        // use statusText fallback
+      }
+      throw new Error(`Failed to create match (${res.status}): ${detail}`);
+    }
     const data = await res.json();
     return data.match_id;
   }

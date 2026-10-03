@@ -32,6 +32,7 @@ async function main() {
     resizeTo: window,
     backgroundColor: 0x090b14,
     antialias: true,
+    preference: 'webgl',
   });
 
   const renderer = new HexRenderer(app);
@@ -325,7 +326,8 @@ async function main() {
       session.joinMatch(matchId);
       if (matchModal) matchModal.style.display = 'none';
     } catch (err) {
-      console.warn("Could not start server match, falling back to local WASM:", err);
+      console.info("Multiplayer server offline; seamlessly running match via local WASM engine:", err);
+      hud.showToast('Backend server offline. Running in local WASM mode.');
       fallbackToLocalWasm();
     }
   };
@@ -347,7 +349,8 @@ async function main() {
       if (matchModal) matchModal.style.display = 'none';
       hud.showToast('📋 Match created! Share link with opponent.');
     } catch (err) {
-      hud.showToast('Failed to create PvP match.');
+      console.warn("Failed to create PvP match:", err);
+      hud.showToast('Failed to create PvP match. Ensure the backend server is running.');
     }
   };
 
