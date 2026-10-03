@@ -350,7 +350,14 @@ export class Animator {
         vision_range: 2,
         spawn_counter: 0,
       });
-      this.renderer.getStage().addChild(sprite);
+      if (sprite) {
+        this.renderer.getStage().addChild(sprite);
+      }
+    }
+
+    if (!sprite) {
+      onDone();
+      return;
     }
 
     sprite.scale.set(0.1);

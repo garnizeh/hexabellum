@@ -404,7 +404,17 @@ export class ClientSession {
 
     const state = snapshotToGameState(this.currentSnapshot);
     const blockers = this.getVisionBlockers();
-    return hexGetAttackTargets(unitId, { q: fromQ, r: fromR }, unit.attack_range, state, blockers);
+    const visibleHexes = this.currentSnapshot.visible_hexes
+      ? new Set(this.currentSnapshot.visible_hexes.map(h => `${h.q},${h.r}`))
+      : undefined;
+    return hexGetAttackTargets(
+      { q: fromQ, r: fromR },
+      unit.attack_range,
+      state.units,
+      unit.team,
+      visibleHexes,
+      blockers
+    );
   }
 
   getRepairTargets(unitId: number, fromQ: number, fromR: number): number[] {
@@ -422,7 +432,11 @@ export class ClientSession {
     }
 
     const state = snapshotToGameState(this.currentSnapshot);
-    return hexGetRepairTargets(unitId, { q: fromQ, r: fromR }, state);
+    return hexGetRepairTargets(
+      { q: fromQ, r: fromR },
+      state.units,
+      unit.team
+    );
   }
 
   getSpellTargets(unitId: number, spellId: string, fromQ: number, fromR: number): SpellTargetingResult {
