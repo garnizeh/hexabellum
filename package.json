@@ -1,0 +1,26 @@
+{
+  "name": "hexabellum",
+  "version": "1.0.0",
+  "description": "A **turn-based MOBA** with tactical combat on a hexagonal grid. Teams submit orders simultaneously, and a deterministic engine resolves each round — blending MOBA strategy (lanes, minions, towers, objectives) with the clarity of turn-based tactics.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/garnizeh/hexabellum.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/garnizeh/hexabellum/issues"
+  },
+  "homepage": "https://github.com/garnizeh/hexabellum#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/node": "^26.6.4"
+  }
+}
