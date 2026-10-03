@@ -160,6 +160,71 @@ impl HexMap {
         None // No path found
     }
 
+    /// Shortest walkable path from `start` to `goal` that never steps onto a
+    /// hex in `blocked` (except `start` and `goal` themselves, which may be
+    /// blocked: the mover stands on one and is allowed to enter the other).
+    ///
+    /// This is the occupancy-aware counterpart of [`find_path`](Self::find_path):
+    /// order-time validation plans routes around units that will still be in
+    /// the way when movement resolves, so resolution must follow the very
+    /// same route semantics. Without this, a planned move whose geometric
+    /// shortest path cuts through a blocking unit would stall at that hex
+    /// during resolution, and both front lines could shuffle in lockstep
+    /// forever without combat ever resolving.
+    pub fn find_path_around(
+        &self,
+        start: HexCoord,
+        goal: HexCoord,
+        blocked: &HashSet<HexCoord>,
+    ) -> Option<Vec<HexCoord>> {
+        if !self.is_walkable(&start) || !self.is_walkable(&goal) {
+            return None;
+        }
+        if start == goal {
+            return Some(vec![start]);
+        }
+
+        // Deterministic BFS with lexicographic (q, r) neighbor ordering so
+        // tie-broken paths are reproducible.
+        let mut came_from: HashMap<HexCoord, HexCoord> = HashMap::new();
+        let mut visited: HashSet<HexCoord> = HashSet::new();
+        let mut queue: std::collections::VecDeque<HexCoord> = std::collections::VecDeque::new();
+
+        visited.insert(start);
+        queue.push_back(start);
+
+        while let Some(current) = queue.pop_front() {
+            let mut nbrs: Vec<HexCoord> = current
+                .neighbors()
+                .into_iter()
+                .filter(|n| {
+                    self.is_walkable(n)
+                        && !visited.contains(n)
+                        && (!blocked.contains(n) || *n == goal)
+                })
+                .collect();
+            nbrs.sort_by_key(|h| (h.q, h.r));
+
+            for neighbor in nbrs {
+                visited.insert(neighbor);
+                came_from.insert(neighbor, current);
+                if neighbor == goal {
+                    let mut path = vec![goal];
+                    let mut node = goal;
+                    while let Some(&prev) = came_from.get(&node) {
+                        path.push(prev);
+                        node = prev;
+                    }
+                    path.reverse();
+                    return Some(path);
+                }
+                queue.push_back(neighbor);
+            }
+        }
+
+        None
+    }
+
     /// Get all hexes reachable from start within given AP budget.
     /// Returns a map of hex -> AP cost to reach it.
     /// Uses Dijkstra's algorithm (all edges cost 1).

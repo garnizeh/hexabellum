@@ -202,7 +202,7 @@ impl GameEngine {
                 // itself move this round (all moves are validated against
                 // planning-time positions, matching the AI), so entering a
                 // contested hex is allowed at order time; resolution performs
-                // the final occupancy check via A*.
+                // the final occupancy check while walking the path.
                 let mut occupied: HashSet<HexCoord> = self
                     .state
                     .units
@@ -211,6 +211,7 @@ impl GameEngine {
                     .map(|u| u.pos)
                     .collect();
                 occupied.retain(|h| !vacated.contains(h));
+                occupied.remove(&unit.pos); // the mover stands there; never blocks itself
                 occupied.remove(&target); // may be entered even if contested
                 let reachable = self
                     .state
@@ -294,6 +295,12 @@ impl GameEngine {
                     .map(|u| u.pos)
                     .collect();
                 occupied.retain(|h| !occ.contains(h));
+                // The attacker's own start hex never blocks its route, and
+                // the planned destination may still be contested at planning
+                // time (its occupant is moving away), so it must not block
+                // the flood fill either.
+                occupied.remove(&from_pos);
+                occupied.remove(&hex);
                 let reachable = self
                     .state
                     .map

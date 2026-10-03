@@ -115,13 +115,45 @@ impl TurnProcessor {
             // could land there once this unit stepped aside must now treat it
             // as a normal occupied (and blocking) hex.
             pending_movers.remove(&unit_id);
+            // Hexes that stay blocked for this mover during the whole rest of
+            // the round: living units that keep their current hex (no move, or
+            // a "move" onto their own hex) plus committed landing zones of
+            // other movers. The mover's own start hex and its own destination
+            // come out of the set - the swap between a mover and a pending
+            // blocker sitting on its destination resolves when the blocker
+            // takes its own turn (the mover's start hex is free by then).
+            let mut my_blockers: HashSet<HexCoord> = snapshot
+                .units
+                .values()
+                .filter(|u| {
+                    u.is_alive()
+                        && match all_orders.get_order(u.id).and_then(|o| o.move_target) {
+                            Some(dest) => dest == u.pos,
+                            None => true,
+                        }
+                })
+                .map(|u| u.pos)
+                .collect();
+            for o in &all_orders.orders {
+                if o.unit_id != unit_id {
+                    if let Some(dest) = o.move_target {
+                        my_blockers.insert(dest);
+                    }
+                }
+            }
+            if let Some(u) = state.get_unit(unit_id) {
+                my_blockers.remove(&u.pos);
+            }
+            if let Some(dest) = order.move_target {
+                my_blockers.remove(&dest);
+            }
             let unit_events = Self::process_unit(
                 state,
                 &snapshot,
                 &order,
-                &all_orders,
                 &mut claims,
                 &mut pending_movers,
+                &my_blockers,
             );
             events.extend(unit_events);
         }
@@ -196,7 +228,6 @@ impl TurnProcessor {
     #[allow(clippy::too_many_arguments)]
     fn enter_step(
         state: &mut GameState,
-        all_orders: &TurnOrders,
         claims: &mut HashMap<HexCoord, UnitId>,
         pending: &mut HashSet<UnitId>,
         mover_id: UnitId,
@@ -204,46 +235,13 @@ impl TurnProcessor {
         step: HexCoord,
         ap_cost: u32,
     ) -> bool {
-        match Self::check_entry(
-            state, claims, pending, mover_id, mover_final_dest, &step,
-        ) {
+        match Self::check_entry(state, claims, pending, mover_id, mover_final_dest, &step) {
             EntryCheck::Free => {}
-            EntryCheck::WillLeave => {
-                // `step` is our final destination and the blocker sitting on
-                // it still needs to relocate. Give it our current hex — which
-                // we are vacating right now — as its next step and resolve it
-                // in place. This swap keeps both plans valid instead of
-                // deadlocking until the next round.
-                let blocker_id = state.get_unit_at(&step).map(|u| u.id).unwrap();
-                let my_pos = state.get_unit(mover_id).unwrap().pos;
-                let blocker_dest = all_orders
-                    .get_order(blocker_id)
-                    .and_then(|o| o.move_target);
-                // If the blocker is itself headed to my hex, the two units
-                // simply trade places when each takes its own turn later; no
-                // forced relocation needed (and none would be legal here).
-                if blocker_dest != Some(my_pos) {
-                    if !Self::enter_step(
-                        state,
-                        all_orders,
-                        claims,
-                        pending,
-                        blocker_id,
-                        blocker_dest,
-                        my_pos,
-                        ap_cost,
-                    ) {
-                        return false;
-                    }
-                }
-                // Re-check ourselves after shuffling the blocker away.
-                if Self::check_entry(state, claims, pending, mover_id, mover_final_dest, &step)
-                    != EntryCheck::Free
-                {
-                    return false;
-                }
-            }
-            EntryCheck::Blocked => return false,
+            // A pending blocker that is not headed here will step aside into
+            // our vacated start hex when its own turn arrives; entering now
+            // would stack two units on one hex, so refuse and let the swap
+            // resolve at each unit's own turn instead.
+            EntryCheck::WillLeave | EntryCheck::Blocked => return false,
         }
 
         // Commit the step.
@@ -278,9 +276,9 @@ impl TurnProcessor {
         state: &mut GameState,
         snapshot: &GameState,
         order: &UnitOrder,
-        all_orders: &TurnOrders,
         claims: &mut HashMap<HexCoord, UnitId>,
         pending: &mut HashSet<UnitId>,
+        blockers: &HashSet<HexCoord>,
     ) -> Vec<GameEvent> {
         let mut events = Vec::new();
 
@@ -310,7 +308,15 @@ impl TurnProcessor {
                 // the walk incrementally is equivalent to validating the whole
                 // path up front — and it lets a blocked step fall back to
                 // walking around instead of cancelling the entire move.
-                if let Some(path) = state.map.find_path(planned_unit.pos, move_target) {
+                // Prefer a route that avoids the hexes which stay blocked
+                // all round; fall back to the geometric shortest path (and
+                // walk as far along it as legally possible) if no detour
+                // exists at all.
+                let path = state
+                    .map
+                    .find_path_around(planned_unit.pos, move_target, blockers)
+                    .or_else(|| state.map.find_path(planned_unit.pos, move_target));
+                if let Some(path) = path {
                     let path_cost = (path.len() - 1) as u32; // -1 because path includes start
 
                     if path_cost <= ap_budget {
@@ -318,7 +324,6 @@ impl TurnProcessor {
                         for &step in &path[1..] {
                             if Self::enter_step(
                                 state,
-                                all_orders,
                                 claims,
                                 pending,
                                 unit_id,

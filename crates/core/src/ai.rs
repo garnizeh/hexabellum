@@ -77,12 +77,21 @@ impl SimpleAI {
             unit.max_ap // Just move, can't attack this round anyway
         };
 
-        // Exclude this unit's own hex from occupancy so it can "move" through,
-        // and treat hexes held by friendly units that are themselves planning
-        // to move as vacated (they will free up during resolution). Without
-        // the vacated-hex model the AI would steer around friendly units that
-        // are about to step aside anyway, which could permanently stall the
-        // front line when both sides shuffle in lockstep.
+        // Perimeter of the board: hexes at maximum radius. A unit pushed onto
+        // one of these has no forward space left and would oscillate against
+        // the edge forever; keeping our own team off them (when free interior
+        // hexes exist) lets the front line reform and combat resolve.
+        let center = HexCoord::new(0, 0);
+        let max_dist = state.map.radius as i32;
+
+        // Find best hex to move to (closest to enemy within AP budget).
+        // Friendly units that are themselves planning to move do not block
+        // routes (they will step aside during resolution), but every other
+        // occupied hex - friendlies holding position *and* enemies - does:
+        // a body never moves out of the way for an intruder, so ordering a
+        // move into an occupied hex would fail at resolution and leave the
+        // whole team shuffling against the same wall forever instead of
+        // closing in to attack.
         let mut blocked = occupied.clone();
         blocked.remove(&unit.pos);
         for other in state.team_units(unit.team) {
@@ -98,7 +107,6 @@ impl SimpleAI {
             }
         }
 
-        // Find best hex to move to (closest to enemy within AP budget)
         let reachable = state
             .map
             .reachable_hexes(unit.pos, ap_for_movement, &blocked);
@@ -112,29 +120,29 @@ impl SimpleAI {
         // order is already committed), so we must pick a different hex —
         // otherwise both units would end the round stacked on one tile,
         // corrupting occupancy and permanently stalling combat.
-        // Enemy units never vacate during our own planning pass, so any hex
-        // they currently stand on (or are seen stepping onto) stays occupied.
         let final_occupancy = |hex: &HexCoord| -> bool {
-            state.units.values().any(|u| {
-                u.id != unit_id
-                    && u.is_alive()
-                    && ((u.team != unit.team && u.pos == *hex)
-                        || (u.team == unit.team
-                            && u.pos == *hex
-                            && orders
-                                .get_order(u.id)
-                                .map(|o| o.move_target != Some(*hex))
-                                .unwrap_or(true)))
-            }) || orders.orders.iter().any(|o| {
+            orders.orders.iter().any(|o| {
                 o.unit_id != unit_id && o.move_target == Some(*hex)
             })
         };
 
-        let (move_target, action) = if let Some((best_hex, _)) = candidates
+        // Prefer interior landing zones over the board's outer ring so the
+        // team never corners itself against the map edge.
+        let on_perimeter =
+            |hex: &HexCoord| -> bool { hex.q.abs().max(hex.r.abs()).max((hex.q + hex.r).abs()) >= max_dist };
+
+        let best = candidates
             .iter()
             .filter(|(hex, _)| !final_occupancy(hex))
-            .next()
-        {
+            .find(|(hex, _)| !on_perimeter(hex))
+            .or_else(|| {
+                candidates
+                    .iter()
+                    .find(|(hex, _)| !final_occupancy(hex))
+                    .or_else(|| candidates.first())
+            });
+
+        let (move_target, action) = if let Some((best_hex, _)) = best {
             let new_distance = best_hex.distance(&nearest_enemy.pos);
 
             if new_distance <= unit.attack_range && ap_for_movement > 0 {

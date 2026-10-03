@@ -7,7 +7,7 @@ use hexabellum_core::event::GameEvent;
 #[test]
 fn trace() {
     let mut engine = GameEngine::new();
-    for round in 0..20 {
+    for round in 0..60 {
         let hero_ids: Vec<UnitId> = engine.state().team_units(PLAYER_TEAM).iter().map(|u| u.id).collect();
         for id in hero_ids {
             engine.clear_orders(id);
