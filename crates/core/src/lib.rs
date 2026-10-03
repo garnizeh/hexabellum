@@ -139,26 +139,73 @@ impl GameEngine {
     }
 
     /// Set move order for a unit.
-    pub fn set_move_order(&mut self, unit_id: UnitId, q: i32, r: i32) -> bool {
+    /// `reserve_attack_ap` indicates whether an attack action may be planned
+    /// alongside this move; when true, 1 AP is reserved for the attack so the
+    /// move validation stays consistent with attack-after-move validation.
+    pub fn set_move_order_with(
+        &mut self,
+        unit_id: UnitId,
+        q: i32,
+        r: i32,
+        reserve_attack_ap: bool,
+    ) -> bool {
         let target = HexCoord::new(q, r);
+
+        // Vacated-hex model (matches how resolution validates moves against
+        // planning-time positions): a hex currently held by a friendly unit
+        // that is itself planning to move does not block pathfinding, and the
+        // mover's own start hex never blocks its path. The final collision
+        // check happens at resolution time via A*.
+        let mut vacated: HashSet<HexCoord> = HashSet::new();
+        for o in &self.pending_orders.orders {
+            if o.unit_id == unit_id {
+                continue;
+            }
+            if let Some(mt) = o.move_target {
+                if let Some(u) = self.state.get_unit(o.unit_id) {
+                    if u.is_alive() && u.team == PLAYER_TEAM && u.pos != mt {
+                        vacated.insert(u.pos);
+                    }
+                }
+            }
+        }
+        if let Some(cur_move) = self.pending_orders.get_order(unit_id).and_then(|o| o.move_target) {
+            vacated.insert(cur_move); // previous plan's destination stays free
+        }
 
         // Validate unit exists, is alive, and belongs to the player team
         if let Some(unit) = self.state.get_unit(unit_id) {
             if unit.is_alive() && unit.team == PLAYER_TEAM && self.state.phase == Phase::Planning {
-                // If this unit already has an attack planned, reserve 1 AP for it
-                let needs_attack_ap = self
+                // Reserve 1 AP for an attack when one is already planned or may
+                // still be added alongside this move, so that move + attack
+                // orders are valid no matter which one was set first.
+                let has_planned_attack = self
                     .pending_orders
                     .get_order(unit_id)
                     .map(|o| matches!(o.action, Action::Attack { .. }))
                     .unwrap_or(false);
-                let move_budget = if needs_attack_ap {
+                let move_budget = if has_planned_attack || reserve_attack_ap {
                     unit.ap.saturating_sub(1)
                 } else {
                     unit.ap
                 };
 
-                // Check if target is reachable within the AP budget
-                let occupied = self.state.occupied_hexes();
+                // Check if target is reachable within the AP budget.
+                // The mover's own hex must not block its path, and the
+                // destination may currently be held by another unit that will
+                // itself move this round (all moves are validated against
+                // planning-time positions, matching the AI), so entering a
+                // contested hex is allowed at order time; resolution performs
+                // the final occupancy check via A*.
+                let mut occupied: HashSet<HexCoord> = self
+                    .state
+                    .units
+                    .values()
+                    .filter(|u| u.is_alive() && u.id != unit_id)
+                    .map(|u| u.pos)
+                    .collect();
+                occupied.retain(|h| !vacated.contains(h));
+                occupied.remove(&target); // may be entered even if contested
                 let reachable = self
                     .state
                     .map
@@ -211,9 +258,32 @@ impl GameEngine {
 
         let attack_after_move = match existing_move {
             Some(hex) if hex != from_pos => {
-                // Occupancy-aware: exclude the moving unit's own hex
-                let mut occupied = self.state.occupied_hexes();
-                occupied.remove(&from_pos);
+                // Same vacated-hex model as move validation: hexes held by
+                // units that are themselves planning to move do not block the
+                // path, and the attacker's own start hex never blocks it.
+                let mut vacated: HashSet<HexCoord> = HashSet::new();
+                for o in &self.pending_orders.orders {
+                    if o.unit_id == unit_id {
+                        continue;
+                    }
+                    if let Some(mt) = o.move_target {
+                        if let Some(u) = self.state.get_unit(o.unit_id) {
+                            if u.is_alive() && u.team == PLAYER_TEAM && u.pos != mt {
+                                vacated.insert(u.pos);
+                            }
+                        }
+                    }
+                }
+                vacated.insert(hex);
+
+                let mut occupied: HashSet<HexCoord> = self
+                    .state
+                    .units
+                    .values()
+                    .filter(|u| u.is_alive() && u.id != unit_id)
+                    .map(|u| u.pos)
+                    .collect();
+                occupied.retain(|h| !vacated.contains(h));
                 let reachable = self
                     .state
                     .map
@@ -243,6 +313,11 @@ impl GameEngine {
             });
         }
         true
+    }
+
+    /// Set move order for a unit (no attack AP reservation).
+    pub fn set_move_order(&mut self, unit_id: UnitId, q: i32, r: i32) -> bool {
+        self.set_move_order_with(unit_id, q, r, false)
     }
 
     /// Set wait order for a unit.
@@ -296,6 +371,12 @@ impl GameEngine {
         let orders = std::mem::replace(&mut self.pending_orders, TurnOrders::new());
         let events: Vec<GameEvent> = TurnProcessor::resolve(&mut self.state, &orders);
         serde_json::to_string(&events).unwrap()
+    }
+
+    /// Clear all pending orders for a unit (move target and action).
+    /// Used by clients/tests to reset a unit's plan before re-ordering it.
+    pub fn clear_orders(&mut self, unit_id: UnitId) {
+        self.pending_orders.orders.retain(|o| o.unit_id != unit_id);
     }
 
     /// Restart the game.
@@ -412,6 +493,9 @@ mod tests {
                         .collect();
                     let (_d, target_id) = *enemies.iter().min().unwrap();
 
+                    // Fresh plan every round: drop any stale orders first
+                    engine.clear_orders(id);
+
                     // Prefer: stand and attack
                     if engine.set_attack_order(id, target_id) {
                         continue;
@@ -427,7 +511,7 @@ mod tests {
                         .collect();
                     adj.sort_by_key(|h| (h.distance(&pos), h.q, h.r));
                     for hex in adj {
-                        if engine.set_move_order(id, hex.q, hex.r)
+                        if engine.set_move_order_with(id, hex.q, hex.r, true)
                             && engine.set_attack_order(id, target_id)
                         {
                             planned_attack = true;
