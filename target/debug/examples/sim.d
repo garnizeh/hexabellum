@@ -1,1 +1,0 @@
-/workspace/target/debug/examples/sim: /workspace/crates/core/examples/sim.rs /workspace/crates/core/src/ai.rs /workspace/crates/core/src/event.rs /workspace/crates/core/src/hex.rs /workspace/crates/core/src/lib.rs /workspace/crates/core/src/orders.rs /workspace/crates/core/src/state.rs /workspace/crates/core/src/turn.rs /workspace/crates/core/src/unit.rs
