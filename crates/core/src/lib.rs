@@ -561,19 +561,47 @@ mod tests {
                         });
                     }
 
-                    // Fallback: just advance toward the enemy
-                    if !planned_attack {
-                        let dq = (tgt_pos.q - pos.q).signum();
-                        let dr = (tgt_pos.r - pos.r).signum();
-                        let candidates = [
-                            (pos.q + dq * 2, pos.r + dr * 2),
-                            (pos.q + dq, pos.r + dr),
-                            (pos.q + dq, pos.r),
-                            (pos.q, pos.r + dr),
-                        ];
-                        for (q, r) in candidates {
-                            if engine.set_move_order(id, q, r) {
+                    // Fallback: advance toward the enemy using pathfinding
+                    if !planned_attack
+                        && let Some(path) = engine.state.map.find_path(pos, tgt_pos)
+                    {
+                        let unit = engine.state.get_unit(id).unwrap();
+                        let max_step = (unit.ap as usize).min(path.len().saturating_sub(2));
+                        let mut advanced = false;
+                        for step_idx in (1..=max_step).rev() {
+                            let step = path[step_idx];
+                            if engine.set_move_order(id, step.q, step.r) {
+                                advanced = true;
                                 break;
+                            }
+                        }
+                        if !advanced {
+                            // Fallback: try adjacent neighbors that reduce path distance to target
+                            let current_dist = path.len();
+                            let mut nbrs: Vec<HexCoord> = pos
+                                .neighbors()
+                                .into_iter()
+                                .filter(|h| engine.state.map.is_walkable(h))
+                                .collect();
+                            nbrs.sort_by_key(|h| {
+                                let p_len = engine
+                                    .state
+                                    .map
+                                    .find_path(*h, tgt_pos)
+                                    .map(|p| p.len())
+                                    .unwrap_or(usize::MAX);
+                                (p_len, h.distance(&tgt_pos), h.q, h.r)
+                            });
+                            for h in nbrs {
+                                let p_len = engine
+                                    .state
+                                    .map
+                                    .find_path(h, tgt_pos)
+                                    .map(|p| p.len())
+                                    .unwrap_or(usize::MAX);
+                                if p_len < current_dist && engine.set_move_order(id, h.q, h.r) {
+                                    break;
+                                }
                             }
                         }
                     }
