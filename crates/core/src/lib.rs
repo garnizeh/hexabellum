@@ -170,7 +170,13 @@ impl GameEngine {
             }
         }
         if let Some(cur_move) = self.pending_orders.get_order(unit_id).and_then(|o| o.move_target) {
-            vacated.insert(cur_move); // previous plan's destination stays free
+            if cur_move != target {
+                // The unit's own previous destination must stay free so the
+                // mover can always back out of a stale plan (re-plan to an
+                // adjacent hex or its current position) without being blocked
+                // by the ghost of its own earlier order.
+                vacated.insert(cur_move);
+            }
         }
 
         // Validate unit exists, is alive, and belongs to the player team
@@ -245,8 +251,10 @@ impl GameEngine {
             _ => return false,
         };
 
-        // Validate reachability: the attack must be executable after the
-        // planned move (if any), given AP costs (move = path length, attack = 1).
+        // Validate reachability: the attack must be executable this round,
+        // either standing still or from the planned destination, given AP
+        // costs (move = path length, attack = 1). The set of positions the
+        // unit can act from is exactly {start} U {planned destination}.
         let unit = self.state.get_unit(unit_id).unwrap();
         let existing_move = self
             .pending_orders
@@ -256,25 +264,27 @@ impl GameEngine {
         let stand_and_attack =
             from_pos.distance(&target_pos) <= unit.attack_range && unit.can_afford(1);
 
-        let attack_after_move = match existing_move {
-            Some(hex) if hex != from_pos => {
-                // Same vacated-hex model as move validation: hexes held by
-                // units that are themselves planning to move do not block the
-                // path, and the attacker's own start hex never blocks it.
-                let mut vacated: HashSet<HexCoord> = HashSet::new();
-                for o in &self.pending_orders.orders {
-                    if o.unit_id == unit_id {
-                        continue;
-                    }
-                    if let Some(mt) = o.move_target {
-                        if let Some(u) = self.state.get_unit(o.unit_id) {
-                            if u.is_alive() && u.team == PLAYER_TEAM && u.pos != mt {
-                                vacated.insert(u.pos);
-                            }
-                        }
+        // Same vacated-hex model as move validation: hexes held by units that
+        // are themselves planning to move do not block the path, and the
+        // attacker's own start hex never blocks it.
+        let mut vacated: HashSet<HexCoord> = HashSet::new();
+        for o in &self.pending_orders.orders {
+            if o.unit_id == unit_id {
+                continue;
+            }
+            if let Some(mt) = o.move_target {
+                if let Some(u) = self.state.get_unit(o.unit_id) {
+                    if u.is_alive() && u.team == PLAYER_TEAM && u.pos != mt {
+                        vacated.insert(u.pos);
                     }
                 }
-                vacated.insert(hex);
+            }
+        }
+
+        let attack_after_move = match existing_move {
+            Some(hex) if hex != from_pos => {
+                let mut occ = vacated.clone();
+                occ.insert(hex);
 
                 let mut occupied: HashSet<HexCoord> = self
                     .state
@@ -283,7 +293,7 @@ impl GameEngine {
                     .filter(|u| u.is_alive() && u.id != unit_id)
                     .map(|u| u.pos)
                     .collect();
-                occupied.retain(|h| !vacated.contains(h));
+                occupied.retain(|h| !occ.contains(h));
                 let reachable = self
                     .state
                     .map
@@ -291,7 +301,33 @@ impl GameEngine {
                 reachable.contains_key(&hex)
                     && hex.distance(&target_pos) <= unit.attack_range
             }
-            _ => false,
+            // The unit plans to stay put but its current hex is currently
+            // contested: another friendly unit has planned a move onto it.
+            // Once that mover resolves, this hex becomes free, so a normal
+            // move order here is legal — an attack from this same position
+            // must be legal too, otherwise valid move+attack combos could
+            // never be ordered and battles would stall forever.
+            _ => {
+                // No different move is planned, so the only positions this
+                // unit can act from are its current hex and (at most) a
+                // planned destination equal to it. An attack from here is
+                // legal iff standing-and-attacking is legal — except when the
+                // unit is currently "buried" inside another unit's hex (a
+                // stacked state produced by a legacy simultaneous-move bug).
+                // In that case the co-tenant will step away during resolution
+                // and free this hex, so the attack becomes executable even
+                // though the raw distance check fails at planning time.
+                if stand_and_attack {
+                    true
+                } else {
+                    let shares_hex_with_other_alive_unit = self
+                        .state
+                        .units
+                        .values()
+                        .any(|u| u.id != unit_id && u.is_alive() && u.pos == from_pos);
+                    shares_hex_with_other_alive_unit && unit.can_afford(1)
+                }
+            }
         };
 
         if !(stand_and_attack || attack_after_move) {
@@ -560,4 +596,5 @@ mod tests {
             "scripted battle should reach a winner within the round cap"
         );
     }
+
 }
