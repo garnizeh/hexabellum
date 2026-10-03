@@ -244,7 +244,7 @@ impl MatchActor {
                         }
                     }
                 }
-                MatchCommand::CancelOrders { player_id, round } => {
+                MatchCommand::CancelOrders { player_id, round: _ } => {
                     if self.phase == MatchPhaseDto::Planning {
                         if let Some(session) = self.session.as_mut() {
                             if let Some(conn) = self.players.get(&player_id) {
@@ -256,9 +256,8 @@ impl MatchActor {
                             }
                         }
                         self.submitted_players.remove(&player_id);
-                        if let Some(conn) = self.players.get(&player_id) {
-                            conn.send(ServerMessage::OrdersAccepted { round });
-                        }
+                        self.grace_timer_active = false;
+                        self.grace_period_seq += 1;
                     }
                 }
                 MatchCommand::HeroSelectTimerFired => {
@@ -605,11 +604,23 @@ impl MatchActor {
 
         if all_ready && self.players.len() >= 2 && self.phase == MatchPhaseDto::Lobby {
             self.start_hero_select_phase().await;
+        } else if self.phase == MatchPhaseDto::HeroSelect {
+            let all_selected_and_ready = self
+                .players
+                .values()
+                .filter(|p| p.is_connected && !p.is_ai)
+                .all(|p| p.hero_def_id.is_some() && p.is_ready);
+            if all_selected_and_ready {
+                self.finalize_hero_draft_and_start_match().await;
+            }
         }
     }
 
     pub async fn start_hero_select_phase(&mut self) {
         self.phase = MatchPhaseDto::HeroSelect;
+        for p in self.players.values_mut() {
+            p.is_ready = false;
+        }
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -651,6 +662,15 @@ impl MatchActor {
                         .assign(unit_id, Controller::Player(conn.player_id.clone()));
                 }
             }
+        }
+
+        // Broadcast MatchStarting with initial team snapshot
+        for conn in self.players.values() {
+            let initial_snapshot = session.snapshot_for_player(conn.team, Some(&conn.player_id), None);
+            conn.send(ServerMessage::MatchStarting {
+                round: session.state.round,
+                initial_snapshot,
+            });
         }
 
         self.session = Some(session);
@@ -837,18 +857,28 @@ impl MatchActor {
         for team in [0, 1] {
             let dtos: Vec<HeroDto> = hero_defs
                 .iter()
-                .map(|def| HeroDto {
-                    id: def.id.clone(),
-                    name: def.name.clone(),
-                    role: def.role.clone(),
-                    max_hp: def.max_hp,
-                    attack_damage: def.attack_damage,
-                    attack_range: def.attack_range,
-                    vision_range: def.vision_range,
-                    max_energy: def.max_energy,
-                    spell_id: def.spell.id.clone(),
-                    spell_name: def.spell.name.clone(),
-                    spell_desc: def.spell.name.clone(),
+                .map(|def| {
+                    let spell_desc = match def.spell.id.as_str() {
+                        "cleave" => "Cleaves all adjacent enemies in a 1-hex radial sweep for 15 physical damage.",
+                        "bolt" => "Fires an energy-infused projectile dealing 25 damage (Range 3, requires LOS).",
+                        "mend" => "Channels revitalizing energy to heal an allied unit for +20 HP (Range 2).",
+                        "longshot" => "High-caliber artillery round dealing 30 damage (Range 4, Min Range 2, CD 3, requires LOS).",
+                        "fury" => "Ignites furious rage, granting +8 Attack Damage buff for 2 rounds (CD 3).",
+                        _ => def.spell.name.as_str(),
+                    }.to_string();
+                    HeroDto {
+                        id: def.id.clone(),
+                        name: def.name.clone(),
+                        role: def.role.clone(),
+                        max_hp: def.max_hp,
+                        attack_damage: def.attack_damage,
+                        attack_range: def.attack_range,
+                        vision_range: def.vision_range,
+                        max_energy: def.max_energy,
+                        spell_id: def.spell.id.clone(),
+                        spell_name: def.spell.name.clone(),
+                        spell_desc,
+                    }
                 })
                 .collect();
             pools.insert(team, dtos);

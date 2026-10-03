@@ -7,13 +7,22 @@ use hexabellum_core::session::{BattleConfig, BattleSession};
 use hexabellum_core::state::GameState;
 use hexabellum_core::turn::TurnProcessor;
 use hexabellum_core::unit::Unit;
+use dashmap::DashMap;
+use futures_util::{SinkExt, StreamExt};
 use hexabellum_protocol::{
-    ActionDto, ErrorCode, HexCoordDto, OrderDto,
+    ActionDto, ClientMessage, ErrorCode, HexCoordDto, MatchPhaseDto, OrderDto, ServerMessage,
 };
 use hexabellum_server::{
-    build_sanitized_snapshot, ConnectionState, HeroSelectDraft, MatchActor,
+    build_router, build_sanitized_snapshot, ConnectionState, HeroSelectDraft, MatchActor,
+    MatchRegistry,
 };
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::net::TcpListener;
+use tokio_tungstenite::connect_async;
+use tokio_tungstenite::tungstenite::Message;
 
 /// 5.1 Test 1: Order Ownership Permission Enforcement
 #[tokio::test]
@@ -258,3 +267,199 @@ async fn test_10_player_team_balance() {
     assert_eq!(team0_count, 5);
     assert_eq!(team1_count, 5);
 }
+
+async fn start_test_server(registry: MatchRegistry) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let app = build_router(registry);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    (addr, handle)
+}
+
+async fn recv_matching<F>(
+    player_label: &str,
+    ws: &mut tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    predicate: F,
+) -> ServerMessage
+where
+    F: Fn(&ServerMessage) -> bool,
+{
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .unwrap_or_else(|_| panic!("timeout waiting for WS message for {}", player_label))
+            .expect("stream closed unexpectedly")
+            .expect("websocket protocol error");
+        let text = msg.to_text().expect("message was not text");
+        let smsg: ServerMessage = match serde_json::from_str(text) {
+            Ok(m) => m,
+            Err(e) => panic!("failed to deserialize ServerMessage: {:?}, raw JSON: {}", e, text),
+        };
+        if predicate(&smsg) {
+            return smsg;
+        }
+    }
+}
+
+/// 5.8 10-Player WebSocket Lifecycle, Hero Draft, Lock-In, and Simultaneous Order Resolution
+#[tokio::test]
+async fn test_10_player_websocket_lifecycle_and_draft() {
+    let registry: MatchRegistry = Arc::new(DashMap::new());
+    let (addr, _server_task) = start_test_server(registry).await;
+    let client = reqwest::Client::new();
+
+    // 1. Create a 5v5 match
+    let resp = client
+        .post(format!("http://{}/api/matches", addr))
+        .json(&serde_json::json!({
+            "players_per_team": 5,
+            "heroes_per_team": 5,
+            "map_radius": 8,
+            "skip_draft": false,
+            "turn_duration_secs": 10,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let match_data: serde_json::Value = resp.json().await.unwrap();
+    let match_id = match_data["match_id"].as_str().unwrap().to_string();
+
+    // 2. Connect 10 WebSocket players concurrently
+    let mut websockets = Vec::new();
+    for i in 1..=10 {
+        let pid = format!("p_{}", i);
+        let url = format!(
+            "ws://{}/ws/match/{}?player_id={}&display_name=Player_{}",
+            addr, match_id, pid, i
+        );
+        let (mut ws, _) = connect_async(&url).await.unwrap();
+        let hello = recv_matching(&pid, &mut ws, |m| matches!(m, ServerMessage::HelloAck { .. })).await;
+        if let ServerMessage::HelloAck { player_id, .. } = hello {
+            assert_eq!(player_id, pid);
+        }
+        websockets.push(ws);
+    }
+
+    // 3. Verify balanced team assignments across all 10 players from LobbyUpdated
+    let mut player_teams: HashMap<String, u8> = HashMap::new();
+    let mut team_distribution = [0, 0];
+    for (i, ws) in websockets.iter_mut().enumerate() {
+        let pid = format!("p_{}", i + 1);
+        let pid_clone = pid.clone();
+        let lobby = recv_matching(&pid, ws, move |m| {
+            if let ServerMessage::LobbyUpdated { players, .. } = m {
+                players.iter().any(|p| p.player_id == pid_clone)
+            } else {
+                false
+            }
+        })
+        .await;
+        if let ServerMessage::LobbyUpdated { players, .. } = lobby {
+            let my_player = players.iter().find(|p| p.player_id == pid).unwrap();
+            player_teams.insert(pid.clone(), my_player.team);
+            team_distribution[my_player.team as usize] += 1;
+        }
+    }
+    assert_eq!(team_distribution[0], 5);
+    assert_eq!(team_distribution[1], 5);
+
+    // 4. All 10 players ready up in Lobby
+    for ws in &mut websockets {
+        let ready_msg = ClientMessage::SetReady { ready: true };
+        ws.send(Message::Text(serde_json::to_string(&ready_msg).unwrap().into()))
+            .await
+            .unwrap();
+    }
+
+    // 5. Verify transition to HeroSelect with 20s countdown
+    for (i, ws) in websockets.iter_mut().enumerate() {
+        let pid = format!("p_{}", i + 1);
+        let lobby = recv_matching(&pid, ws, |m| {
+            matches!(m, ServerMessage::LobbyUpdated { phase: MatchPhaseDto::HeroSelect, .. })
+        })
+        .await;
+        if let ServerMessage::LobbyUpdated { countdown_ms, .. } = lobby {
+            assert!(countdown_ms.is_some());
+        }
+    }
+
+    // 6. Each player picks a distinct hero for their team and locks in
+    let mut team0_heroes = vec!["vanguard", "ranger", "warden", "sniper", "berserker"];
+    let mut team1_heroes = vec!["vanguard", "ranger", "warden", "sniper", "berserker"];
+    for (i, ws) in websockets.iter_mut().enumerate() {
+        let pid = format!("p_{}", i + 1);
+        let team = player_teams[&pid];
+        let hero = if team == 0 {
+            team0_heroes.pop().unwrap()
+        } else {
+            team1_heroes.pop().unwrap()
+        };
+        let pick_msg = ClientMessage::SelectHero {
+            hero_def_id: hero.to_string(),
+        };
+        ws.send(Message::Text(serde_json::to_string(&pick_msg).unwrap().into()))
+            .await
+            .unwrap();
+
+        // Lock in by setting ready
+        let lock_msg = ClientMessage::SetReady { ready: true };
+        ws.send(Message::Text(serde_json::to_string(&lock_msg).unwrap().into()))
+            .await
+            .unwrap();
+    }
+
+    // 7. Verify all 10 players receive MatchStarting and RoundStarted
+    eprintln!(">>> STEP 7: Waiting for MatchStarting and RoundStarted");
+    let mut controlled_units = Vec::new();
+    for (i, ws) in websockets.iter_mut().enumerate() {
+        eprintln!(">>> STEP 7: Player {}", i);
+        let starting = recv_matching(&format!("p_{}", i + 1), ws, |m| matches!(m, ServerMessage::MatchStarting { .. })).await;
+        assert!(matches!(starting, ServerMessage::MatchStarting { round: 0, .. }));
+
+        let started = recv_matching(&format!("p_{}", i + 1), ws, |m| matches!(m, ServerMessage::RoundStarted { .. })).await;
+        if let ServerMessage::RoundStarted { round, snapshot, .. } = started {
+            assert_eq!(round, 0);
+            assert_eq!(snapshot.controlled_units.len(), 1);
+            controlled_units.push(snapshot.controlled_units[0]);
+        }
+    }
+    assert_eq!(controlled_units.len(), 10);
+
+    // 8. Each player submits orders for their authoritative hero unit
+    for (i, ws) in websockets.iter_mut().enumerate() {
+        let unit_id = controlled_units[i];
+        let order_msg = ClientMessage::SubmitOrders {
+            round: 0,
+            orders: vec![OrderDto {
+                unit_id,
+                move_target: None,
+                action: ActionDto::Wait,
+            }],
+        };
+        ws.send(Message::Text(serde_json::to_string(&order_msg).unwrap().into()))
+            .await
+            .unwrap();
+
+        let ack = recv_matching(&format!("p_{}", i + 1), ws, |m| matches!(m, ServerMessage::OrdersAccepted { .. })).await;
+        assert!(matches!(ack, ServerMessage::OrdersAccepted { round: 0 }));
+    }
+
+    // 9. Verify RoundResolved and RoundStarted for round 1 on all 10 players
+    for (i, ws) in websockets.iter_mut().enumerate() {
+        let resolved = recv_matching(&format!("p_{}", i + 1), ws, |m| matches!(m, ServerMessage::RoundResolved { .. })).await;
+        if let ServerMessage::RoundResolved { round, snapshot, state_hash, .. } = resolved {
+            assert_eq!(round, 0);
+            assert_eq!(snapshot.round, 1);
+            assert!(state_hash.is_some());
+        }
+
+        let next_started = recv_matching(&format!("p_{}", i + 1), ws, |m| matches!(m, ServerMessage::RoundStarted { round: 1, .. })).await;
+        assert!(matches!(next_started, ServerMessage::RoundStarted { round: 1, .. }));
+    }
+}
+

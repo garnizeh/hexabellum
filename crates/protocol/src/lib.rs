@@ -326,6 +326,47 @@ pub enum ClientMessage {
     },
 }
 
+pub mod team_map_serde {
+    use std::collections::HashMap;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::de::Visitor;
+
+    pub fn serialize<S, V>(map: &HashMap<u8, V>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        V: serde::Serialize,
+    {
+        map.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D, V>(deserializer: D) -> Result<HashMap<u8, V>, D::Error>
+    where
+        D: Deserializer<'de>,
+        V: Deserialize<'de>,
+    {
+        struct TeamMapVisitor<V>(std::marker::PhantomData<V>);
+        impl<'de, V: Deserialize<'de>> Visitor<'de> for TeamMapVisitor<V> {
+            type Value = HashMap<u8, V>;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a map with integer or string keys")
+            }
+            fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'de>,
+            {
+                let mut map = HashMap::new();
+                while let Some(key_str) = access.next_key::<String>()? {
+                    let team: u8 = key_str.parse().map_err(serde::de::Error::custom)?;
+                    let value = access.next_value()?;
+                    map.insert(team, value);
+                }
+                Ok(map)
+            }
+        }
+        deserializer.deserialize_map(TeamMapVisitor(std::marker::PhantomData))
+    }
+}
+
 /// Downstream messages sent from server to browser client.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -345,6 +386,7 @@ pub enum ServerMessage {
         match_id: String,
         phase: MatchPhaseDto,
         players: Vec<PlayerLobbyDto>,
+        #[serde(with = "team_map_serde")]
         hero_pools: HashMap<u8, Vec<HeroDto>>,
         #[serde(default)]
         countdown_ms: Option<u64>,

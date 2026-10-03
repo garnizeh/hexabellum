@@ -26,19 +26,19 @@ const HEROES: HeroSpec[] = [
     id: 'vanguard',
     name: 'Vanguard',
     icon: '🛡️',
-    role: 'Frontline Bruiser',
-    stats: { hp: 140, ap: 3, dmg: 20, rng: 1, vis: 3, eng: 5 },
+    role: 'Frontline Tank',
+    stats: { hp: 140, ap: 3, dmg: 18, rng: 1, vis: 3, eng: 5 },
     ability: {
       name: 'Cleave',
       cost: '⚡3 Energy · 1 AP',
-      desc: 'Cleaves all adjacent enemies in a 1-hex radial sweep for 30 physical damage.',
+      desc: 'Cleaves all adjacent enemies in a 1-hex radial sweep for 15 physical damage.',
     },
   },
   {
     id: 'ranger',
     name: 'Ranger',
     icon: '🏹',
-    role: 'Ranged Marksman',
+    role: 'Marksman',
     stats: { hp: 90, ap: 3, dmg: 16, rng: 2, vis: 4, eng: 5 },
     ability: {
       name: 'Bolt',
@@ -50,19 +50,19 @@ const HEROES: HeroSpec[] = [
     id: 'warden',
     name: 'Warden',
     icon: '⚕️',
-    role: 'Combat Medic',
-    stats: { hp: 100, ap: 3, dmg: 12, rng: 1, vis: 3, eng: 6 },
+    role: 'Support / Healer',
+    stats: { hp: 100, ap: 3, dmg: 12, rng: 1, vis: 4, eng: 6 },
     ability: {
       name: 'Mend',
       cost: '⚡2 Energy · 1 AP',
-      desc: 'Channels revitalizing energy to heal an allied unit for +30 HP (Range 2).',
+      desc: 'Channels revitalizing energy to heal an allied unit for +20 HP (Range 2).',
     },
   },
   {
     id: 'sniper',
     name: 'Sniper',
     icon: '🎯',
-    role: 'Artillery Marksman',
+    role: 'Artillery / Assassin',
     stats: { hp: 80, ap: 3, dmg: 14, rng: 3, vis: 5, eng: 5 },
     ability: {
       name: 'Longshot',
@@ -74,7 +74,7 @@ const HEROES: HeroSpec[] = [
     id: 'berserker',
     name: 'Berserker',
     icon: '🪓',
-    role: 'Melee Rage Bruiser',
+    role: 'Bruiser / Diver',
     stats: { hp: 120, ap: 3, dmg: 20, rng: 1, vis: 3, eng: 5 },
     ability: {
       name: 'Fury',
@@ -245,6 +245,7 @@ export class HeroSelectScreen {
     lockBtn?.addEventListener('click', () => {
       if (this.selectedHeroId) {
         this.session?.selectHero(this.selectedHeroId);
+        this.session?.setReady(true);
       }
     });
   }

@@ -195,7 +195,7 @@ export class InputHandler {
     const hoveredUnit = Object.values(state.units).find(u => u.pos.q === hex.q && u.pos.r === hex.r && u.hp > 0);
 
     if (hoveredUnit && hoveredUnit.id !== this.selectedUnit) {
-      const blockers = this.session?.getVisionBlockers() ?? new Set(['0,2', '0,-2', '2,2', '-2,-2']);
+      const blockers = this.session?.getVisionBlockers() ?? new Set(['0,-2', '0,2', '-2,-3', '2,-3', '-3,2', '3,-2']);
       const isBlocked = !this.hasLOS(blockers, origin, hoveredUnit.pos);
       this.renderer.drawRaycastLine(origin, hoveredUnit.pos, isBlocked);
     } else {

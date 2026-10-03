@@ -128,7 +128,7 @@ export class HexRenderer {
     const obstacleSet = new Set(obstacles.map(h => `${h.q},${h.r}`));
 
     // Known terrain positions (Radius 8 arena features)
-    const walls = new Set(['0,2', '0,-2']);
+    const walls = new Set(['0,2', '0,-2', '-2,-3', '2,-3', '-3,2', '3,-2']);
     const smokePillars = new Set(['2,2', '-2,-2']);
     const boulders = new Set(['0,1', '0,-1']);
     const shrines = new Set(['0,4', '0,-4', '0,3', '0,-3']);

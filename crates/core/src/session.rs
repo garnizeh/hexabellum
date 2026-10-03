@@ -626,7 +626,10 @@ impl BattleSession {
             );
         }
 
-        self.staged_orders.insert(team, validated_orders);
+        let team_orders = self.staged_orders.entry(team).or_default();
+        for (uid, order) in validated_orders {
+            team_orders.insert(uid, order);
+        }
         self.submitted_teams.insert(team);
         Ok(())
     }
@@ -688,6 +691,7 @@ impl BattleSession {
                 } => {
                     self.unit_registry
                         .insert(*unit_id, (*team, *unit_kind, *pos));
+                    self.controllers.assign(*unit_id, Controller::Automatic);
                 }
                 GameEvent::UnitMoved { unit_id, to, .. } => {
                     if let Some(meta) = self.unit_registry.get_mut(unit_id) {
@@ -1141,6 +1145,7 @@ impl BattleSession {
             .neutral_camps
             .iter()
             .map(|c| {
+                let is_visible = visible_hexes.contains(&c.camp_pos);
                 let is_alive = self
                     .state
                     .get_unit(c.guardian_id)
@@ -1149,8 +1154,8 @@ impl BattleSession {
                 hexabellum_protocol::NeutralCampDto {
                     id: c.id.clone(),
                     pos: HexDto::new(c.camp_pos.q, c.camp_pos.r),
-                    is_alive,
-                    guardian_unit_id: if is_alive {
+                    is_alive: if is_visible { is_alive } else { true },
+                    guardian_unit_id: if is_visible && is_alive {
                         Some(c.guardian_id)
                     } else {
                         None

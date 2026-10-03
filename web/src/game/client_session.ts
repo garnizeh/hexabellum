@@ -1,6 +1,7 @@
 import { NetworkBridge, ConnectionState } from './net';
 import {
   SnapshotDto,
+  HexDto,
   OrderDto,
   SanitizedGameEvent,
   ProtocolErrorCode,
@@ -364,9 +365,11 @@ export class ClientSession {
   }
 
   getVisionBlockers(): Set<string> {
-    // Radius 8 arena features:
-    // Walls at (0, 2) & (0, -2); Smoke pillars at (2, 2) & (-2, -2)
-    return new Set(['0,2', '0,-2', '2,2', '-2,-2']);
+    if (this.currentSnapshot?.map?.obstacles?.length) {
+      return new Set(this.currentSnapshot.map.obstacles.map(h => `${h.q},${h.r}`));
+    }
+    // Radius 8 arena features: 6 tactical mid-lane vision blockers
+    return new Set(['0,-2', '0,2', '-2,-3', '2,-3', '-3,2', '3,-2']);
   }
 
   getMoveTargets(unitId: number): { q: number; r: number; cost: number }[] {
@@ -463,7 +466,10 @@ export class ClientSession {
       ...state.units[unitId],
       pos: { q: fromQ, r: fromR },
     };
-    return hexGetSpellTargets(virtualCaster, spellId, state.units, blockers);
+    const visibleHexes = this.currentSnapshot?.visible_hexes
+      ? new Set<string>(this.currentSnapshot.visible_hexes.map((h: HexDto) => `${h.q},${h.r}`))
+      : undefined;
+    return hexGetSpellTargets(virtualCaster, spellId, state.units, blockers, visibleHexes);
   }
 
   private setupNetworkCallbacks(): void {

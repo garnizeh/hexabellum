@@ -164,7 +164,7 @@ impl Unit {
             ap: 3,
             max_ap: 3,
             initiative,
-            attack_damage: 20,
+            attack_damage: 18,
             attack_range: 1,
             vision_range: 3,
             energy: 5,
