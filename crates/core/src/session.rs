@@ -19,6 +19,20 @@ pub enum Controller {
     Automatic,
 }
 
+/// Detailed error information for rejected order submissions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderSubmissionError {
+    pub code: ProtocolErrorCode,
+    pub unit_id: Option<UnitId>,
+    pub reason: String,
+}
+
+impl PartialEq<ProtocolErrorCode> for OrderSubmissionError {
+    fn eq(&self, other: &ProtocolErrorCode) -> bool {
+        self.code == *other
+    }
+}
+
 /// Match configuration parameters.
 #[derive(Debug, Clone)]
 pub struct BattleConfig {
@@ -138,12 +152,23 @@ impl BattleSession {
         team: TeamId,
         round: u32,
         orders: Vec<OrderDto>,
-    ) -> Result<(), ProtocolErrorCode> {
+    ) -> Result<(), OrderSubmissionError> {
         if self.state.phase != Phase::Planning {
-            return Err(ProtocolErrorCode::InvalidPhase);
+            return Err(OrderSubmissionError {
+                code: ProtocolErrorCode::InvalidPhase,
+                unit_id: None,
+                reason: "Orders can only be submitted during Planning phase".into(),
+            });
         }
         if self.state.round != round {
-            return Err(ProtocolErrorCode::StaleRound);
+            return Err(OrderSubmissionError {
+                code: ProtocolErrorCode::StaleRound,
+                unit_id: None,
+                reason: format!(
+                    "Stale round: match is at round {}, received orders for round {}",
+                    self.state.round, round
+                ),
+            });
         }
 
         let mut validated_orders = HashMap::new();
@@ -151,20 +176,43 @@ impl BattleSession {
         for dto in orders {
             let unit = match self.state.get_unit(dto.unit_id) {
                 Some(u) => u,
-                None => return Err(ProtocolErrorCode::UnitNotOwned),
+                None => {
+                    return Err(OrderSubmissionError {
+                        code: ProtocolErrorCode::UnitNotOwned,
+                        unit_id: Some(dto.unit_id),
+                        reason: format!("Unit #{} does not exist", dto.unit_id),
+                    });
+                }
             };
 
             if !unit.is_alive() {
-                return Err(ProtocolErrorCode::UnitDead);
+                return Err(OrderSubmissionError {
+                    code: ProtocolErrorCode::UnitDead,
+                    unit_id: Some(dto.unit_id),
+                    reason: format!("Unit #{} is dead", dto.unit_id),
+                });
             }
             if unit.team != team {
-                return Err(ProtocolErrorCode::UnitNotOwned);
+                return Err(OrderSubmissionError {
+                    code: ProtocolErrorCode::UnitNotOwned,
+                    unit_id: Some(dto.unit_id),
+                    reason: format!("Unit #{} does not belong to team {}", dto.unit_id, team),
+                });
             }
 
             // Verify controller ownership
             match self.controllers.get(&dto.unit_id) {
                 Some(Controller::Player(owner)) if owner == player_id => {}
-                _ => return Err(ProtocolErrorCode::NotAuthorized),
+                _ => {
+                    return Err(OrderSubmissionError {
+                        code: ProtocolErrorCode::NotAuthorized,
+                        unit_id: Some(dto.unit_id),
+                        reason: format!(
+                            "Player {} is not authorized to order unit #{}",
+                            player_id, dto.unit_id
+                        ),
+                    });
+                }
             }
 
             let move_target = dto.move_target.map(|h| HexCoord::new(h.q, h.r));
@@ -173,10 +221,23 @@ impl BattleSession {
                 ActionDto::Attack { target_id } => {
                     let target = match self.state.get_unit(target_id) {
                         Some(t) => t,
-                        None => return Err(ProtocolErrorCode::InvalidTarget),
+                        None => {
+                            return Err(OrderSubmissionError {
+                                code: ProtocolErrorCode::InvalidTarget,
+                                unit_id: Some(dto.unit_id),
+                                reason: format!("Attack target #{} does not exist", target_id),
+                            });
+                        }
                     };
                     if !target.is_alive() || target.team == team {
-                        return Err(ProtocolErrorCode::InvalidTarget);
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::InvalidTarget,
+                            unit_id: Some(dto.unit_id),
+                            reason: format!(
+                                "Invalid attack target #{}: dead or friendly unit",
+                                target_id
+                            ),
+                        });
                     }
                     Action::Attack { target_id }
                 }
@@ -418,10 +479,12 @@ impl BattleSession {
     pub fn snapshot_for_team(&self, team: TeamId, deadline_unix_ms: Option<u64>) -> SnapshotDto {
         let visible_hexes = self.state.fog.visible_hexes(team);
 
-        let visible_units: Vec<UnitDto> = self
-            .state
-            .units
-            .values()
+        let mut sorted_unit_ids: Vec<UnitId> = self.state.units.keys().copied().collect();
+        sorted_unit_ids.sort_unstable();
+
+        let visible_units: Vec<UnitDto> = sorted_unit_ids
+            .iter()
+            .filter_map(|id| self.state.get_unit(*id))
             .filter(|unit| unit.team == team || visible_hexes.contains(&unit.pos))
             .map(|u| UnitDto {
                 id: u.id,
@@ -433,35 +496,44 @@ impl BattleSession {
                 ap: u.ap,
                 max_ap: u.max_ap,
                 initiative: u.initiative,
+                attack_damage: u.attack_damage,
                 attack_range: u.attack_range,
                 vision_range: u.vision_range,
                 is_stationary: u.kind.is_stationary(),
             })
             .collect();
 
-        let controlled_units: Vec<UnitId> = self
-            .state
-            .units
-            .values()
+        let controlled_units: Vec<UnitId> = sorted_unit_ids
+            .iter()
+            .filter_map(|id| self.state.get_unit(*id))
             .filter(|u| u.team == team && u.kind == UnitKind::Hero && u.is_alive())
             .map(|u| u.id)
             .collect();
 
-        let walkable: Vec<HexDto> = self
+        let mut walkable: Vec<HexDto> = self
             .state
             .map
             .all_hexes()
             .iter()
+            .filter(|h| !self.state.map.obstacles.contains(h))
             .map(|h| HexDto::new(h.q, h.r))
             .collect();
+        walkable.sort_by_key(|h| (h.q, h.r));
 
-        let obstacles: Vec<HexDto> = self
+        let mut obstacles: Vec<HexDto> = self
             .state
             .map
             .obstacles
             .iter()
             .map(|h| HexDto::new(h.q, h.r))
             .collect();
+        obstacles.sort_by_key(|h| (h.q, h.r));
+
+        let mut visible_hexes_dto: Vec<HexDto> = visible_hexes
+            .iter()
+            .map(|h| HexDto::new(h.q, h.r))
+            .collect();
+        visible_hexes_dto.sort_by_key(|h| (h.q, h.r));
 
         SnapshotDto {
             match_id: self.match_id.clone(),
@@ -474,10 +546,7 @@ impl BattleSession {
                 obstacles,
             },
             units: visible_units,
-            visible_hexes: visible_hexes
-                .iter()
-                .map(|h| HexDto::new(h.q, h.r))
-                .collect(),
+            visible_hexes: visible_hexes_dto,
             controlled_units,
             deadline_unix_ms,
             state_hash: self.state_hash(),
@@ -498,10 +567,17 @@ impl BattleSession {
             if let Some(unit) = self.state.get_unit(id) {
                 hasher.update(&unit.id.to_le_bytes());
                 hasher.update(&[unit.team]);
+                hasher.update(&[unit.kind as u8]);
                 hasher.update(&unit.pos.q.to_le_bytes());
                 hasher.update(&unit.pos.r.to_le_bytes());
                 hasher.update(&unit.hp.to_le_bytes());
+                hasher.update(&unit.max_hp.to_le_bytes());
                 hasher.update(&unit.ap.to_le_bytes());
+                hasher.update(&unit.max_ap.to_le_bytes());
+                hasher.update(&unit.attack_damage.to_le_bytes());
+                hasher.update(&unit.attack_range.to_le_bytes());
+                hasher.update(&unit.vision_range.to_le_bytes());
+                hasher.update(&unit.initiative.to_le_bytes());
             }
         }
 
@@ -567,6 +643,16 @@ mod tests {
             session2.state_hash(),
             "Identical match setups produced divergent BLAKE3 state hashes!"
         );
+
+        let mut session3 = BattleSession::new("m3".into(), BattleConfig::default());
+        if let Some(unit) = session3.state.get_unit_mut(1) {
+            unit.attack_damage += 2;
+        }
+        assert_ne!(
+            session1.state_hash(),
+            session3.state_hash(),
+            "Mutating unit attack damage must change BLAKE3 state hash!"
+        );
     }
 
     #[test]
@@ -605,7 +691,7 @@ mod tests {
 
         // 2. Reject stale round
         let res_stale = session.submit_player_orders(&player_p1, 0, 99, vec![]);
-        assert_eq!(res_stale, Err(ProtocolErrorCode::StaleRound));
+        assert_eq!(res_stale.unwrap_err().code, ProtocolErrorCode::StaleRound);
 
         // 3. Reject unit not owned (Hero 4 is Team 1)
         let unowned_order = OrderDto {
@@ -613,8 +699,12 @@ mod tests {
             move_target: None,
             action: ActionDto::Wait,
         };
-        let res_unowned = session.submit_player_orders(&player_p1, 0, 0, vec![unowned_order]);
-        assert_eq!(res_unowned, Err(ProtocolErrorCode::UnitNotOwned));
+        let err_unowned = session
+            .submit_player_orders(&player_p1, 0, 0, vec![unowned_order])
+            .unwrap_err();
+        assert_eq!(err_unowned.code, ProtocolErrorCode::UnitNotOwned);
+        assert_eq!(err_unowned.unit_id, Some(4));
+        assert!(err_unowned.reason.contains("Unit #4"));
 
         // 4. Reject invalid target (cannot attack own team)
         let friendly_attack = OrderDto {
@@ -622,7 +712,10 @@ mod tests {
             move_target: None,
             action: ActionDto::Attack { target_id: 2 },
         };
-        let res_friendly = session.submit_player_orders(&player_p1, 0, 0, vec![friendly_attack]);
-        assert_eq!(res_friendly, Err(ProtocolErrorCode::InvalidTarget));
+        let err_friendly = session
+            .submit_player_orders(&player_p1, 0, 0, vec![friendly_attack])
+            .unwrap_err();
+        assert_eq!(err_friendly.code, ProtocolErrorCode::InvalidTarget);
+        assert_eq!(err_friendly.unit_id, Some(1));
     }
 }

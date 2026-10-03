@@ -21,7 +21,7 @@ export function snapshotToGameState(snapshot: SnapshotDto): GameState {
       ap: u.ap,
       max_ap: u.max_ap,
       initiative: u.initiative,
-      attack_damage: u.kind === 'Tower' ? 30 : u.kind === 'Hero' ? 20 : 8,
+      attack_damage: u.attack_damage ?? (u.kind === 'Tower' ? 30 : u.kind === 'Hero' ? 20 : 8),
       attack_range: u.attack_range,
       vision_range: u.vision_range,
       spawn_counter: 0,
@@ -51,6 +51,7 @@ export interface ClientSessionEvents {
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
   onRoundResolved: (round: number, events: SanitizedGameEvent[], snapshot: SnapshotDto) => void;
   onMatchEnded: (winner: number | null, snapshot: SnapshotDto) => void;
+  onOpponentStatus?: (online: boolean) => void;
   onError: (msg: string) => void;
 }
 
@@ -130,6 +131,19 @@ export class ClientSession {
     this.net.connect(matchId);
   }
 
+  getStagedCount(): number {
+    return this.stagedOrders.size;
+  }
+
+  stageWaitOrdersForControlled(): void {
+    if (!this.currentSnapshot) return;
+    for (const unitId of this.currentSnapshot.controlled_units) {
+      if (!this.stagedOrders.has(unitId)) {
+        this.stageWaitOrder(unitId);
+      }
+    }
+  }
+
   stageMoveOrder(unitId: number, q: number, r: number): boolean {
     const existing = this.stagedOrders.get(unitId);
     this.stagedOrders.set(unitId, {
@@ -141,7 +155,21 @@ export class ClientSession {
   }
 
   stageAttackOrder(unitId: number, targetId: number): boolean {
+    if (!this.currentSnapshot) return false;
+    const unit = this.currentSnapshot.units.find(u => u.id === unitId);
+    if (!unit || unit.hp === 0) return false;
+
     const existing = this.stagedOrders.get(unitId);
+    let moveCost = 0;
+    if (existing?.move_target) {
+      const path = this.findPath(unit.pos.q, unit.pos.r, existing.move_target.q, existing.move_target.r);
+      moveCost = path.length > 1 ? path.length - 1 : 0;
+    }
+    // Attack costs 1 AP
+    if (moveCost + 1 > unit.ap) {
+      return false;
+    }
+
     this.stagedOrders.set(unitId, {
       unit_id: unitId,
       move_target: existing?.move_target ?? null,
@@ -194,6 +222,16 @@ export class ClientSession {
     const unit = this.currentSnapshot.units.find(u => u.id === unitId);
     if (!unit || unit.hp === 0) return [];
 
+    let moveCost = 0;
+    if (unit.pos.q !== fromQ || unit.pos.r !== fromR) {
+      const path = this.findPath(unit.pos.q, unit.pos.r, fromQ, fromR);
+      moveCost = path.length > 1 ? path.length - 1 : 0;
+    }
+    // Attack costs 1 AP: ensure remaining AP >= 1
+    if (moveCost + 1 > unit.ap) {
+      return [];
+    }
+
     const state = snapshotToGameState(this.currentSnapshot);
     const visibleHexes = new Set(this.currentSnapshot.visible_hexes.map(h => `${h.q},${h.r}`));
     return hexGetAttackTargets({ q: fromQ, r: fromR }, unit.attack_range, state.units, this.currentTeam, visibleHexes);
@@ -223,6 +261,7 @@ export class ClientSession {
         this.currentSnapshot = snapshot;
         this.events.onMatchEnded?.(winner, snapshot);
       },
+      onOpponentStatus: (online) => this.events.onOpponentStatus?.(online),
       onError: (msg) => this.events.onError?.(msg),
     });
   }

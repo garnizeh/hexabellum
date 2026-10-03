@@ -161,8 +161,10 @@ async function main() {
     }
 
     timer.startWithDeadline(deadlineUnixMs, () => {
-      if (!endTurnBtn.disabled) {
-        endTurnBtn.click();
+      if (endTurnBtn) endTurnBtn.disabled = true;
+      if (statusEl) {
+        statusEl.textContent = 'Turn deadline reached — resolving with server...';
+        statusEl.style.color = '#ffea00';
       }
     });
   };
@@ -200,8 +202,10 @@ async function main() {
       if (input.getIsResolving()) {
         pendingRoundStarted = { round, deadlineUnixMs, snapshot };
         timer.startWithDeadline(deadlineUnixMs, () => {
-          if (!endTurnBtn.disabled) {
-            endTurnBtn.click();
+          if (endTurnBtn) endTurnBtn.disabled = true;
+          if (statusEl) {
+            statusEl.textContent = 'Turn deadline reached — resolving with server...';
+            statusEl.style.color = '#ffea00';
           }
         });
       } else {
@@ -221,6 +225,9 @@ async function main() {
     onRoundResolved: (round, events, _snapshot) => {
       if (endTurnBtn) endTurnBtn.disabled = true;
       if (statusEl) statusEl.textContent = `Resolving Round ${round}...`;
+      console.debug(
+        `[Hexabellum] Round ${round} resolved. Server state hash: ${_snapshot.state_hash}`
+      );
 
       input.handleServerResolved(events, animator, () => {
         if (pendingMatchEnded) {
@@ -244,6 +251,11 @@ async function main() {
         renderCurrentState();
       }
     },
+    onOpponentStatus: (online) => {
+      if (!session.getIsPvAI()) {
+        hud.setOpponentStatus(online ? 'ready' : 'offline');
+      }
+    },
     onError: (msg) => {
       hud.showToast(`Error: ${msg}`);
     },
@@ -251,11 +263,18 @@ async function main() {
 
   const handleEndTurn = () => {
     endTurnBtn.disabled = true;
-    if (statusEl) statusEl.textContent = 'Orders submitted. Awaiting resolution...';
 
     if (isOnline) {
+      if (session.getStagedCount() === 0) {
+        session.stageWaitOrdersForControlled();
+      }
+      if (statusEl) {
+        statusEl.textContent = 'Orders submitted. Awaiting resolution...';
+        statusEl.style.color = '#00d2ff';
+      }
       session.submitOrders();
     } else {
+      if (statusEl) statusEl.textContent = 'Orders submitted. Awaiting resolution...';
       timer.stop();
       input.endTurnWithAnimation(animator, () => {
         renderCurrentState();

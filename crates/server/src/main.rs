@@ -25,6 +25,15 @@ async fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("Hexabellum Authoritative Server listening on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => {
+            if let Err(err) = axum::serve(listener, app).await {
+                tracing::error!("Server error: {:?}", err);
+            }
+        }
+        Err(err) => {
+            tracing::error!("Failed to bind to {}: {:?}", addr, err);
+            std::process::exit(1);
+        }
+    }
 }

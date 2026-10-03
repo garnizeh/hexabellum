@@ -14,9 +14,12 @@ pub enum MatchCommand {
     PlayerConnect {
         player_id: PlayerId,
         reconnect_token: Option<ReconnectToken>,
-        sender: mpsc::Sender<ServerMessage>,
+        sender: mpsc::UnboundedSender<ServerMessage>,
     },
     PlayerDisconnect {
+        player_id: PlayerId,
+    },
+    PlayerPing {
         player_id: PlayerId,
     },
     SubmitOrders {
@@ -31,6 +34,7 @@ pub enum MatchCommand {
         round: Round,
         seq: u64,
     },
+    Finish,
 }
 
 /// Actor handle held by the registry.
@@ -40,9 +44,13 @@ pub struct MatchActorHandle {
 }
 
 impl MatchActorHandle {
-    pub fn new(match_id: String, config: BattleConfig) -> Self {
+    pub fn new(
+        match_id: String,
+        config: BattleConfig,
+        registry: Option<crate::MatchRegistry>,
+    ) -> Self {
         let (tx, rx) = mpsc::channel(128);
-        let actor = MatchActor::new(match_id, config, tx.clone());
+        let actor = MatchActor::new(match_id, config, tx.clone(), registry);
         tokio::spawn(actor.run(rx));
         Self { tx }
     }
@@ -61,6 +69,7 @@ pub struct MatchActor {
     pub grace_timer_active: bool,
     pub grace_period_seq: u64,
     pub self_tx: mpsc::Sender<MatchCommand>,
+    pub registry: Option<crate::MatchRegistry>,
 }
 
 impl MatchActor {
@@ -68,6 +77,7 @@ impl MatchActor {
         match_id: String,
         config: BattleConfig,
         self_tx: mpsc::Sender<MatchCommand>,
+        registry: Option<crate::MatchRegistry>,
     ) -> Self {
         let session = BattleSession::new(match_id.clone(), config);
         Self {
@@ -79,6 +89,7 @@ impl MatchActor {
             grace_timer_active: false,
             grace_period_seq: 0,
             self_tx,
+            registry,
         }
     }
 
@@ -98,6 +109,11 @@ impl MatchActor {
                 MatchCommand::PlayerDisconnect { player_id } => {
                     self.handle_player_disconnect(player_id);
                 }
+                MatchCommand::PlayerPing { player_id } => {
+                    if let Some(conn) = self.players.get_mut(&player_id) {
+                        conn.last_seen = Instant::now();
+                    }
+                }
                 MatchCommand::SubmitOrders {
                     player_id,
                     round,
@@ -106,7 +122,11 @@ impl MatchActor {
                     self.handle_submit_orders(player_id, round, orders).await;
                 }
                 MatchCommand::TurnTimerFired { round } => {
-                    if self.session.state.round == round {
+                    if self.session.state.round == round
+                        && self.session.state.winner.is_none()
+                        && self.session.state.phase != hexabellum_core::state::Phase::MatchEnd
+                        && self.turn_deadline_unix_ms.is_some()
+                    {
                         info!(
                             "MatchActor [{}] Turn timer expired for round {}",
                             self.match_id, round
@@ -118,6 +138,9 @@ impl MatchActor {
                     if self.session.state.round == round
                         && self.grace_timer_active
                         && self.grace_period_seq == seq
+                        && self.session.state.winner.is_none()
+                        && self.session.state.phase != hexabellum_core::state::Phase::MatchEnd
+                        && self.turn_deadline_unix_ms.is_some()
                     {
                         info!(
                             "MatchActor [{}] Early resolution grace period elapsed for round {} (seq {})",
@@ -125,6 +148,16 @@ impl MatchActor {
                         );
                         self.resolve_round().await;
                     }
+                }
+                MatchCommand::Finish => {
+                    info!(
+                        "MatchActor [{}] Cleaning up match actor and registry",
+                        self.match_id
+                    );
+                    if let Some(ref reg) = self.registry {
+                        reg.remove(&self.match_id);
+                    }
+                    break;
                 }
             }
         }
@@ -136,65 +169,81 @@ impl MatchActor {
         &mut self,
         player_id: PlayerId,
         reconnect_token: Option<ReconnectToken>,
-        sender: mpsc::Sender<ServerMessage>,
+        sender: mpsc::UnboundedSender<ServerMessage>,
     ) {
+        // If match already ended, notify and return
+        if self.session.state.winner.is_some()
+            || self.session.state.phase == hexabellum_core::state::Phase::MatchEnd
+        {
+            let snapshot = self.session.snapshot_for_team(0, None);
+            let _ = sender.send(ServerMessage::MatchEnded {
+                winner: self.session.state.winner,
+                snapshot,
+            });
+            return;
+        }
+
         // Reconnection check
         if let Some(conn) = self.players.get_mut(&player_id) {
             let valid_token = reconnect_token.as_ref() == Some(&conn.reconnect_token);
             if valid_token {
+                conn.connection_generation += 1;
                 conn.sender = Some(sender.clone());
                 conn.is_connected = true;
                 conn.last_seen = Instant::now();
+                let team = conn.team;
 
-                let _ = sender
-                    .send(ServerMessage::HelloAck {
-                        player_id: player_id.clone(),
-                        reconnect_token: conn.reconnect_token.clone(),
-                    })
-                    .await;
+                let _ = sender.send(ServerMessage::HelloAck {
+                    player_id: player_id.clone(),
+                    reconnect_token: conn.reconnect_token.clone(),
+                });
 
                 let snapshot = self
                     .session
-                    .snapshot_for_team(conn.team, self.turn_deadline_unix_ms);
-                let _ = sender
-                    .send(ServerMessage::MatchJoined {
-                        match_id: self.match_id.clone(),
-                        player_id: player_id.clone(),
-                        team: conn.team,
-                        is_spectator: false,
-                        snapshot: snapshot.clone(),
-                    })
-                    .await;
+                    .snapshot_for_team(team, self.turn_deadline_unix_ms);
+                let _ = sender.send(ServerMessage::MatchJoined {
+                    match_id: self.match_id.clone(),
+                    player_id: player_id.clone(),
+                    team,
+                    is_spectator: false,
+                    snapshot: snapshot.clone(),
+                });
 
                 if let Some(deadline) = self.turn_deadline_unix_ms {
-                    let _ = sender
-                        .send(ServerMessage::RoundStarted {
-                            round: self.session.state.round,
-                            deadline_unix_ms: deadline,
-                            snapshot,
-                        })
-                        .await;
+                    let _ = sender.send(ServerMessage::RoundStarted {
+                        round: self.session.state.round,
+                        deadline_unix_ms: deadline,
+                        snapshot,
+                    });
                 }
+
+                // Notify opponent that this player came back online
+                for other in self.players.values().filter(|o| o.team != team) {
+                    other.send(ServerMessage::OpponentStatus { online: true });
+                }
+
+                let opp_online = self
+                    .players
+                    .values()
+                    .any(|o| o.team != team && o.is_connected);
+                let _ = sender.send(ServerMessage::OpponentStatus { online: opp_online });
+
                 return;
             } else {
-                let _ = sender
-                    .send(ServerMessage::Error {
-                        error_code: ProtocolErrorCode::NotAuthorized,
-                        message: "Invalid reconnect token".into(),
-                    })
-                    .await;
+                let _ = sender.send(ServerMessage::Error {
+                    error_code: ProtocolErrorCode::NotAuthorized,
+                    message: "Invalid reconnect token".into(),
+                });
                 return;
             }
         }
 
         // New player connection
         if self.players.len() >= 2 {
-            let _ = sender
-                .send(ServerMessage::Error {
-                    error_code: ProtocolErrorCode::MatchFull,
-                    message: "Match is full".into(),
-                })
-                .await;
+            let _ = sender.send(ServerMessage::Error {
+                error_code: ProtocolErrorCode::MatchFull,
+                message: "Match is full".into(),
+            });
             return;
         }
 
@@ -207,25 +256,33 @@ impl MatchActor {
         self.human_teams.push(assigned_team);
         self.players.insert(player_id.clone(), conn);
 
-        let _ = sender
-            .send(ServerMessage::HelloAck {
-                player_id: player_id.clone(),
-                reconnect_token: token,
-            })
-            .await;
+        let _ = sender.send(ServerMessage::HelloAck {
+            player_id: player_id.clone(),
+            reconnect_token: token,
+        });
 
         let snapshot = self
             .session
             .snapshot_for_team(assigned_team, self.turn_deadline_unix_ms);
-        let _ = sender
-            .send(ServerMessage::MatchJoined {
-                match_id: self.match_id.clone(),
-                player_id,
-                team: assigned_team,
-                is_spectator: false,
-                snapshot,
-            })
-            .await;
+        let _ = sender.send(ServerMessage::MatchJoined {
+            match_id: self.match_id.clone(),
+            player_id,
+            team: assigned_team,
+            is_spectator: false,
+            snapshot,
+        });
+
+        // If this is the second player joining, notify first player
+        for other in self.players.values().filter(|o| o.team != assigned_team) {
+            other.send(ServerMessage::OpponentStatus { online: true });
+        }
+        let opp_online = self
+            .players
+            .values()
+            .any(|o| o.team != assigned_team && o.is_connected);
+        if opp_online {
+            let _ = sender.send(ServerMessage::OpponentStatus { online: true });
+        }
 
         // Auto-start match if 2 players or PvAI mode
         let ready_to_start = self.players.len() == 2
@@ -239,10 +296,18 @@ impl MatchActor {
         if let Some(conn) = self.players.get_mut(&player_id) {
             conn.is_connected = false;
             conn.sender = None;
+            let disconnected_team = conn.team;
             info!(
                 "Player [{}] disconnected from match [{}]",
                 player_id, self.match_id
             );
+            for other in self
+                .players
+                .values()
+                .filter(|o| o.team != disconnected_team)
+            {
+                other.send(ServerMessage::OpponentStatus { online: false });
+            }
         }
     }
 
@@ -294,7 +359,14 @@ impl MatchActor {
 
         let team = match self.players.get(&player_id) {
             Some(conn) => conn.team,
-            None => return,
+            None => {
+                tracing::warn!(
+                    "MatchActor [{}] SubmitOrders from unknown player {}",
+                    self.match_id,
+                    player_id
+                );
+                return;
+            }
         };
 
         match self
@@ -324,12 +396,12 @@ impl MatchActor {
                     });
                 }
             }
-            Err(code) => {
+            Err(err) => {
                 if let Some(conn) = self.players.get(&player_id) {
                     conn.send(ServerMessage::OrderRejected {
                         round,
-                        error_code: code,
-                        reason: format!("{:?}", code),
+                        error_code: err.code,
+                        reason: err.reason,
                     });
                 }
             }
@@ -340,8 +412,8 @@ impl MatchActor {
         self.grace_timer_active = false;
         self.turn_deadline_unix_ms = None;
 
+        let round_planned = self.session.state.round;
         let raw_events = self.session.resolve_round();
-        let round = self.session.state.round;
         let is_ended = self.session.state.winner.is_some()
             || self.session.state.phase == hexabellum_core::state::Phase::MatchEnd;
 
@@ -357,7 +429,7 @@ impl MatchActor {
                 });
             } else {
                 conn.send(ServerMessage::RoundResolved {
-                    round,
+                    round: round_planned,
                     events: sanitized_events,
                     snapshot,
                 });
@@ -366,6 +438,12 @@ impl MatchActor {
 
         if !is_ended {
             self.start_planning_phase().await;
+        } else {
+            let tx = self.self_tx.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                let _ = tx.send(MatchCommand::Finish).await;
+            });
         }
     }
 }

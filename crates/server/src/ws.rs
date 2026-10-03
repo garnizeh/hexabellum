@@ -65,7 +65,7 @@ async fn handle_socket(
     };
 
     let (mut ws_sink, mut ws_stream) = socket.split();
-    let (tx, mut rx) = mpsc::channel::<ServerMessage>(64);
+    let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
 
     // Forward outgoing server messages to client WebSocket
     let outgoing_task = tokio::spawn(async move {
@@ -108,14 +108,24 @@ async fn handle_socket(
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
                             .as_millis() as u64;
-                        let _ = tx
-                            .send(ServerMessage::Pong {
-                                client_time_ms,
-                                server_time_ms: now_ms,
-                            })
-                            .await;
+                        let _ = tx.send(ServerMessage::Pong {
+                            client_time_ms,
+                            server_time_ms: now_ms,
+                        });
+                        h.send(MatchCommand::PlayerPing {
+                            player_id: p_id.clone(),
+                        })
+                        .await;
                     }
-                    _ => {}
+                    ClientMessage::Hello { player_id: hello_pid, reconnect_token: token } => {
+                        h.send(MatchCommand::PlayerConnect {
+                            player_id: hello_pid,
+                            reconnect_token: token,
+                            sender: tx.clone(),
+                        })
+                        .await;
+                    }
+                    ClientMessage::JoinMatch { .. } => {}
                 },
                 Err(err) => {
                     debug!("Failed to parse client message: {:?}", err);

@@ -1,12 +1,19 @@
 export class SynchronizedTurnTimer {
   private deadlineUnixMs: number | null = null;
+  private totalDurationMs: number = 30000;
   private intervalId: number | null = null;
   private onTickCallback: ((remainingSecs: number, phaseRatio: number) => void) | null = null;
   private onExpireCallback: (() => void) | null = null;
 
-  start(deadlineUnixMs: number, onTick: (s: number, r: number) => void, onExpire: () => void): void {
+  start(
+    deadlineUnixMs: number,
+    onTick: (s: number, r: number) => void,
+    onExpire: () => void,
+    durationMs: number = 30000
+  ): void {
     this.stop();
     this.deadlineUnixMs = deadlineUnixMs;
+    this.totalDurationMs = durationMs > 0 ? durationMs : 30000;
     this.onTickCallback = onTick;
     this.onExpireCallback = onExpire;
 
@@ -27,7 +34,7 @@ export class SynchronizedTurnTimer {
 
     const remainingMs = Math.max(0, this.deadlineUnixMs - Date.now());
     const remainingSecs = Math.ceil(remainingMs / 1000);
-    const ratio = Math.max(0, Math.min(1, remainingMs / 30000));
+    const ratio = Math.max(0, Math.min(1, remainingMs / this.totalDurationMs));
 
     this.onTickCallback?.(remainingSecs, ratio);
 

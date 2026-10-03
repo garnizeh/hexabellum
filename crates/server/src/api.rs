@@ -45,10 +45,11 @@ pub async fn create_match(
         config.enable_ai_team_1 = enable_ai;
     }
     if let Some(duration) = payload.turn_duration_secs {
-        config.turn_duration_secs = duration;
+        config.turn_duration_secs = duration.clamp(10, 300);
     }
 
-    let actor_handle = MatchActorHandle::new(match_id.clone(), config);
+    let actor_handle =
+        MatchActorHandle::new(match_id.clone(), config, Some(registry.clone()));
     registry.insert(match_id.clone(), actor_handle);
 
     Json(CreateMatchResponse {
@@ -74,5 +75,17 @@ pub async fn get_match_status(
         }))
     } else {
         Err(StatusCode::NOT_FOUND)
+    }
+}
+
+pub async fn delete_match(
+    State(registry): State<MatchRegistry>,
+    Path(match_id): Path<MatchId>,
+) -> StatusCode {
+    if let Some((_, handle)) = registry.remove(&match_id) {
+        handle.send(crate::match_actor::MatchCommand::Finish).await;
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
     }
 }

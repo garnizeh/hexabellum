@@ -143,10 +143,20 @@ export class InputHandler {
         if (unit.pos.q === hex.q && unit.pos.r === hex.r && unit.team !== playerTeam) {
           const targetId = Number(idStr);
           if (validAttacks.includes(targetId)) {
+            let ok = true;
             if (this.session) {
-              this.session.stageAttackOrder(this.selectedUnit, targetId);
+              ok = this.session.stageAttackOrder(this.selectedUnit, targetId);
             } else {
               setAttackOrder(this.selectedUnit, targetId);
+            }
+            if (!ok) {
+              const toast = document.getElementById('hud-toast');
+              if (toast) {
+                toast.textContent = 'Action exceeds AP limit!';
+                toast.className = 'show';
+                setTimeout(() => toast.classList.remove('show'), 2000);
+              }
+              return;
             }
             this.selectedUnit = null;
             this.renderer.clearOverlays();

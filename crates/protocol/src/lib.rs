@@ -32,6 +32,7 @@ pub struct UnitDto {
     pub ap: u32,
     pub max_ap: u32,
     pub initiative: u32,
+    pub attack_damage: u32,
     pub attack_range: u32,
     pub vision_range: u32,
     pub is_stationary: bool,
@@ -175,6 +176,7 @@ pub enum ServerMessage {
         reason: String,
     },
     RoundResolved {
+        /// The round number that was resolved (corresponds to the round that was planned).
         round: Round,
         events: Vec<SanitizedGameEvent>,
         snapshot: SnapshotDto,
@@ -182,6 +184,9 @@ pub enum ServerMessage {
     MatchEnded {
         winner: Option<TeamId>,
         snapshot: SnapshotDto,
+    },
+    OpponentStatus {
+        online: bool,
     },
     Pong {
         client_time_ms: u64,
@@ -255,6 +260,7 @@ mod tests {
                 ap: 3,
                 max_ap: 3,
                 initiative: 3,
+                attack_damage: 20,
                 attack_range: 1,
                 vision_range: 3,
                 is_stationary: false,
@@ -304,5 +310,15 @@ mod tests {
         let decoded: Vec<SanitizedGameEvent> =
             serde_json::from_str(&json).expect("Failed to deserialize events");
         assert_eq!(events, decoded);
+    }
+
+    #[test]
+    fn test_opponent_status_serialization() {
+        let msg = ServerMessage::OpponentStatus { online: false };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"OpponentStatus\""));
+        assert!(json.contains("\"online\":false"));
+        let decoded: ServerMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg, decoded);
     }
 }

@@ -15,6 +15,7 @@ export interface UnitDto {
   ap: number;
   max_ap: number;
   initiative: number;
+  attack_damage: number;
   attack_range: number;
   vision_range: number;
   is_stationary: boolean;
@@ -87,5 +88,6 @@ export type ServerMessage =
   | { type: 'OrderRejected'; round: number; error_code: ProtocolErrorCode; reason: string }
   | { type: 'RoundResolved'; round: number; events: SanitizedGameEvent[]; snapshot: SnapshotDto }
   | { type: 'MatchEnded'; winner: number | null; snapshot: SnapshotDto }
+  | { type: 'OpponentStatus'; online: boolean }
   | { type: 'Pong'; client_time_ms: number; server_time_ms: number }
   | { type: 'Error'; error_code: ProtocolErrorCode; message: string };

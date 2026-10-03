@@ -27,7 +27,10 @@ pub fn build_router(registry: MatchRegistry) -> Router {
     Router::new()
         .route("/api/health", get(api::health_check))
         .route("/api/matches", post(api::create_match))
-        .route("/api/matches/{match_id}", get(api::get_match_status))
+        .route(
+            "/api/matches/{match_id}",
+            get(api::get_match_status).delete(api::delete_match),
+        )
         .route("/ws/match/{match_id}", get(ws::ws_handler))
         .layer(cors)
         .layer(TraceLayer::new_for_http())

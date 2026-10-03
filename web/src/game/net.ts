@@ -17,6 +17,8 @@ export interface NetworkCallbacks {
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
   onRoundResolved: (round: number, events: SanitizedGameEvent[], snapshot: SnapshotDto) => void;
   onMatchEnded: (winner: number | null, snapshot: SnapshotDto) => void;
+  onOpponentStatus?: (online: boolean) => void;
+  onLatency?: (latencyMs: number) => void;
   onError: (message: string) => void;
 }
 
@@ -29,6 +31,8 @@ export class NetworkBridge {
   private callbacks: Partial<NetworkCallbacks> = {};
   private reconnectAttempts = 0;
   private reconnectTimer: number | null = null;
+  private pingInterval: number | null = null;
+  private queue: ClientMessage[] = [];
   private wsBaseUrl?: string;
   private shouldStopReconnecting = false;
 
@@ -96,6 +100,11 @@ export class NetworkBridge {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0;
       this.setConnectionState('CONNECTED');
+      this.startPing();
+      while (this.queue.length > 0) {
+        const queuedMsg = this.queue.shift();
+        if (queuedMsg) this.send(queuedMsg);
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -172,6 +181,17 @@ export class NetworkBridge {
         this.callbacks.onMatchEnded?.(msg.winner, msg.snapshot);
         break;
 
+      case 'OpponentStatus':
+        this.callbacks.onOpponentStatus?.(msg.online);
+        break;
+
+      case 'Pong': {
+        const now = Date.now();
+        const rtt = now - msg.client_time_ms;
+        this.callbacks.onLatency?.(rtt);
+        break;
+      }
+
       case 'Error':
         if (
           msg.error_code === 'MatchNotFound' ||
@@ -188,6 +208,24 @@ export class NetworkBridge {
   private send(msg: ClientMessage): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg));
+    } else if (this.matchId && !this.shouldStopReconnecting && msg.type === 'SubmitOrders') {
+      this.queue.push(msg);
+    }
+  }
+
+  private startPing(): void {
+    this.stopPing();
+    this.pingInterval = window.setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.sendPing();
+      }
+    }, 15000);
+  }
+
+  private stopPing(): void {
+    if (this.pingInterval !== null) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
     }
   }
 
@@ -209,6 +247,7 @@ export class NetworkBridge {
   }
 
   private cleanupSocket(): void {
+    this.stopPing();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

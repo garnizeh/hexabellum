@@ -7,13 +7,18 @@ pub struct PlayerConnection {
     pub player_id: PlayerId,
     pub reconnect_token: ReconnectToken,
     pub team: TeamId,
-    pub sender: Option<mpsc::Sender<ServerMessage>>,
+    pub sender: Option<mpsc::UnboundedSender<ServerMessage>>,
     pub last_seen: Instant,
     pub is_connected: bool,
+    pub connection_generation: u64,
 }
 
 impl PlayerConnection {
-    pub fn new(player_id: PlayerId, team: TeamId, sender: mpsc::Sender<ServerMessage>) -> Self {
+    pub fn new(
+        player_id: PlayerId,
+        team: TeamId,
+        sender: mpsc::UnboundedSender<ServerMessage>,
+    ) -> Self {
         let reconnect_token = uuid::Uuid::new_v4().to_string();
         Self {
             player_id,
@@ -22,18 +27,13 @@ impl PlayerConnection {
             sender: Some(sender),
             last_seen: Instant::now(),
             is_connected: true,
+            connection_generation: 1,
         }
     }
 
     pub fn send(&self, msg: ServerMessage) {
         if let Some(ref tx) = self.sender {
-            if let Err(err) = tx.try_send(msg) {
-                tracing::warn!(
-                    "Failed to deliver ServerMessage to player {}: {:?}",
-                    self.player_id,
-                    err
-                );
-            }
+            let _ = tx.send(msg);
         }
     }
 }
