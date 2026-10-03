@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 /// Axial coordinates for hex grid.
 /// q = column, r = row
@@ -99,68 +98,62 @@ impl HexMap {
         center.distance(coord) <= self.radius && !self.obstacles.contains(coord)
     }
 
-    /// Find path from start to goal using A*.
+    /// Find the shortest walkable path from start to goal (BFS over the
+    /// graph of walkable hexes).
+    ///
+    /// Path length is measured on the map geometry only — unit occupancy
+    /// never changes how far two hexes are apart, it only decides whether a
+    /// unit may *enter* a given hex at a given moment. Occupancy is therefore
+    /// not a parameter here; callers that need "path around other units"
+    /// semantics must check per-step legality themselves (see
+    /// `TurnProcessor`). Returning None means no walkable path exists at all
+    /// (e.g. the goal is off-map or blocked by an obstacle).
     /// Returns None if no path exists.
-    /// `occupied` is a set of hexes blocked by units.
     pub fn find_path(
         &self,
         start: HexCoord,
         goal: HexCoord,
-        occupied: &HashSet<HexCoord>,
     ) -> Option<Vec<HexCoord>> {
         if start == goal {
             return Some(vec![start]);
         }
 
-        if !self.is_walkable(&goal) || occupied.contains(&goal) {
+        if !self.is_walkable(&start) || !self.is_walkable(&goal) {
             return None;
         }
 
-        let mut open = BinaryHeap::new();
+        // Deterministic BFS with lexicographic (q, r) neighbor ordering so
+        // tie-broken paths are reproducible.
         let mut came_from: HashMap<HexCoord, HexCoord> = HashMap::new();
-        let mut g_score: HashMap<HexCoord, u32> = HashMap::new();
+        let mut visited: HashSet<HexCoord> = HashSet::new();
+        let mut queue: std::collections::VecDeque<HexCoord> = std::collections::VecDeque::new();
 
-        g_score.insert(start, 0);
-        open.push(AStarNode {
-            coord: start,
-            g: 0,
-            f: start.distance(&goal),
-        });
+        visited.insert(start);
+        queue.push_back(start);
 
-        while let Some(current) = open.pop() {
-            if current.coord == goal {
-                // Reconstruct path
-                let mut path = vec![goal];
-                let mut node = goal;
-                while let Some(&prev) = came_from.get(&node) {
-                    path.push(prev);
-                    node = prev;
+        while let Some(current) = queue.pop_front() {
+            let mut nbrs: Vec<HexCoord> = current
+                .neighbors()
+                .into_iter()
+                .filter(|n| self.is_walkable(n) && !visited.contains(n))
+                .collect();
+            nbrs.sort_by_key(|h| (h.q, h.r));
+
+            for neighbor in nbrs {
+                visited.insert(neighbor);
+                came_from.insert(neighbor, current);
+                if neighbor == goal {
+                    // Reconstruct path
+                    let mut path = vec![goal];
+                    let mut node = goal;
+                    while let Some(&prev) = came_from.get(&node) {
+                        path.push(prev);
+                        node = prev;
+                    }
+                    path.reverse();
+                    return Some(path);
                 }
-                path.reverse();
-                return Some(path);
-            }
-
-            let current_g = *g_score.get(&current.coord).unwrap_or(&u32::MAX);
-
-            for neighbor in current.coord.neighbors() {
-                if !self.is_walkable(&neighbor) {
-                    continue;
-                }
-                if occupied.contains(&neighbor) && neighbor != goal {
-                    continue;
-                }
-
-                let tentative_g = current_g + 1;
-
-                if tentative_g < *g_score.get(&neighbor).unwrap_or(&u32::MAX) {
-                    came_from.insert(neighbor, current.coord);
-                    g_score.insert(neighbor, tentative_g);
-                    open.push(AStarNode {
-                        coord: neighbor,
-                        g: tentative_g,
-                        f: tentative_g + neighbor.distance(&goal),
-                    });
-                }
+                queue.push_back(neighbor);
             }
         }
 
@@ -219,30 +212,6 @@ impl HexMap {
     }
 }
 
-/// Node for A* pathfinding.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AStarNode {
-    coord: HexCoord,
-    g: u32, // cost from start
-    f: u32, // g + heuristic
-}
-
-impl PartialOrd for AStarNode {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for AStarNode {
-    fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse for min-heap behavior
-        other
-            .f
-            .cmp(&self.f)
-            .then_with(|| other.g.cmp(&self.g))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,10 +263,7 @@ mod tests {
     #[test]
     fn test_find_path_straight() {
         let map = HexMap::new(4);
-        let occupied = HashSet::new();
-        let path = map
-            .find_path(HexCoord::new(-3, 0), HexCoord::new(0, 0), &occupied)
-            .unwrap();
+        let path = map.find_path(HexCoord::new(-3, 0), HexCoord::new(0, 0)).unwrap();
         // Shortest path length = distance + 1 (includes start)
         assert_eq!(path.len(), 4);
         assert_eq!(path[0], HexCoord::new(-3, 0));
@@ -311,15 +277,12 @@ mod tests {
     #[test]
     fn test_find_path_same_start_goal() {
         let map = HexMap::new(4);
-        let occupied = HashSet::new();
-        let path = map
-            .find_path(HexCoord::new(1, 1), HexCoord::new(1, 1), &occupied)
-            .unwrap();
+        let path = map.find_path(HexCoord::new(1, 1), HexCoord::new(1, 1)).unwrap();
         assert_eq!(path, vec![HexCoord::new(1, 1)]);
     }
 
     #[test]
-    fn test_find_path_blocked_by_obstacle_and_units() {
+    fn test_find_path_blocked_by_obstacle() {
         let mut map = HexMap::new(1);
         // Block everything except center and one hex
         for h in map.all_hexes() {
@@ -327,16 +290,14 @@ mod tests {
                 map.obstacles.insert(h);
             }
         }
-        let occupied = HashSet::new();
         assert!(map
-            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0), &occupied)
+            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0))
             .is_some());
 
-        // Goal occupied by a unit -> no path
-        let mut occupied = HashSet::new();
-        occupied.insert(HexCoord::new(1, 0));
+        // Goal unreachable because every route is blocked by obstacles
+        map.obstacles.insert(HexCoord::new(1, 0));
         assert!(map
-            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0), &occupied)
+            .find_path(HexCoord::new(0, 0), HexCoord::new(1, 0))
             .is_none());
     }
 

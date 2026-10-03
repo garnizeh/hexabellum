@@ -23,7 +23,10 @@ impl SimpleAI {
         unit_ids.sort_unstable(); // deterministic iteration (HashMap order is not)
 
         for unit_id in unit_ids {
-            let order = Self::generate_unit_order(state, unit_id, &occupied);
+            // `orders` already contains the decisions made this round for
+            // units with lower ids; a friendly unit planning to move away
+            // vacates its hex, so later units can path through it.
+            let order = Self::generate_unit_order(state, unit_id, &occupied, &orders);
             orders.add_order(order);
         }
 
@@ -34,6 +37,7 @@ impl SimpleAI {
         state: &GameState,
         unit_id: UnitId,
         occupied: &HashSet<HexCoord>,
+        orders: &TurnOrders,
     ) -> UnitOrder {
         let unit = state.get_unit(unit_id).unwrap();
         let enemies = state.enemy_units(unit.team);
@@ -73,9 +77,26 @@ impl SimpleAI {
             unit.max_ap // Just move, can't attack this round anyway
         };
 
-        // Exclude this unit's own hex from occupancy so it can "move" through
+        // Exclude this unit's own hex from occupancy so it can "move" through,
+        // and treat hexes held by friendly units that are themselves planning
+        // to move as vacated (they will free up during resolution). Without
+        // the vacated-hex model the AI would steer around friendly units that
+        // are about to step aside anyway, which could permanently stall the
+        // front line when both sides shuffle in lockstep.
         let mut blocked = occupied.clone();
         blocked.remove(&unit.pos);
+        for other in state.team_units(unit.team) {
+            if other.id == unit_id || !other.is_alive() {
+                continue;
+            }
+            if let Some(next_order) = orders.get_order(other.id) {
+                if let Some(dest) = next_order.move_target {
+                    if dest != other.pos {
+                        blocked.remove(&other.pos);
+                    }
+                }
+            }
+        }
 
         // Find best hex to move to (closest to enemy within AP budget)
         let reachable = state
@@ -85,7 +106,35 @@ impl SimpleAI {
         let mut candidates: Vec<(&HexCoord, u32)> = reachable.iter().map(|(h, c)| (h, *c)).collect();
         candidates.sort_by_key(|(hex, cost)| (hex.distance(&nearest_enemy.pos), *cost, hex.q, hex.r));
 
-        let (move_target, action) = if let Some((best_hex, _)) = candidates.first() {
+        // Destination must still be free once every planned move this round
+        // has completed. A friendly unit that was ordered before this one and
+        // plans to step onto our chosen hex will get there first (and its
+        // order is already committed), so we must pick a different hex —
+        // otherwise both units would end the round stacked on one tile,
+        // corrupting occupancy and permanently stalling combat.
+        // Enemy units never vacate during our own planning pass, so any hex
+        // they currently stand on (or are seen stepping onto) stays occupied.
+        let final_occupancy = |hex: &HexCoord| -> bool {
+            state.units.values().any(|u| {
+                u.id != unit_id
+                    && u.is_alive()
+                    && ((u.team != unit.team && u.pos == *hex)
+                        || (u.team == unit.team
+                            && u.pos == *hex
+                            && orders
+                                .get_order(u.id)
+                                .map(|o| o.move_target != Some(*hex))
+                                .unwrap_or(true)))
+            }) || orders.orders.iter().any(|o| {
+                o.unit_id != unit_id && o.move_target == Some(*hex)
+            })
+        };
+
+        let (move_target, action) = if let Some((best_hex, _)) = candidates
+            .iter()
+            .filter(|(hex, _)| !final_occupancy(hex))
+            .next()
+        {
             let new_distance = best_hex.distance(&nearest_enemy.pos);
 
             if new_distance <= unit.attack_range && ap_for_movement > 0 {
