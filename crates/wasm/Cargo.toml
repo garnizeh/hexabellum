@@ -8,5 +8,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 hexabellum-core = { path = "../core" }
+hexabellum-protocol = { path = "../protocol" }
 wasm-bindgen = "0.2.129"
 serde_json.workspace = true

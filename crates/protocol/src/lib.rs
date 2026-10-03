@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+pub mod tutorial;
+pub use tutorial::*;
+
 pub type MatchId = String;
 pub type PlayerId = String;
 pub type ReconnectToken = String;

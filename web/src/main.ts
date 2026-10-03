@@ -1,4 +1,5 @@
 import * as PIXI from 'pixi.js';
+import './ui/tutorial.css';
 import {
   initGame,
   getPlayerState,
@@ -14,6 +15,8 @@ import { TurnTimer } from './game/timer';
 import { ClientSession, snapshotToGameState } from './game/client_session';
 import { HudController } from './ui/hud';
 import { SanitizedGameEvent, SnapshotDto } from './game/types';
+import { TutorialController } from './game/tutorial/TutorialController';
+import { ModeSelectModal } from './ui/ModeSelectModal';
 
 async function main() {
   // Attempt local WASM init (optional, retained for local offline dev)
@@ -64,8 +67,20 @@ async function main() {
   let isOnline = false;
 
   const input = new InputHandler(renderer, null);
+  const tutorial = new TutorialController(app, renderer, animator);
+  const modeModal = new ModeSelectModal();
+
+  input.setClickInterceptor((x, y) => {
+    if (tutorial.isRunning()) {
+      return tutorial.handleCanvasClick(x, y);
+    }
+    return false;
+  });
 
   const renderCurrentState = () => {
+    if (tutorial.isRunning()) {
+      return;
+    }
     if (isOnline && session.getSnapshot()) {
       const snap = session.getSnapshot()!;
       const state = snapshotToGameState(snap);
@@ -370,6 +385,84 @@ async function main() {
     if (matchModal) matchModal.style.display = 'none';
   };
 
+  const btnOpenModeSelect = document.getElementById('btn-open-mode-select') as HTMLButtonElement;
+  const btnToggleTutorial = document.getElementById('btn-toggle-tutorial') as HTMLButtonElement;
+
+  const startTutorialMode = (lessonId: string = 'lesson_00_intro') => {
+    timer.stop();
+    if (endTurnBtn) endTurnBtn.style.display = 'none';
+    if (restartBtn) restartBtn.style.display = 'none';
+    if (gameOverModal) gameOverModal.style.display = 'none';
+    if (btnToggleTutorial) {
+      btnToggleTutorial.textContent = '⚔️ Exit Tutorial';
+      btnToggleTutorial.style.color = '#ffea00';
+      btnToggleTutorial.style.borderColor = 'rgba(255, 234, 0, 0.5)';
+    }
+    if (statusEl) {
+      statusEl.textContent = '🎓 Archmage Trial Mode — Follow objective guidance';
+      statusEl.style.color = '#00e676';
+    }
+    if (roundEl) {
+      roundEl.textContent = 'Tutorial';
+    }
+    tutorial.startLesson(lessonId);
+  };
+
+  const exitTutorialMode = () => {
+    if (btnToggleTutorial) {
+      btnToggleTutorial.textContent = '🎓 Tutorial';
+      btnToggleTutorial.style.color = '#00e676';
+      btnToggleTutorial.style.borderColor = 'rgba(0, 230, 118, 0.4)';
+    }
+    if (endTurnBtn) endTurnBtn.style.display = 'inline-block';
+    renderCurrentState();
+  };
+
+  tutorial.setOnExit(() => {
+    exitTutorialMode();
+  });
+
+  if (btnOpenModeSelect) {
+    btnOpenModeSelect.addEventListener('click', () => {
+      modeModal.open();
+    });
+  }
+
+  if (btnToggleTutorial) {
+    btnToggleTutorial.addEventListener('click', () => {
+      if (tutorial.isRunning()) {
+        tutorial.exitTutorial();
+      } else {
+        modeModal.open();
+      }
+    });
+  }
+
+  modeModal.setOnStartTutorial((lessonId) => {
+    startTutorialMode(lessonId);
+  });
+
+  modeModal.setOnStartPvAI(() => {
+    if (tutorial.isRunning()) {
+      tutorial.exitTutorial();
+    }
+    startNewPvAIMatch();
+  });
+
+  modeModal.setOnStartPvP(() => {
+    if (tutorial.isRunning()) {
+      tutorial.exitTutorial();
+    }
+    startNewPvPMatch();
+  });
+
+  modeModal.setOnJoinMatch((matchId) => {
+    if (tutorial.isRunning()) {
+      tutorial.exitTutorial();
+    }
+    joinExistingMatch(matchId);
+  });
+
   if (btnOpenMatchmaking && matchModal) {
     btnOpenMatchmaking.addEventListener('click', () => {
       matchModal.style.display = 'flex';
@@ -400,14 +493,28 @@ async function main() {
     }
   };
 
-  // Check URL query parameters for match join or mode (e.g. ?match=123 or ?mode=pvp or ?offline=1)
+  // Check URL query parameters for match join or mode (e.g. ?match=123 or ?mode=pvp or ?mode=tutorial or ?offline=1)
   const urlParams = new URLSearchParams(window.location.search);
   const matchParam = urlParams.get('match');
   const modeParam = urlParams.get('mode');
+  const lessonParam = urlParams.get('lesson');
   const offlineParam = urlParams.get('offline');
   const cachedMatch = sessionStorage.getItem('hb_current_match');
 
-  if (matchParam) {
+  // FTUE Prompt: for fresh users on desktop/web, offer the Archmage's Trial
+  try {
+    const tutStorage = localStorage.getItem('hexabellum_tutorial_v1');
+    const bannerDismissed = localStorage.getItem('hexabellum_ftue_banner_dismissed');
+    if (!tutStorage && !bannerDismissed && modeParam !== 'tutorial' && !matchParam) {
+      modeModal.showFtueBanner(() => {
+        startTutorialMode('lesson_00_intro');
+      });
+    }
+  } catch {}
+
+  if (modeParam === 'tutorial') {
+    startTutorialMode(lessonParam || 'lesson_00_intro');
+  } else if (matchParam) {
     joinExistingMatch(matchParam);
   } else if (modeParam === 'pvp') {
     startNewPvPMatch();
@@ -420,7 +527,7 @@ async function main() {
     startNewPvAIMatch();
   }
 
-  console.log("Hexabellum Phase 3 Authoritative Multiplayer Slice Initialized.");
+  console.log("Hexabellum Tactical Engine & Tutorial Subsystems Ready.");
 }
 
 main().catch(console.error);

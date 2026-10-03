@@ -1,0 +1,798 @@
+/* ==========================================================================
+   HEXABELLUM — TUTORIAL & MODE SELECTION DESIGN SYSTEM
+   Modern Dark Glassmorphism, Micro-animations, Curated HSL Palettes
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. Mode Selection Hub Modal (Convergence Portal)
+   -------------------------------------------------------------------------- */
+#mode-selection-modal {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(14, 22, 40, 0.94) 0%, rgba(5, 8, 16, 0.98) 100%);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  z-index: 150;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.mode-hub-box {
+  max-width: 980px;
+  width: 100%;
+  background: rgba(13, 19, 34, 0.82);
+  border: 1px solid rgba(0, 210, 255, 0.28);
+  border-radius: 24px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85), 0 0 40px rgba(0, 210, 255, 0.12);
+  padding: 36px 42px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  animation: hubFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes hubFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.mode-hub-header {
+  text-align: center;
+}
+
+.mode-hub-title {
+  font-size: 28px;
+  font-weight: 900;
+  letter-spacing: 1.5px;
+  background: linear-gradient(135deg, #f1f5f9 20%, #00d2ff 60%, #00e676 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 8px;
+}
+
+.mode-hub-subtitle {
+  font-size: 14px;
+  color: #94a3b8;
+  letter-spacing: 0.4px;
+}
+
+.mode-cards-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 768px) {
+  .mode-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mode-card {
+  background: rgba(18, 25, 44, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 26px 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 20px;
+  transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.mode-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  opacity: 0.8;
+}
+
+.mode-card-tutorial::before {
+  background: linear-gradient(90deg, #00e676, #00d2ff);
+}
+
+.mode-card-arena::before {
+  background: linear-gradient(90deg, #00d2ff, #7c3aed);
+}
+
+.mode-card:hover {
+  transform: translateY(-4px);
+  background: rgba(22, 32, 56, 0.85);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+.mode-card-tutorial:hover {
+  border-color: rgba(0, 230, 118, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 230, 118, 0.15);
+}
+
+.mode-card-arena:hover {
+  border-color: rgba(0, 210, 255, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 210, 255, 0.15);
+}
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  width: fit-content;
+}
+
+.badge-rec {
+  background: rgba(0, 230, 118, 0.16);
+  border: 1px solid rgba(0, 230, 118, 0.45);
+  color: #00e676;
+}
+
+.badge-arena {
+  background: rgba(0, 210, 255, 0.16);
+  border: 1px solid rgba(0, 210, 255, 0.45);
+  color: #00d2ff;
+}
+
+.mode-card-title {
+  font-size: 20px;
+  font-weight: 800;
+  color: #f8fafc;
+  margin: 10px 0 4px;
+}
+
+.mode-card-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.mode-feature-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-bottom: 16px;
+}
+
+.mode-feature-item {
+  font-size: 12.5px;
+  color: #cbd5e1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.mode-feature-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.lesson-selector-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.lesson-selector-row label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lesson-select-dropdown {
+  background: rgba(9, 13, 24, 0.9);
+  border: 1px solid rgba(0, 230, 118, 0.3);
+  color: #f1f5f9;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.lesson-select-dropdown:focus {
+  border-color: #00e676;
+}
+
+.btn-mode-start {
+  padding: 13px 20px;
+  border-radius: 10px;
+  font-size: 14.5px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.btn-mode-tutorial {
+  background: linear-gradient(135deg, #00e676, #00b359);
+  color: #050b14;
+  box-shadow: 0 4px 16px rgba(0, 230, 118, 0.32);
+}
+
+.btn-mode-tutorial:hover {
+  background: linear-gradient(135deg, #2aed8b, #00c863);
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 20px rgba(0, 230, 118, 0.45);
+}
+
+.btn-mode-pvai {
+  background: linear-gradient(135deg, #00d2ff, #0088cc);
+  color: #050b14;
+  box-shadow: 0 4px 16px rgba(0, 210, 255, 0.32);
+}
+
+.btn-mode-pvai:hover {
+  background: linear-gradient(135deg, #38dcfc, #00a2f5);
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 20px rgba(0, 210, 255, 0.45);
+}
+
+.btn-mode-pvp-sub {
+  background: rgba(124, 58, 237, 0.18);
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  color: #c4b5fd;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+}
+
+.btn-mode-pvp-sub:hover {
+  background: rgba(124, 58, 237, 0.32);
+  color: #fff;
+}
+
+.mode-hub-footer {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+/* --------------------------------------------------------------------------
+   2. FTUE Floating Welcome Banner
+   -------------------------------------------------------------------------- */
+#ftue-welcome-banner {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  background: rgba(13, 19, 34, 0.94);
+  border: 1px solid rgba(0, 230, 118, 0.45);
+  border-radius: 16px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 10px 35px rgba(0, 0, 0, 0.65), 0 0 20px rgba(0, 230, 118, 0.2);
+  backdrop-filter: blur(16px);
+  z-index: 80;
+  animation: bannerSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes bannerSlideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.ftue-banner-text {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.ftue-banner-text strong {
+  color: #00e676;
+}
+
+.btn-banner-start {
+  background: linear-gradient(135deg, #00e676, #00b359);
+  color: #050b14;
+  border: none;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 800;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-banner-start:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 12px rgba(0, 230, 118, 0.4);
+}
+
+.btn-banner-dismiss {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.2s;
+}
+
+.btn-banner-dismiss:hover {
+  color: #fff;
+}
+
+/* --------------------------------------------------------------------------
+   3. Archmage Dialogue Card (Bottom Left Dock)
+   -------------------------------------------------------------------------- */
+.wizard-container {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  z-index: 90;
+  max-width: 580px;
+  width: calc(100vw - 48px);
+  pointer-events: none;
+}
+
+.wizard-card {
+  pointer-events: auto;
+  background: rgba(14, 20, 36, 0.92);
+  border: 1px solid rgba(0, 210, 255, 0.35);
+  border-radius: 18px;
+  padding: 18px 22px;
+  display: flex;
+  gap: 18px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.75), 0 0 25px rgba(0, 210, 255, 0.12);
+  animation: cardFadeIn 0.3s ease;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.card-soft-fail {
+  border-color: rgba(255, 179, 0, 0.6) !important;
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.75), 0 0 25px rgba(255, 179, 0, 0.25) !important;
+}
+
+@keyframes cardFadeIn {
+  from { opacity: 0; transform: translateY(15px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.wizard-avatar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 76px;
+  flex-shrink: 0;
+}
+
+.wizard-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 210, 255, 0.25), rgba(13, 19, 34, 0.9));
+  border: 2px solid rgba(0, 210, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  font-size: 26px;
+}
+
+.archmage-glow {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(0, 210, 255, 0.4);
+  animation: rotateGlow 8s linear infinite;
+}
+
+@keyframes rotateGlow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.wizard-name {
+  font-size: 10px;
+  font-weight: 800;
+  color: #94a3b8;
+  text-align: center;
+  letter-spacing: 0.4px;
+  line-height: 1.2;
+}
+
+.wizard-body-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wizard-text {
+  font-size: 14.5px;
+  font-weight: 500;
+  color: #f1f5f9;
+  line-height: 1.55;
+  min-height: 48px;
+}
+
+.wizard-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.btn-wizard {
+  padding: 7px 15px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-wizard-primary {
+  background: linear-gradient(135deg, #00d2ff, #0088cc);
+  color: #050b14;
+}
+
+.btn-wizard-primary:hover {
+  background: linear-gradient(135deg, #38dcfc, #00a2f5);
+  transform: translateY(-1px);
+}
+
+.btn-wizard-primary kbd {
+  font-size: 10.5px;
+  font-family: 'JetBrains Mono', monospace;
+  opacity: 0.8;
+}
+
+.btn-wizard-ghost {
+  background: rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.btn-wizard-ghost:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.btn-wizard-demo {
+  background: rgba(255, 234, 0, 0.16);
+  border: 1px solid rgba(255, 234, 0, 0.45);
+  color: #ffea00;
+}
+
+.btn-wizard-demo:hover {
+  background: rgba(255, 234, 0, 0.3);
+}
+
+/* --------------------------------------------------------------------------
+   4. Objective Checklist Dock (Top Left)
+   -------------------------------------------------------------------------- */
+.objective-dock {
+  position: fixed;
+  top: 68px;
+  left: 18px;
+  z-index: 70;
+  background: rgba(13, 19, 34, 0.9);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  border-radius: 14px;
+  padding: 12px 18px;
+  width: 290px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.objective-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(0, 210, 255, 0.18);
+  padding-bottom: 8px;
+}
+
+.objective-header-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.objective-sigil {
+  font-size: 14px;
+}
+
+.objective-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #00d2ff;
+  letter-spacing: 0.4px;
+}
+
+.objective-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.objective-badge {
+  font-size: 10.5px;
+  font-weight: 800;
+  background: rgba(0, 210, 255, 0.16);
+  color: #00d2ff;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.btn-dock-menu {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-dock-menu:hover {
+  color: #fff;
+  border-color: #00d2ff;
+}
+
+.objective-task-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.task-status-ring {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.task-status-ring.pulsing {
+  border: 2px solid #00e676;
+  box-shadow: 0 0 8px #00e676;
+  animation: ringPulse 1.4s ease-in-out infinite alternate;
+}
+
+@keyframes ringPulse {
+  from { transform: scale(0.9); opacity: 0.6; }
+  to { transform: scale(1.15); opacity: 1; }
+}
+
+.task-status-ring.completed {
+  background: #00e676;
+  border: 2px solid #00e676;
+  box-shadow: 0 0 10px #00e676;
+}
+
+.task-text {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #f1f5f9;
+  line-height: 1.4;
+}
+
+/* --------------------------------------------------------------------------
+   5. Callout Overlay
+   -------------------------------------------------------------------------- */
+.callout-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 95;
+}
+
+.callout-card {
+  position: absolute;
+  pointer-events: auto;
+  background: rgba(14, 20, 36, 0.95);
+  border: 1px solid #00d2ff;
+  border-radius: 12px;
+  padding: 12px 16px;
+  width: 250px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 210, 255, 0.3);
+  animation: calloutBob 1.6s ease-in-out infinite alternate;
+}
+
+@keyframes calloutBob {
+  from { transform: translateY(0); }
+  to { transform: translateY(-4px); }
+}
+
+.callout-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #00d2ff;
+  margin-bottom: 4px;
+}
+
+.callout-desc {
+  font-size: 12px;
+  color: #cbd5e1;
+  line-height: 1.4;
+}
+
+/* --------------------------------------------------------------------------
+   6. Navigation Drawer & Graduation Modals
+   -------------------------------------------------------------------------- */
+.drawer-modal, .graduation-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 15, 0.88);
+  backdrop-filter: blur(16px);
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-panel {
+  background: rgba(13, 19, 34, 0.95);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  border-radius: 20px;
+  padding: 30px 36px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+}
+
+.drawer-panel h3 {
+  font-size: 20px;
+  font-weight: 900;
+  color: #00d2ff;
+  margin-bottom: 6px;
+}
+
+.drawer-desc {
+  font-size: 13px;
+  color: #94a3b8;
+  margin-bottom: 20px;
+}
+
+.drawer-btn-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-drawer {
+  padding: 11px 16px;
+  border-radius: 9px;
+  font-size: 13.5px;
+  font-weight: 700;
+  font-family: 'Outfit', sans-serif;
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f1f5f9;
+  transition: all 0.2s;
+}
+
+.btn-drawer:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: #00d2ff;
+}
+
+.btn-drawer.primary {
+  background: linear-gradient(135deg, #00d2ff, #0088cc);
+  color: #050b14;
+  border: none;
+}
+
+.btn-drawer.danger {
+  color: #ff1744;
+  border-color: rgba(255, 23, 68, 0.3);
+}
+
+.btn-drawer.danger:hover {
+  background: rgba(255, 23, 68, 0.15);
+}
+
+.graduation-box {
+  max-width: 520px;
+}
+
+.grad-sigil {
+  font-size: 54px;
+  margin-bottom: 12px;
+}
+
+.grad-speech {
+  font-style: italic;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: #e2e8f0;
+  margin-bottom: 24px;
+}
+
+/* --------------------------------------------------------------------------
+   7. Auto-Demo Ghost Cursor
+   -------------------------------------------------------------------------- */
+.ghost-cursor {
+  position: fixed;
+  pointer-events: none;
+  z-index: 110;
+  transform: translate(-10px, -10px);
+}
+
+.cursor-pointer {
+  font-size: 28px;
+  filter: drop-shadow(0 0 10px rgba(0, 230, 118, 0.8));
+}
+
+.ghost-cursor.clicking .cursor-pointer {
+  transform: scale(0.85);
+}
+
+.cursor-ripple {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #00e676;
+  opacity: 0;
+}
+
+.ghost-cursor.clicking .cursor-ripple {
+  animation: rippleFx 0.5s ease-out;
+}
+
+@keyframes rippleFx {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}

@@ -1,6 +1,10 @@
-import init, { WasmGame } from '../wasm/pkg/hexabellum_wasm';
+import init, { WasmGame, WasmTutorialSession } from '../wasm/pkg/hexabellum_wasm';
 
 let game: WasmGame | null = null;
+
+export function createTutorialSession(scenarioIdOrJson: string): WasmTutorialSession {
+  return new WasmTutorialSession(scenarioIdOrJson);
+}
 
 export interface HexCoord {
   q: number;

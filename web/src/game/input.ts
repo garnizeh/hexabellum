@@ -23,11 +23,16 @@ export class InputHandler {
   private isResolving: boolean = false;
   private onTurnComplete: (() => void) | null = null;
   private stagedMoves = new Map<number, HexCoord>();
+  private clickInterceptor: ((x: number, y: number) => boolean) | null = null;
 
   constructor(renderer: HexRenderer, session: ClientSession | null = null) {
     this.renderer = renderer;
     this.session = session;
     this.setupListeners();
+  }
+
+  setClickInterceptor(cb: ((x: number, y: number) => boolean) | null): void {
+    this.clickInterceptor = cb;
   }
 
   setSession(session: ClientSession | null): void {
@@ -97,6 +102,10 @@ export class InputHandler {
   }
 
   private handleClick(x: number, y: number): void {
+    if (this.clickInterceptor && this.clickInterceptor(x, y)) {
+      return;
+    }
+
     const hex = this.pixelToHex(x, y);
     if (!hex) return;
 

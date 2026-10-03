@@ -9,9 +9,11 @@ pub mod state;
 pub mod session;
 pub mod tower_ai;
 pub mod turn;
+pub mod tutorial;
 pub mod unit;
 
 pub use session::{BattleConfig, BattleSession, Controller};
+pub use tutorial::*;
 
 use crate::hex::{HexCoord, HexMap};
 use crate::orders::{Action, TurnOrders, UnitOrder};
