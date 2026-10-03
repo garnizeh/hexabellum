@@ -14,6 +14,7 @@ export class HexRenderer {
 
   private unitSprites = new Map<number, PIXI.Container>();
   private selectionRing = new PIXI.Graphics();
+  private playerTeam: number = 0;
 
   constructor(app: PIXI.Application) {
     this.app = app;
@@ -25,6 +26,10 @@ export class HexRenderer {
     this.app.stage.addChild(this.fxLayer);
 
     this.overlayLayer.addChild(this.selectionRing);
+  }
+
+  setPlayerTeam(team: number): void {
+    this.playerTeam = team;
   }
 
   hexToPixel(q: number, r: number): { x: number; y: number } {
@@ -106,23 +111,23 @@ export class HexRenderer {
     container.y = y;
 
     const g = new PIXI.Graphics();
-    const isPlayer = unit.team === 0;
-    const baseColor = isPlayer ? 0x00d2ff : 0xff3366;
+    const isFriendly = unit.team === this.playerTeam;
+    const baseColor = unit.team === 0 ? 0x00d2ff : 0xff3366;
 
     // Draw stylized representation based on UnitKind
     switch (unit.kind) {
       case 'Hero': {
         g.circle(0, 0, HEX_SIZE * 0.52);
         g.fill({ color: baseColor });
-        g.stroke({ color: 0xffffff, width: 2 });
+        g.stroke({ color: isFriendly ? 0xffffff : 0xffb3c6, width: isFriendly ? 2.5 : 1.5 });
         // Inner core
         g.circle(0, 0, HEX_SIZE * 0.2);
         g.fill({ color: 0xffffff });
         break;
       }
       case 'Minion': {
-        // Creep triangle pointing towards opponent base
-        const tip = isPlayer ? HEX_SIZE * 0.45 : -HEX_SIZE * 0.45;
+        // Creep triangle pointing towards opponent base (Team 0 moves +x, Team 1 moves -x)
+        const tip = unit.team === 0 ? HEX_SIZE * 0.45 : -HEX_SIZE * 0.45;
         g.poly([tip, 0, -tip * 0.7, -HEX_SIZE * 0.35, -tip * 0.7, HEX_SIZE * 0.35]);
         g.fill({ color: baseColor });
         g.stroke({ color: 0xffffff, width: 1.5 });
@@ -133,7 +138,7 @@ export class HexRenderer {
         const size = HEX_SIZE * 0.8;
         g.rect(-size / 2, -size / 2, size, size);
         g.fill({ color: baseColor });
-        g.stroke({ color: 0xffffff, width: 2.5 });
+        g.stroke({ color: isFriendly ? 0xffffff : 0xffb3c6, width: 2.5 });
         // Inner core
         g.rect(-size / 4, -size / 4, size / 2, size / 2);
         g.fill({ color: 0x111118 });
@@ -142,7 +147,7 @@ export class HexRenderer {
       case 'SpawnerTower': {
         // Spire crystal diamond
         g.poly([0, -HEX_SIZE * 0.6, HEX_SIZE * 0.5, 0, 0, HEX_SIZE * 0.6, -HEX_SIZE * 0.5, 0]);
-        g.fill({ color: isPlayer ? 0x7c4dff : 0xff9100 });
+        g.fill({ color: isFriendly ? 0x7c4dff : 0xff9100 });
         g.stroke({ color: 0xffffff, width: 2 });
         break;
       }

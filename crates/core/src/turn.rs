@@ -59,6 +59,63 @@ impl TurnProcessor {
             all_orders.add_order(order);
         }
 
+        Self::execute_orders(state, &snapshot, all_orders, &mut events);
+        events
+    }
+
+    /// Resolve simultaneous turn with authoritative multi-team orders.
+    pub fn resolve_turn(state: &mut GameState, mut combined_orders: TurnOrders) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+
+        state.phase = Phase::Resolution;
+        events.push(GameEvent::RoundStarted {
+            round: state.round + 1,
+        });
+
+        // 1. Reset AP for all units
+        state.reset_all_ap();
+
+        // 2. Process Spawner waves
+        let spawn_events = SpawnerSystem::process_spawns(state);
+        events.extend(spawn_events);
+
+        // Pre-resolution snapshot for stable AI planning
+        let snapshot = state.clone();
+
+        // Auto-fill automated orders for Minions and Towers for both teams if not already present
+        for team in [0, 1] {
+            let auto_orders = GameAI::generate_orders(&snapshot, team);
+            for order in auto_orders.orders {
+                if let Some(u) = snapshot.get_unit(order.unit_id) {
+                    if u.kind != UnitKind::Hero && combined_orders.get_order(order.unit_id).is_none() {
+                        combined_orders.add_order(order);
+                    }
+                }
+            }
+        }
+
+        // Auto-fill fallback orders for any living heroes without an order
+        for team in [0, 1] {
+            for unit in snapshot.units.values() {
+                if unit.team == team && unit.is_alive() && unit.kind == UnitKind::Hero {
+                    if combined_orders.get_order(unit.id).is_none() {
+                        combined_orders.add_order(GameAI::generate_fallback_order(&snapshot, unit.id));
+                    }
+                }
+            }
+        }
+
+        Self::execute_orders(state, &snapshot, combined_orders, &mut events);
+        events
+    }
+
+    fn execute_orders(
+        state: &mut GameState,
+        snapshot: &GameState,
+        all_orders: TurnOrders,
+        events: &mut Vec<GameEvent>,
+    ) {
+
         // 7. Sort unit IDs by initiative DESC, unit_id ASC
         let mut unit_ids: Vec<UnitId> = all_orders.orders.iter().map(|o| o.unit_id).collect();
         unit_ids.sort_unstable();
@@ -148,8 +205,6 @@ impl TurnProcessor {
             state.phase = Phase::Planning;
             events.push(GameEvent::RoundEnded { round: state.round });
         }
-
-        events
     }
 
     fn check_entry(

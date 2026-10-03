@@ -6,9 +6,12 @@ pub mod minion_ai;
 pub mod orders;
 pub mod spawner;
 pub mod state;
+pub mod session;
 pub mod tower_ai;
 pub mod turn;
 pub mod unit;
+
+pub use session::{BattleConfig, BattleSession, Controller};
 
 use crate::hex::{HexCoord, HexMap};
 use crate::orders::{Action, TurnOrders, UnitOrder};

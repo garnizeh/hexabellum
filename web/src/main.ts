@@ -5,15 +5,25 @@ import {
   getMapHexes,
   getObstacles,
   getPlayerFog,
-  restart,
+  restart as restartLocalGame,
 } from './game/bridge';
 import { HexRenderer } from './game/renderer';
 import { InputHandler } from './game/input';
 import { Animator } from './game/animator';
 import { TurnTimer } from './game/timer';
+import { ClientSession, snapshotToGameState } from './game/client_session';
+import { HudController } from './ui/hud';
+import { SanitizedGameEvent, SnapshotDto } from './game/types';
 
 async function main() {
-  await initGame();
+  // Attempt local WASM init (optional, retained for local offline dev)
+  let wasmLoaded = false;
+  try {
+    await initGame();
+    wasmLoaded = true;
+  } catch (err) {
+    console.warn("WASM runtime not available, operating in pure network client mode:", err);
+  }
 
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   const app = new PIXI.Application();
@@ -22,11 +32,13 @@ async function main() {
     resizeTo: window,
     backgroundColor: 0x090b14,
     antialias: true,
+    preference: 'webgl',
   });
 
   const renderer = new HexRenderer(app);
   const animator = new Animator(renderer);
   const timer = new TurnTimer(30);
+  const hud = new HudController();
 
   const timerEl = document.getElementById('timer') as HTMLElement;
   const roundEl = document.getElementById('round-val') as HTMLElement;
@@ -37,74 +49,238 @@ async function main() {
   const gameOverTitle = document.getElementById('game-over-title') as HTMLElement;
   const modalRestartBtn = document.getElementById('btn-restart-modal') as HTMLButtonElement;
 
+  // Matchmaking UI elements
+  const matchModal = document.getElementById('match-dialog-modal') as HTMLElement;
+  const btnOpenMatchmaking = document.getElementById('btn-open-matchmaking') as HTMLButtonElement;
+  const btnStartPvAI = document.getElementById('btn-start-pvai') as HTMLButtonElement;
+  const btnStartPvP = document.getElementById('btn-start-pvp') as HTMLButtonElement;
+  const btnSubmitJoin = document.getElementById('btn-submit-join') as HTMLButtonElement;
+  const inputJoinId = document.getElementById('input-join-id') as HTMLInputElement;
+  const btnCloseModal = document.getElementById('btn-close-modal') as HTMLButtonElement;
+
   if (timerEl) timer.setDisplay(timerEl);
 
-  const hexes = getMapHexes();
-  const obstacles = getObstacles();
+  const session = new ClientSession();
+  let isOnline = false;
 
-  const refreshBoard = () => {
-    const state = getPlayerState(0);
-    const fog = getPlayerFog();
+  const input = new InputHandler(renderer, null);
 
-    renderer.drawMap(hexes, obstacles);
-    renderer.drawUnits(state);
-    renderer.drawFog(fog, hexes);
+  const renderCurrentState = () => {
+    if (isOnline && session.getSnapshot()) {
+      const snap = session.getSnapshot()!;
+      const state = snapshotToGameState(snap);
+      const hexes = snap.map.walkable;
+      const obstacles = snap.map.obstacles;
+      const fog = snap.visible_hexes;
 
-    if (roundEl) roundEl.textContent = `Round ${state.round}`;
+      renderer.drawMap(hexes, obstacles);
+      renderer.drawUnits(state);
+      renderer.drawFog(fog, hexes);
 
-    if (state.phase === 'MatchEnd') {
-      const won = state.winner === 0;
-      const isDraw = state.winner === null;
-      let resultText = '';
-      if (won) {
-        const enemySpawner = Object.values(state.units).find(u => u.team === 1 && u.kind === 'SpawnerTower' && u.hp > 0);
-        resultText = !enemySpawner ? 'VICTORY — ENEMY BASE DESTROYED' : 'VICTORY — ALL ENEMY HEROES ELIMINATED';
-      } else if (isDraw) {
-        resultText = 'DRAW — MUTUAL ANNIHILATION';
-      } else {
-        const playerSpawner = Object.values(state.units).find(u => u.team === 0 && u.kind === 'SpawnerTower' && u.hp > 0);
-        resultText = !playerSpawner ? 'DEFEAT — ALLIED BASE DESTROYED' : 'DEFEAT — ALL HEROES ELIMINATED';
-      }
+      if (roundEl) roundEl.textContent = `Round ${state.round}`;
 
-      if (statusEl) {
-        statusEl.textContent = resultText;
-        statusEl.style.color = won ? '#00e676' : isDraw ? '#ffea00' : '#ff1744';
-      }
-      timer.stop();
-      if (endTurnBtn) endTurnBtn.disabled = true;
-      if (restartBtn) restartBtn.style.display = 'inline-block';
-
-      if (gameOverModal && gameOverTitle) {
-        gameOverTitle.textContent = won ? 'VICTORY' : isDraw ? 'DRAW' : 'DEFEAT';
-        gameOverTitle.className = won ? 'victory' : isDraw ? '' : 'defeat';
-        gameOverModal.style.display = 'flex';
-      }
-    } else {
-      if (gameOverModal) {
-        gameOverModal.style.display = 'none';
-      }
-      if (statusEl) {
-        statusEl.textContent = 'Planning Phase — Order Heroes or wait for timer';
-        statusEl.style.color = '#00d2ff';
-      }
-      if (endTurnBtn) endTurnBtn.disabled = false;
-      timer.start(() => {
-        if (!endTurnBtn.disabled) {
-          endTurnBtn.click();
+      if (state.phase === 'MatchEnd') {
+        const team = session.getCurrentTeam();
+        const won = state.winner === team;
+        const isDraw = state.winner === null;
+        let resultText = '';
+        if (won) {
+          resultText = 'VICTORY — BASE SECURED';
+        } else if (isDraw) {
+          resultText = 'DRAW — MUTUAL ANNIHILATION';
+        } else {
+          resultText = 'DEFEAT — STRUCTURE DESTROYED';
         }
-      });
+
+        if (statusEl) {
+          statusEl.textContent = resultText;
+          statusEl.style.color = won ? '#00e676' : isDraw ? '#ffea00' : '#ff1744';
+        }
+        timer.stop();
+        if (endTurnBtn) endTurnBtn.disabled = true;
+        if (restartBtn) restartBtn.style.display = 'inline-block';
+
+        if (gameOverModal && gameOverTitle) {
+          gameOverTitle.textContent = won ? 'VICTORY' : isDraw ? 'DRAW' : 'DEFEAT';
+          gameOverTitle.className = won ? 'victory' : isDraw ? '' : 'defeat';
+          gameOverModal.style.display = 'flex';
+        }
+      }
+    } else if (wasmLoaded) {
+      const state = getPlayerState(0);
+      const fog = getPlayerFog();
+      const hexes = getMapHexes();
+      const obstacles = getObstacles();
+
+      renderer.drawMap(hexes, obstacles);
+      renderer.drawUnits(state);
+      renderer.drawFog(fog, hexes);
+
+      if (roundEl) roundEl.textContent = `Round ${state.round}`;
+
+      if (state.phase === 'MatchEnd') {
+        const won = state.winner === 0;
+        const isDraw = state.winner === null;
+        if (statusEl) {
+          statusEl.textContent = won ? 'VICTORY' : isDraw ? 'DRAW' : 'DEFEAT';
+          statusEl.style.color = won ? '#00e676' : isDraw ? '#ffea00' : '#ff1744';
+        }
+        timer.stop();
+        if (endTurnBtn) endTurnBtn.disabled = true;
+        if (restartBtn) restartBtn.style.display = 'inline-block';
+      } else {
+        if (statusEl) {
+          statusEl.textContent = 'Planning Phase — Order Heroes or wait for timer';
+          statusEl.style.color = '#00d2ff';
+        }
+        if (endTurnBtn) endTurnBtn.disabled = false;
+        timer.start(() => {
+          if (!endTurnBtn.disabled) {
+            endTurnBtn.click();
+          }
+        });
+      }
     }
   };
 
-  const input = new InputHandler(renderer);
+  let pendingRoundStarted: { round: number; deadlineUnixMs: number; snapshot: SnapshotDto } | null = null;
+  let pendingMatchEnded: { winner: number | null; snapshot: SnapshotDto } | null = null;
+
+  const applyRoundStarted = (round: number, deadlineUnixMs: number, _snapshot: SnapshotDto) => {
+    isOnline = true;
+    input.setSession(session);
+    renderer.setPlayerTeam(session.getCurrentTeam());
+    renderCurrentState();
+
+    if (statusEl) {
+      statusEl.textContent = 'Planning Phase — Submit orders before timer expires';
+      statusEl.style.color = '#00d2ff';
+    }
+    if (endTurnBtn) {
+      endTurnBtn.disabled = false;
+      endTurnBtn.textContent = 'End Turn';
+    }
+
+    timer.startWithDeadline(deadlineUnixMs, () => {
+      if (endTurnBtn) endTurnBtn.disabled = true;
+      if (statusEl) {
+        statusEl.textContent = 'Turn deadline reached — resolving with server...';
+        statusEl.style.color = '#ffea00';
+      }
+    });
+  };
+
+  // Wire network event callbacks
+  session.setEvents({
+    onConnectionChange: (state) => {
+      hud.setConnectionState(state);
+      if (state === 'CONNECTED') {
+        isOnline = true;
+        input.setSession(session);
+      } else if (state === 'DISCONNECTED') {
+        if (!wasmLoaded) {
+          if (statusEl) statusEl.textContent = 'Disconnected from server.';
+        }
+      }
+    },
+    onMatchJoined: (matchId, team, _snapshot) => {
+      isOnline = true;
+      input.setSession(session);
+      renderer.setPlayerTeam(team);
+      sessionStorage.setItem('hb_current_match', matchId);
+      hud.setMatchInfo(matchId, false);
+      renderCurrentState();
+      if (statusEl) {
+        statusEl.textContent = `Joined Match [Team ${team === 0 ? 'Blue' : 'Red'}] — Waiting for planning...`;
+      }
+    },
+    onRoundStarted: (round, deadlineUnixMs, snapshot) => {
+      isOnline = true;
+      input.setSession(session);
+      renderer.setPlayerTeam(session.getCurrentTeam());
+      hud.setOpponentStatus(session.getIsPvAI() ? 'ai' : 'ready');
+
+      if (input.getIsResolving()) {
+        pendingRoundStarted = { round, deadlineUnixMs, snapshot };
+        timer.startWithDeadline(deadlineUnixMs, () => {
+          if (endTurnBtn) endTurnBtn.disabled = true;
+          if (statusEl) {
+            statusEl.textContent = 'Turn deadline reached — resolving with server...';
+            statusEl.style.color = '#ffea00';
+          }
+        });
+      } else {
+        applyRoundStarted(round, deadlineUnixMs, snapshot);
+      }
+    },
+    onOrdersAccepted: (round) => {
+      if (statusEl) {
+        statusEl.textContent = `Orders locked in for Round ${round}. Awaiting opponent...`;
+        statusEl.style.color = '#ffea00';
+      }
+    },
+    onOrderRejected: (_round, _code, reason) => {
+      hud.showToast(`Order rejected: ${reason}`);
+      if (endTurnBtn) endTurnBtn.disabled = false;
+    },
+    onRoundResolved: (round, events, _snapshot) => {
+      if (endTurnBtn) endTurnBtn.disabled = true;
+      if (statusEl) statusEl.textContent = `Resolving Round ${round}...`;
+      console.debug(
+        `[Hexabellum] Round ${round} resolved. Server state hash: ${_snapshot.state_hash}`
+      );
+
+      input.handleServerResolved(events, animator, () => {
+        if (pendingMatchEnded) {
+          timer.stop();
+          renderCurrentState();
+          pendingMatchEnded = null;
+        } else if (pendingRoundStarted) {
+          const { round: r, deadlineUnixMs, snapshot: snap } = pendingRoundStarted;
+          pendingRoundStarted = null;
+          applyRoundStarted(r, deadlineUnixMs, snap);
+        } else {
+          renderCurrentState();
+        }
+      });
+    },
+    onMatchEnded: (winner, snapshot) => {
+      if (input.getIsResolving()) {
+        pendingMatchEnded = { winner, snapshot };
+      } else {
+        timer.stop();
+        renderCurrentState();
+      }
+    },
+    onOpponentStatus: (online) => {
+      if (!session.getIsPvAI()) {
+        hud.setOpponentStatus(online ? 'ready' : 'offline');
+      }
+    },
+    onError: (msg) => {
+      hud.showToast(`Error: ${msg}`);
+    },
+  });
 
   const handleEndTurn = () => {
-    timer.stop();
     endTurnBtn.disabled = true;
-    if (statusEl) statusEl.textContent = 'Resolving simultaneous turn...';
-    input.endTurnWithAnimation(animator, () => {
-      refreshBoard();
-    });
+
+    if (isOnline) {
+      if (session.getStagedCount() === 0) {
+        session.stageWaitOrdersForControlled();
+      }
+      if (statusEl) {
+        statusEl.textContent = 'Orders submitted. Awaiting resolution...';
+        statusEl.style.color = '#00d2ff';
+      }
+      session.submitOrders();
+    } else {
+      if (statusEl) statusEl.textContent = 'Orders submitted. Awaiting resolution...';
+      timer.stop();
+      input.endTurnWithAnimation(animator, () => {
+        renderCurrentState();
+      });
+    }
   };
 
   if (endTurnBtn) {
@@ -113,27 +289,138 @@ async function main() {
 
   const handleRestart = () => {
     input.reset();
-    restart();
+    sessionStorage.removeItem('hb_current_match');
+    if (typeof window !== 'undefined' && window.history) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('match');
+      url.searchParams.delete('mode');
+      window.history.replaceState(null, '', url.toString());
+    }
+    if (isOnline) {
+      startNewPvAIMatch();
+    } else if (wasmLoaded) {
+      restartLocalGame();
+      renderCurrentState();
+    }
     if (restartBtn) restartBtn.style.display = 'none';
     if (gameOverModal) gameOverModal.style.display = 'none';
-    refreshBoard();
   };
 
-  if (restartBtn) {
-    restartBtn.addEventListener('click', handleRestart);
+  if (restartBtn) restartBtn.addEventListener('click', handleRestart);
+  if (modalRestartBtn) modalRestartBtn.addEventListener('click', handleRestart);
+
+  // Matchmaking handlers
+  const startNewPvAIMatch = async () => {
+    try {
+      if (statusEl) statusEl.textContent = 'Creating PvAI match on server...';
+      const matchId = await session.createMatch(true, 30);
+      if (typeof window !== 'undefined' && window.history) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('match', matchId);
+        url.searchParams.delete('mode');
+        window.history.replaceState(null, '', url.toString());
+      }
+      sessionStorage.setItem('hb_current_match', matchId);
+      hud.setMatchInfo(matchId, true);
+      hud.setOpponentStatus('ai');
+      session.joinMatch(matchId);
+      if (matchModal) matchModal.style.display = 'none';
+    } catch (err) {
+      console.info("Multiplayer server offline; seamlessly running match via local WASM engine:", err);
+      hud.showToast('Backend server offline. Running in local WASM mode.');
+      fallbackToLocalWasm();
+    }
+  };
+
+  const startNewPvPMatch = async () => {
+    try {
+      if (statusEl) statusEl.textContent = 'Hosting 1v1 PvP match...';
+      const matchId = await session.createMatch(false, 30);
+      if (typeof window !== 'undefined' && window.history) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('match', matchId);
+        url.searchParams.delete('mode');
+        window.history.replaceState(null, '', url.toString());
+      }
+      sessionStorage.setItem('hb_current_match', matchId);
+      hud.setMatchInfo(matchId, false);
+      hud.setOpponentStatus('waiting');
+      session.joinMatch(matchId);
+      if (matchModal) matchModal.style.display = 'none';
+      hud.showToast('📋 Match created! Share link with opponent.');
+    } catch (err) {
+      console.warn("Failed to create PvP match:", err);
+      hud.showToast('Failed to create PvP match. Ensure the backend server is running.');
+    }
+  };
+
+  const joinExistingMatch = (id: string) => {
+    if (!id.trim()) return;
+    const cleanId = id.trim();
+    if (typeof window !== 'undefined' && window.history) {
+      const url = new URL(window.location.href);
+      url.searchParams.set('match', cleanId);
+      url.searchParams.delete('mode');
+      window.history.replaceState(null, '', url.toString());
+    }
+    sessionStorage.setItem('hb_current_match', cleanId);
+    session.setIsPvAI(false);
+    hud.setMatchInfo(cleanId, false);
+    session.joinMatch(cleanId);
+    if (matchModal) matchModal.style.display = 'none';
+  };
+
+  if (btnOpenMatchmaking && matchModal) {
+    btnOpenMatchmaking.addEventListener('click', () => {
+      matchModal.style.display = 'flex';
+    });
+  }
+  if (btnCloseModal && matchModal) {
+    btnCloseModal.addEventListener('click', () => {
+      matchModal.style.display = 'none';
+    });
+  }
+  if (btnStartPvAI) btnStartPvAI.addEventListener('click', startNewPvAIMatch);
+  if (btnStartPvP) btnStartPvP.addEventListener('click', startNewPvPMatch);
+  if (btnSubmitJoin && inputJoinId) {
+    btnSubmitJoin.addEventListener('click', () => joinExistingMatch(inputJoinId.value));
   }
 
-  if (modalRestartBtn) {
-    modalRestartBtn.addEventListener('click', handleRestart);
+  const fallbackToLocalWasm = () => {
+    if (wasmLoaded) {
+      isOnline = false;
+      input.setSession(null);
+      hud.setConnectionState('DISCONNECTED');
+      hud.setMatchInfo(null, false);
+      hud.setOpponentStatus('hidden');
+      renderCurrentState();
+      timer.start(() => {
+        if (!endTurnBtn.disabled) endTurnBtn.click();
+      });
+    }
+  };
+
+  // Check URL query parameters for match join or mode (e.g. ?match=123 or ?mode=pvp or ?offline=1)
+  const urlParams = new URLSearchParams(window.location.search);
+  const matchParam = urlParams.get('match');
+  const modeParam = urlParams.get('mode');
+  const offlineParam = urlParams.get('offline');
+  const cachedMatch = sessionStorage.getItem('hb_current_match');
+
+  if (matchParam) {
+    joinExistingMatch(matchParam);
+  } else if (modeParam === 'pvp') {
+    startNewPvPMatch();
+  } else if (cachedMatch && offlineParam !== '1') {
+    joinExistingMatch(cachedMatch);
+  } else if (offlineParam === '1' && wasmLoaded) {
+    fallbackToLocalWasm();
+  } else {
+    // Default: Deploy into authoritative server PvAI battle (auto-falls back to WASM if server offline)
+    startNewPvAIMatch();
   }
 
-  const quickResetBtn = document.getElementById('btn-quick-reset') as HTMLButtonElement;
-  if (quickResetBtn) {
-    quickResetBtn.addEventListener('click', handleRestart);
-  }
-
-  refreshBoard();
-  console.log("Hexabellum Phase 2 MOBA Vertical Slice Initialized.");
+  console.log("Hexabellum Phase 3 Authoritative Multiplayer Slice Initialized.");
 }
 
 main().catch(console.error);

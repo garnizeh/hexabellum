@@ -1,6 +1,54 @@
+export class SynchronizedTurnTimer {
+  private deadlineUnixMs: number | null = null;
+  private totalDurationMs: number = 30000;
+  private intervalId: number | null = null;
+  private onTickCallback: ((remainingSecs: number, phaseRatio: number) => void) | null = null;
+  private onExpireCallback: (() => void) | null = null;
+
+  start(
+    deadlineUnixMs: number,
+    onTick: (s: number, r: number) => void,
+    onExpire: () => void,
+    durationMs: number = 30000
+  ): void {
+    this.stop();
+    this.deadlineUnixMs = deadlineUnixMs;
+    this.totalDurationMs = durationMs > 0 ? durationMs : 30000;
+    this.onTickCallback = onTick;
+    this.onExpireCallback = onExpire;
+
+    this.update();
+    this.intervalId = window.setInterval(() => this.update(), 100);
+  }
+
+  stop(): void {
+    if (this.intervalId !== null) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+    this.deadlineUnixMs = null;
+  }
+
+  private update(): void {
+    if (!this.deadlineUnixMs) return;
+
+    const remainingMs = Math.max(0, this.deadlineUnixMs - Date.now());
+    const remainingSecs = Math.ceil(remainingMs / 1000);
+    const ratio = Math.max(0, Math.min(1, remainingMs / this.totalDurationMs));
+
+    this.onTickCallback?.(remainingSecs, ratio);
+
+    if (remainingMs <= 0) {
+      this.stop();
+      this.onExpireCallback?.();
+    }
+  }
+}
+
 export class TurnTimer {
   private duration: number;
   private remaining: number;
+  private deadlineUnixMs: number | null = null;
   private intervalId: number | null = null;
   private onExpire: (() => void) | null = null;
   private displayElement: HTMLElement | null = null;
@@ -17,6 +65,7 @@ export class TurnTimer {
 
   start(onExpire: () => void): void {
     this.stop();
+    this.deadlineUnixMs = null;
     this.remaining = this.duration;
     this.onExpire = onExpire;
     this.updateDisplay();
@@ -32,10 +81,33 @@ export class TurnTimer {
     }, 1000);
   }
 
+  startWithDeadline(deadlineUnixMs: number, onExpire?: () => void): void {
+    this.stop();
+    this.deadlineUnixMs = deadlineUnixMs;
+    if (onExpire) this.onExpire = onExpire;
+
+    this.updateDeadlineTick();
+    this.intervalId = window.setInterval(() => this.updateDeadlineTick(), 100);
+  }
+
   stop(): void {
     if (this.intervalId !== null) {
       clearInterval(this.intervalId);
       this.intervalId = null;
+    }
+    this.deadlineUnixMs = null;
+  }
+
+  private updateDeadlineTick(): void {
+    if (!this.deadlineUnixMs) return;
+
+    const remainingMs = Math.max(0, this.deadlineUnixMs - Date.now());
+    this.remaining = Math.ceil(remainingMs / 1000);
+    this.updateDisplay();
+
+    if (remainingMs <= 0) {
+      this.stop();
+      this.onExpire?.();
     }
   }
 
