@@ -111,6 +111,9 @@ impl TutorialScenarioRunner {
                 xp: 0,
                 level: 1,
                 items: Vec::new(),
+                life_state: crate::unit::LifeState::Alive,
+                respawn_rounds: None,
+                death_pos: None,
             };
             if preset.is_invulnerable {
                 unit.hp = preset.hp.max(100);

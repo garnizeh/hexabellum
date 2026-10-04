@@ -1,4 +1,5 @@
 import init, { WasmGame, WasmTutorialSession } from '../wasm/pkg/hexabellum_wasm';
+import { LifeStateDto, BaseZoneDto, ObjectiveStatusDto } from './types';
 
 let game: WasmGame | null = null;
 
@@ -11,7 +12,16 @@ export interface HexCoord {
   r: number;
 }
 
-export type UnitKind = 'Hero' | 'Minion' | 'Tower' | 'Spawner' | 'SpawnerTower' | 'Neutral' | 'NeutralGuardian';
+export type UnitKind =
+  | 'Hero'
+  | 'Minion'
+  | 'Tower'
+  | 'Spawner'
+  | 'SpawnerTower'
+  | 'Neutral'
+  | 'NeutralGuardian'
+  | 'Core'
+  | 'Objective';
 
 export interface UnitData {
   id: number;
@@ -38,6 +48,9 @@ export interface UnitData {
   xp?: number;
   level?: number;
   items?: string[];
+  life_state?: LifeStateDto | null;
+  respawn_rounds?: number | null;
+  death_pos?: HexCoord | null;
 }
 
 export interface GameState {
@@ -45,6 +58,9 @@ export interface GameState {
   phase: 'Planning' | 'Resolution' | 'MatchEnd';
   units: Record<number, UnitData>;
   winner: number | null;
+  base_zones?: BaseZoneDto[];
+  core_hp?: Record<number, [number, number]>;
+  objective?: ObjectiveStatusDto | null;
 }
 
 export type GameEvent =
@@ -69,6 +85,19 @@ export type GameEvent =
       new_attack_damage: number;
       new_max_energy: number;
     }
+  | { type: 'HeroDied'; unit_id: number; killed_by: number; respawn_rounds: number }
+  | { type: 'HeroRespawned'; unit_id: number; team: number; pos: HexCoord }
+  | { type: 'BaseRegenerationApplied'; unit_id: number; team: number; amount: number; new_hp: number }
+  | {
+      type: 'ObjectiveDestroyed';
+      objective_id: number;
+      destroyer_team: number;
+      last_attacker_id: number;
+      gold_awarded_per_hero: number;
+      xp_awarded_per_hero: number;
+      affected_heroes: number[];
+    }
+  | { type: 'CoreDestroyed'; core_id: number; team: number; destroyed_by: number }
   | { type: 'UnitDied'; unit_id: number; unit_kind: UnitKind; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'FogUpdated'; team: number; visible_hexes: HexCoord[] }

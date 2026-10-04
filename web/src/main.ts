@@ -2,6 +2,7 @@ import * as PIXI from 'pixi.js';
 import './ui/tutorial.css';
 import './ui/phase5.css';
 import './ui/phase6.css';
+import './ui/phase7.css';
 import {
   initGame,
   getPlayerState,
@@ -142,6 +143,9 @@ async function main() {
       const fog = snap.visible_hexes;
 
       renderer.drawMap(hexes, obstacles);
+      if (snap.base_zones) {
+        renderer.drawBaseZones(snap.base_zones);
+      }
       renderer.drawUnits(state);
       renderer.drawFog(fog, hexes);
 
@@ -153,6 +157,16 @@ async function main() {
 
       abilityDock.update(input.getSelectedUnit());
       hud.update5v5Rosters(snap, session.getNet().getPlayerId());
+      hud.updateMacroBar(snap);
+
+      // Hero defeated respawn banner check
+      const isDead = session.isHeroDead();
+      if (isDead) {
+        const rounds = session.getHeroRespawnRounds() ?? 3;
+        hud.setHeroDefeated(true, rounds);
+      } else {
+        hud.setHeroDefeated(false, 0);
+      }
 
       if (roundEl) roundEl.textContent = `Round ${state.round}`;
 
@@ -162,11 +176,11 @@ async function main() {
         const isDraw = state.winner === null;
         let resultText = '';
         if (won) {
-          resultText = 'VICTORY — BASE SECURED';
+          resultText = 'VICTORY — ENEMY CORE OBLITERATED';
         } else if (isDraw) {
-          resultText = 'DRAW — MUTUAL ANNIHILATION';
+          resultText = 'DRAW — MUTUAL CORE DESTRUCTION';
         } else {
-          resultText = 'DEFEAT — STRUCTURE DESTROYED';
+          resultText = 'DEFEAT — ALLIED CORE COLLAPSED';
         }
 
         if (statusEl) {
@@ -177,11 +191,29 @@ async function main() {
         if (endTurnBtn) endTurnBtn.disabled = true;
         if (restartBtn) restartBtn.style.display = 'inline-block';
 
-        if (gameOverModal && gameOverTitle) {
-          gameOverTitle.textContent = won ? 'VICTORY' : isDraw ? 'DRAW' : 'DEFEAT';
-          gameOverTitle.className = won ? 'victory' : isDraw ? '' : 'defeat';
-          gameOverModal.style.display = 'flex';
-        }
+        const myHero = session.getMyHero();
+        const controlledEco = session.getControlledHeroEconomy();
+        const coreHp = snap.core_hp;
+        const myCoreHp = coreHp ? coreHp[team]?.[0] ?? 0 : 0;
+        const enemyTeam = team === 0 ? 1 : 0;
+        const enemyCoreHp = coreHp ? coreHp[enemyTeam]?.[0] ?? 0 : 0;
+        const vaultSecured = snap.objective ? !snap.objective.is_alive : false;
+
+        hud.showVictoryCelebrationModal({
+          won,
+          isDraw,
+          round: state.round,
+          stats: {
+            alliedCoreHp: myCoreHp,
+            enemyCoreHp,
+            vaultSecured,
+            totalGold: controlledEco?.gold ?? myHero?.gold ?? 50,
+            items: controlledEco?.items ?? myHero?.items ?? [],
+          },
+          onReturnToLobby: () => {
+            window.location.reload();
+          },
+        });
       }
     } else if (wasmLoaded) {
       const state = getPlayerState(0);
@@ -385,6 +417,14 @@ async function main() {
           }
         } else if (ev.type === 'LevelUp') {
           hud.showToast(`⭐ LEVEL UP! Unit #${ev.unit_id} reached Level ${ev.new_level}!`);
+        } else if (ev.type === 'HeroDied') {
+          hud.showToast(`💀 Allied Hero fallen! Respawning at base in ${ev.respawn_rounds} rounds.`);
+        } else if (ev.type === 'HeroRespawned') {
+          hud.showToast(`✨ Hero respawned at Allied Base Sanctuary!`);
+        } else if (ev.type === 'ObjectiveDestroyed') {
+          hud.showToast(`🏛️ ANCIENT VAULT SECURED! Team +50G, +40XP & +5 Attack Damage buff granted!`);
+        } else if (ev.type === 'CoreDestroyed') {
+          hud.showToast(`💥 SOVEREIGN CORE OBLITERATED!`);
         }
       }
 

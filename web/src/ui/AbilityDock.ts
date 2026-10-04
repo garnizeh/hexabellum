@@ -146,7 +146,18 @@ export class AbilityDock {
     if (!this.dockEl) return;
 
     if (!unit || unit.kind !== 'Hero') {
-      if (this.heroTitleEl) this.heroTitleEl.textContent = 'NO HERO SELECTED';
+      const isDead = this.session?.isHeroDead();
+      if (isDead) {
+        if (this.heroTitleEl) {
+          const rounds = this.session?.getHeroRespawnRounds() ?? 3;
+          this.heroTitleEl.textContent = `💀 HERO FALLEN — RESPAWNING IN ${rounds} ROUNDS`;
+        }
+        if (this.ecoBarEl) this.ecoBarEl.style.display = 'flex';
+        this.updateShopButton(null);
+      } else {
+        if (this.heroTitleEl) this.heroTitleEl.textContent = 'NO HERO SELECTED';
+        if (this.ecoBarEl) this.ecoBarEl.style.display = 'none';
+      }
       if (this.apDisplayEl) this.apDisplayEl.textContent = 'AP: -';
       if (this.energyDisplayEl) this.energyDisplayEl.textContent = '⚡ -';
       if (this.abilityBtn) this.abilityBtn.disabled = true;
@@ -154,15 +165,20 @@ export class AbilityDock {
       if (this.attackBtn) this.attackBtn.disabled = true;
       if (this.waitBtn) this.waitBtn.disabled = true;
       if (this.abilityCdOverlay) this.abilityCdOverlay.style.display = 'none';
-      if (this.ecoBarEl) this.ecoBarEl.style.display = 'none';
       return;
     }
 
     if (this.ecoBarEl) this.ecoBarEl.style.display = 'flex';
 
+    const isDead = this.session?.isHeroDead() || unit.life_state === 'dead_awaiting_respawn';
     const heroSpell = this.getHeroSpell(unit);
     if (this.heroTitleEl) {
-      this.heroTitleEl.textContent = `${heroSpell.heroClass} #${unit.id} — ${heroSpell.role}`;
+      if (isDead) {
+        const rounds = unit.respawn_rounds ?? this.session?.getHeroRespawnRounds() ?? 3;
+        this.heroTitleEl.textContent = `💀 ${heroSpell.heroClass} DEFEATED — RESPAWNING IN ${rounds} ROUNDS`;
+      } else {
+        this.heroTitleEl.textContent = `${heroSpell.heroClass} #${unit.id} — ${heroSpell.role}`;
+      }
     }
 
     if (this.apDisplayEl) {
@@ -190,32 +206,73 @@ export class AbilityDock {
       } else {
         if (this.abilityCdOverlay) this.abilityCdOverlay.style.display = 'none';
         const canAfford = energy >= heroSpell.energyCost && unit.ap >= 1;
-        this.abilityBtn.disabled = !canAfford;
+        this.abilityBtn.disabled = !canAfford || isDead;
+      }
+      if (isDead) {
+        this.abilityBtn.title = 'Hero is awaiting respawn at base';
       }
     }
 
     // Repair (F)
     if (this.repairBtn) {
       let hasRepairTarget = false;
-      if (this.session && unit.ap >= 1) {
+      if (this.session && unit.ap >= 1 && !isDead) {
         const targets = this.session.getRepairTargets(unit.id, unit.pos.q, unit.pos.r);
         hasRepairTarget = targets.length > 0;
       }
-      this.repairBtn.disabled = !hasRepairTarget || unit.ap < 1;
+      this.repairBtn.disabled = !hasRepairTarget || unit.ap < 1 || isDead;
+      if (isDead) {
+        this.repairBtn.title = 'Hero is awaiting respawn at base';
+      }
     }
 
     // Attack (A)
     if (this.attackBtn) {
-      this.attackBtn.disabled = unit.ap < 1;
+      this.attackBtn.disabled = unit.ap < 1 || isDead;
+      if (isDead) {
+        this.attackBtn.title = 'Hero is awaiting respawn at base';
+      }
     }
 
     // Wait (Space)
     if (this.waitBtn) {
-      this.waitBtn.disabled = false;
+      this.waitBtn.disabled = isDead;
+      if (isDead) {
+        this.waitBtn.title = 'Hero is awaiting respawn at base';
+      }
     }
 
     // Update Phase 6 Economy & Progression
     this.updateEconomyElements(unit);
+    this.updateShopButton(unit);
+  }
+
+  private updateShopButton(unit: UnitData | null): void {
+    if (!this.shopBtn) return;
+
+    const isDead = this.session?.isHeroDead() || unit?.life_state === 'dead_awaiting_respawn';
+    const phase = this.session?.getPhase() ?? 'Planning';
+    const canShop = this.session?.canShop() ?? false;
+
+    this.shopBtn.className = 'hb-open-shop-btn';
+
+    if (phase === 'Resolution') {
+      this.shopBtn.classList.add('resolving');
+      this.shopBtn.innerHTML = `<span>⏳ RESOLVING...</span>`;
+      this.shopBtn.title = 'Shop Unavailable: Orders currently resolving';
+    } else if (isDead) {
+      this.shopBtn.classList.add('hero-dead');
+      this.shopBtn.innerHTML = `<span>💀 HERO DEFEATED</span>`;
+      this.shopBtn.title = 'Shop Unavailable: Awaiting respawn at base';
+    } else if (canShop) {
+      this.shopBtn.classList.add('in-base');
+      this.shopBtn.innerHTML = `<span>🛡️ BASE SHOP</span> <span style="font-size:10px; opacity:0.8; font-family:'JetBrains Mono',monospace;">[B]</span>`;
+      this.shopBtn.title = 'Base Shop Open: Buy passive items';
+    } else {
+      this.shopBtn.classList.add('outside-base');
+      this.shopBtn.innerHTML = `<span>🛡️ SHOP (RETURN TO BASE)</span>`;
+      this.shopBtn.title = 'Shop Unavailable: You must be inside your team base to purchase items';
+    }
   }
 
   private updateEconomyElements(unit: UnitData): void {

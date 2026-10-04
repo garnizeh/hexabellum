@@ -171,12 +171,17 @@ export class HudController {
     for (const ally of allies) {
       const isSelf = Boolean(myPlayerId && ally.player_id === myPlayerId);
       const isControlled = snapshot.controlled_units?.includes(ally.unit_id);
+      const isDead = ally.life_state === 'dead_awaiting_respawn' || (ally.hp === 0 && ally.hp !== null);
       const currentHp = ally.hp ?? 0;
-      const hpRatio = Math.max(0, Math.min(1, currentHp / ally.max_hp));
-      const hpColor = hpRatio > 0.5 ? '#00e676' : hpRatio > 0.25 ? '#ffd600' : '#ff1744';
+      const hpRatio = isDead ? 0 : Math.max(0, Math.min(1, currentHp / ally.max_hp));
+      const hpColor = isDead ? '#64748b' : hpRatio > 0.5 ? '#00e676' : hpRatio > 0.25 ? '#ffd600' : '#ff1744';
 
-      const statusPipClass = ally.orders_submitted ? 'submitted' : 'planning';
-      const statusPipText = ally.orders_submitted ? '✓ READY' : '...';
+      const statusPipClass = isDead ? 'dead' : ally.orders_submitted ? 'submitted' : 'planning';
+      const statusPipText = isDead
+        ? `💀 ${ally.respawn_rounds ?? 0}R`
+        : ally.orders_submitted
+        ? '✓ READY'
+        : '...';
       const aiBadge = ally.is_ai ? '<span style="color:#38bdf8; font-size:10px;">[AI]</span>' : '';
       const dcBadge = !ally.connected && !ally.is_ai ? '<span style="color:#ff1744; font-size:10px;">[DC]</span>' : '';
 
@@ -189,7 +194,7 @@ export class HudController {
         .join('');
 
       allyHtml += `
-        <div class="hb-roster-card ${isSelf || isControlled ? 'self' : ''}" data-unit-id="${ally.unit_id}">
+        <div class="hb-roster-card ${isSelf || isControlled ? 'self' : ''} ${isDead ? 'dead-card' : ''}" data-unit-id="${ally.unit_id}">
           <div class="hb-roster-card-top">
             <span class="hb-roster-hero-name">
               <span>${this.getHeroIcon(ally.hero_def_id)}</span>
@@ -208,7 +213,7 @@ export class HudController {
             <div class="hb-roster-hp-fill" style="width: ${hpRatio * 100}%; background: ${hpColor};"></div>
           </div>
           <div style="display:flex; justify-content:space-between; font-size:10.5px; font-family:'JetBrains Mono',monospace; color:#94a3b8;">
-            <span>HP ${currentHp}/${ally.max_hp}</span>
+            <span>${isDead ? `💀 RESPAWNING (${ally.respawn_rounds ?? 0}r)` : `HP ${currentHp}/${ally.max_hp}`}</span>
             <span>#${ally.unit_id}</span>
           </div>
         </div>
@@ -232,9 +237,10 @@ export class HudController {
     let enemyHtml = `<div style="font-size:11px; font-weight:800; color:#ff3366; text-transform:uppercase; letter-spacing:0.5px; padding-bottom:2px; text-align:right;">SPOTTED ENEMIES (${enemies.length})</div>`;
 
     for (const enemy of enemies) {
+      const isEnemyDead = enemy.life_state === 'dead_awaiting_respawn';
       const isVisibleInFog = enemy.hp !== null && enemy.hp !== undefined;
-      const currentHp = isVisibleInFog ? enemy.hp! : enemy.max_hp;
-      const hpRatio = isVisibleInFog ? Math.max(0, Math.min(1, currentHp / enemy.max_hp)) : 1;
+      const currentHp = isEnemyDead ? 0 : isVisibleInFog ? enemy.hp! : enemy.max_hp;
+      const hpRatio = isEnemyDead ? 0 : isVisibleInFog ? Math.max(0, Math.min(1, currentHp / enemy.max_hp)) : 1;
       const enemyLevel = enemy.level ?? 1;
       const enemyPipsHtml = [0, 1, 2]
         .map((idx) => {
@@ -243,8 +249,14 @@ export class HudController {
         })
         .join('');
 
+      const enemyTagText = isEnemyDead
+        ? `💀 ${enemy.respawn_rounds ?? 0}R`
+        : isVisibleInFog
+        ? '👀 SIGHTED'
+        : '🌫️ IN FOG';
+
       enemyHtml += `
-        <div class="hb-enemy-card ${isVisibleInFog ? '' : 'in-fog'}">
+        <div class="hb-enemy-card ${isEnemyDead ? 'dead-card' : isVisibleInFog ? '' : 'in-fog'}">
           <div class="hb-enemy-card-top">
             <span class="hb-enemy-hero-name">
               <span>${this.getHeroIcon(enemy.hero_def_id)}</span>
@@ -253,20 +265,219 @@ export class HudController {
             </span>
             <div style="display:flex; align-items:center; gap:6px;">
               ${isVisibleInFog ? `<div class="hb-roster-item-pips">${enemyPipsHtml}</div>` : ''}
-              <span class="hb-enemy-fog-tag">${isVisibleInFog ? '👀 SIGHTED' : '🌫️ IN FOG'}</span>
+              <span class="hb-enemy-fog-tag ${isEnemyDead ? 'dead' : ''}">${enemyTagText}</span>
             </div>
           </div>
           <div class="hb-roster-hp-bar">
-            <div class="hb-roster-hp-fill" style="width: ${isVisibleInFog ? hpRatio * 100 : 100}%; background: ${isVisibleInFog ? '#ff3366' : '#475569'};"></div>
+            <div class="hb-roster-hp-fill" style="width: ${isVisibleInFog ? hpRatio * 100 : 100}%; background: ${isEnemyDead ? '#475569' : isVisibleInFog ? '#ff3366' : '#475569'};"></div>
           </div>
           <div style="display:flex; justify-content:space-between; font-size:10.5px; font-family:'JetBrains Mono',monospace; color:#94a3b8;">
-            <span>${isVisibleInFog ? `HP ${currentHp}/${enemy.max_hp}` : `HP ??? / ${enemy.max_hp}`}</span>
+            <span>${isEnemyDead ? `💀 RESPAWNING (${enemy.respawn_rounds ?? 0}r)` : isVisibleInFog ? `HP ${currentHp}/${enemy.max_hp}` : `HP ??? / ${enemy.max_hp}`}</span>
             <span>#${enemy.unit_id}</span>
           </div>
         </div>
       `;
     }
     this.enemyBarEl.innerHTML = enemyHtml;
+  }
+
+  updateMacroBar(snapshot: SnapshotDto): void {
+    let macroBar = document.getElementById('hb-macro-bar');
+    if (!macroBar) {
+      macroBar = document.createElement('div');
+      macroBar.id = 'hb-macro-bar';
+      macroBar.className = 'hb-macro-bar';
+      const hudEl = document.getElementById('hud');
+      if (hudEl && hudEl.parentNode) {
+        hudEl.parentNode.insertBefore(macroBar, hudEl.nextSibling);
+      } else {
+        document.body.appendChild(macroBar);
+      }
+    }
+
+    const myTeam = snapshot.player_team ?? 0;
+    const coreHp = snapshot.core_hp;
+    const team0Hp = coreHp ? coreHp[0] : null;
+    const team1Hp = coreHp ? coreHp[1] : null;
+
+    const t0Cur = team0Hp ? team0Hp[0] : 700;
+    const t0Max = team0Hp ? team0Hp[1] : 700;
+    const t1Cur = team1Hp ? team1Hp[0] : 700;
+    const t1Max = team1Hp ? team1Hp[1] : 700;
+
+    const obj = snapshot.objective;
+    let objHtml = '';
+    if (obj) {
+      if (obj.is_alive) {
+        objHtml = `
+          <div class="hb-macro-obj alive" title="The Ancient Vault: Destroy to grant your living team +50 Gold, +40 XP, and +5 Attack Damage for 5 rounds">
+            <span class="hb-macro-icon">🏛️</span>
+            <span class="hb-macro-label">VAULT</span>
+            <span class="hb-macro-hp">${obj.hp} / ${obj.max_hp}</span>
+          </div>
+        `;
+      } else {
+        objHtml = `
+          <div class="hb-macro-obj destroyed" title="Destroyed Vault">
+            <span class="hb-macro-icon">🏛️</span>
+            <span class="hb-macro-label" style="color: #f59e0b;">VAULT SECURED</span>
+          </div>
+        `;
+      }
+    }
+
+    const myCoreCur = myTeam === 0 ? t0Cur : t1Cur;
+    const myCoreMax = myTeam === 0 ? t0Max : t1Max;
+    const enemyCoreCur = myTeam === 0 ? t1Cur : t0Cur;
+    const enemyCoreMax = myTeam === 0 ? t1Max : t0Max;
+
+    macroBar.innerHTML = `
+      <div class="hb-macro-core ally" title="Allied Core">
+        <span class="hb-macro-icon">💎</span>
+        <span class="hb-macro-label">ALLIED CORE</span>
+        <div class="hb-macro-bar-fill-wrap">
+          <div class="hb-macro-bar-fill ally-fill" style="width: ${(myCoreCur / myCoreMax) * 100}%;"></div>
+        </div>
+        <span class="hb-macro-hp">${myCoreCur} / ${myCoreMax}</span>
+      </div>
+
+      ${objHtml}
+
+      <div class="hb-macro-core enemy" title="Enemy Core">
+        <span class="hb-macro-icon">💎</span>
+        <span class="hb-macro-label">ENEMY CORE</span>
+        <div class="hb-macro-bar-fill-wrap">
+          <div class="hb-macro-bar-fill enemy-fill" style="width: ${(enemyCoreCur / enemyCoreMax) * 100}%;"></div>
+        </div>
+        <span class="hb-macro-hp">${enemyCoreCur} / ${enemyCoreMax}</span>
+      </div>
+    `;
+  }
+
+  setHeroDefeated(defeated: boolean, roundsLeft: number): void {
+    let banner = document.getElementById('hb-respawn-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'hb-respawn-banner';
+      banner.className = 'hb-respawn-banner';
+      document.body.appendChild(banner);
+    }
+
+    if (defeated) {
+      document.body.classList.add('hero-defeated');
+      banner.innerHTML = `
+        <div class="hb-respawn-card">
+          <div class="hb-respawn-header">💀 HERO FALLEN</div>
+          <div class="hb-respawn-countdown">RESPAWNING AT BASE IN ${roundsLeft} ROUND${roundsLeft === 1 ? '' : 'S'}</div>
+          <div class="hb-respawn-sub">Progression and items preserved. Spectate freely.</div>
+        </div>
+      `;
+      banner.style.display = 'flex';
+    } else {
+      document.body.classList.remove('hero-defeated');
+      banner.style.display = 'none';
+    }
+  }
+
+  showVictoryCelebrationModal(params: {
+    won: boolean;
+    isDraw: boolean;
+    round: number;
+    stats?: {
+      alliedCoreHp: number;
+      enemyCoreHp: number;
+      vaultSecured: boolean;
+      totalGold: number;
+      items: string[];
+    };
+    onReturnToLobby: () => void;
+  }): void {
+    let modal = document.getElementById('hb-celebration-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'hb-celebration-modal';
+      modal.className = 'hb-celebration-modal';
+      document.body.appendChild(modal);
+    }
+
+    const { won, isDraw, round, stats, onReturnToLobby } = params;
+
+    let headerText = '';
+    let headerClass = '';
+    let subtitleText = '';
+
+    if (won) {
+      headerText = 'VICTORY — ENEMY CORE OBLITERATED';
+      headerClass = 'victory';
+      subtitleText = `Decisive victory achieved in Round ${round}`;
+    } else if (isDraw) {
+      headerText = 'DRAW — MUTUAL CORE DESTRUCTION';
+      headerClass = 'draw';
+      subtitleText = `Battle concluded in Round ${round}`;
+    } else {
+      headerText = 'DEFEAT — ALLIED CORE COLLAPSED';
+      headerClass = 'defeat';
+      subtitleText = `Your Core was destroyed in Round ${round}`;
+    }
+
+    const itemsHtml = stats?.items && stats.items.length > 0
+      ? stats.items.map(i => `<span class="hb-celeb-item-tag">${this.formatItemName(i)}</span>`).join('')
+      : '<span style="color:#64748b;">No items equipped</span>';
+
+    modal.innerHTML = `
+      <div class="hb-celebration-card ${headerClass}">
+        <div class="hb-celebration-crown">${won ? '🏆' : isDraw ? '⚖️' : '💀'}</div>
+        <h1 class="hb-celebration-title ${headerClass}">${headerText}</h1>
+        <div class="hb-celebration-sub">${subtitleText}</div>
+
+        <div class="hb-celebration-stats-grid">
+          <div class="hb-celeb-stat">
+            <span class="label">Rounds Fought</span>
+            <span class="val">${round}</span>
+          </div>
+          <div class="hb-celeb-stat">
+            <span class="label">Allied Core HP</span>
+            <span class="val" style="color:#38bdf8;">${stats?.alliedCoreHp ?? '-'} / 700</span>
+          </div>
+          <div class="hb-celeb-stat">
+            <span class="label">Enemy Core HP</span>
+            <span class="val" style="color:#fb7185;">${stats?.enemyCoreHp ?? '-'} / 700</span>
+          </div>
+          <div class="hb-celeb-stat">
+            <span class="label">Ancient Vault</span>
+            <span class="val" style="color:#f59e0b;">${stats?.vaultSecured ? 'SECURED (+50G)' : 'UNCLAIMED'}</span>
+          </div>
+          <div class="hb-celeb-stat">
+            <span class="label">Total Gold</span>
+            <span class="val" style="color:#ffd700;">🪙 ${stats?.totalGold ?? 50} G</span>
+          </div>
+          <div class="hb-celeb-stat full-width">
+            <span class="label">Final Equipment Build</span>
+            <div class="hb-celeb-items-list">${itemsHtml}</div>
+          </div>
+        </div>
+
+        <button id="hb-btn-return-lobby" class="hb-celebration-btn ${headerClass}">
+          RETURN TO LOBBY
+        </button>
+      </div>
+    `;
+
+    modal.style.display = 'flex';
+    document.getElementById('hb-btn-return-lobby')?.addEventListener('click', () => {
+      modal!.style.display = 'none';
+      onReturnToLobby();
+    });
+  }
+
+  private formatItemName(id: string): string {
+    switch (id) {
+      case 'longblade': return '⚔️ Longblade';
+      case 'plate_armor': return '🛡️ Plate Armor';
+      case 'scout_lens': return '👁️ Scout Lens';
+      case 'focus_charm': return '🔮 Focus Charm';
+      default: return id;
+    }
   }
 
   private getHeroIcon(defId: string): string {

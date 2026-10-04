@@ -5,7 +5,7 @@ use hexabellum_core::neutral::NeutralCamp;
 use hexabellum_core::orders::{Action, UnitOrder};
 use hexabellum_core::session::{BattleConfig, BattleSession};
 use hexabellum_core::turn::TurnProcessor;
-use hexabellum_core::unit::{LaneDirection, Unit, UnitKind};
+use hexabellum_core::unit::{LaneDirection, LifeState, Unit, UnitKind};
 use hexabellum_core::vision::{compute_team_los_fog, has_line_of_sight};
 use std::collections::{HashMap, HashSet};
 
@@ -105,6 +105,9 @@ fn test_repair_mechanics_and_ap_consumption() {
         xp: 0,
         level: 1,
         items: Vec::new(),
+        life_state: LifeState::Alive,
+        respawn_rounds: None,
+        death_pos: None,
     };
 
     let mut units = vec![hero, damaged_tower];
@@ -197,6 +200,9 @@ fn test_lane_waypoint_minion_navigation() {
         xp: 0,
         level: 1,
         items: Vec::new(),
+        life_state: LifeState::Alive,
+        respawn_rounds: None,
+        death_pos: None,
     };
 
     // Minion at (-5, 0) is at waypoint 0. Should advance index to 1

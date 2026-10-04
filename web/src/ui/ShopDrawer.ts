@@ -242,7 +242,14 @@ export class ShopDrawer {
         btnDisabled = true;
       } else if (!canShop) {
         btnClass += ' phase-locked';
-        btnText = 'PLANNING ONLY';
+        const reason = this.session?.getShopDisabledReason();
+        if (reason === 'outside_base_zone') {
+          btnText = 'MUST BE IN BASE';
+        } else if (reason === 'hero_dead') {
+          btnText = 'HERO DEFEATED';
+        } else {
+          btnText = 'PLANNING ONLY';
+        }
         btnDisabled = true;
       } else if (isBagFull) {
         btnClass += ' inventory-full';

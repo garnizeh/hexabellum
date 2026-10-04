@@ -89,6 +89,40 @@ pub enum GameEvent {
         killed_by: UnitId,
     },
 
+    HeroDied {
+        unit_id: UnitId,
+        killed_by: UnitId,
+        respawn_rounds: u32,
+    },
+
+    HeroRespawned {
+        unit_id: UnitId,
+        team: TeamId,
+        pos: HexCoord,
+    },
+
+    BaseRegenerationApplied {
+        unit_id: UnitId,
+        team: TeamId,
+        amount: u32,
+        new_hp: u32,
+    },
+
+    ObjectiveDestroyed {
+        objective_id: UnitId,
+        destroyer_team: TeamId,
+        last_attacker_id: UnitId,
+        gold_awarded_per_hero: u32,
+        xp_awarded_per_hero: u32,
+        affected_heroes: Vec<UnitId>,
+    },
+
+    CoreDestroyed {
+        core_id: UnitId,
+        team: TeamId,
+        destroyed_by: UnitId,
+    },
+
     UnitWaited {
         unit_id: UnitId,
     },

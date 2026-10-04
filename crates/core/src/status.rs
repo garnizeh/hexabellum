@@ -65,3 +65,14 @@ pub fn fury_buff_def() -> StatusDef {
     }
 }
 
+pub fn vault_damage_buff_def(duration_rounds: u32, damage_bonus: u32) -> StatusDef {
+    StatusDef {
+        id: "attack_damage_buff".to_string(),
+        duration_rounds,
+        modifiers: vec![StatModifier {
+            stat: StatKind::AttackDamage,
+            value: damage_bonus as i32,
+        }],
+    }
+}
+

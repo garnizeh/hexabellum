@@ -6,11 +6,15 @@ use crate::state::{GameState, Phase};
 use crate::turn::TurnProcessor;
 use crate::unit::{Unit, UnitId, UnitKind};
 use hexabellum_protocol::{
-    ActionDto, HexDto, MapDto, MatchPhaseDto, OrderDto, ProtocolErrorCode, RosterEntryDto,
-    SanitizedGameEvent, SnapshotDto, TeamId, UnitDto,
+    ActionDto, BaseZoneDto, HexDto, LifeStateDto, MapDto, MatchPhaseDto, ObjectiveStatusDto,
+    OrderDto, ProtocolErrorCode, RosterEntryDto, SanitizedGameEvent, ShopDisabledReasonDto,
+    SnapshotDto, TeamId, UnitDto,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+
+use crate::base_zone::BaseZone;
+use crate::unit::LifeState;
 
 pub use crate::controller::{Controller, ControllerMap, PlayerId};
 
@@ -48,6 +52,8 @@ pub struct BattleConfig {
     pub skip_draft: bool,
     #[serde(default)]
     pub economy: crate::economy::EconomyConfig,
+    #[serde(default)]
+    pub phase7: crate::macro_config::Phase7Config,
 }
 
 impl Default for BattleConfig {
@@ -63,6 +69,7 @@ impl Default for BattleConfig {
             enable_ai_team_1: false,
             skip_draft: false,
             economy: crate::economy::EconomyConfig::default(),
+            phase7: crate::macro_config::Phase7Config::default(),
         }
     }
 }
@@ -80,6 +87,7 @@ impl BattleConfig {
             enable_ai_team_1: false,
             skip_draft: true,
             economy: crate::economy::EconomyConfig::default(),
+            phase7: crate::macro_config::Phase7Config::default(),
         }
     }
 }
@@ -94,6 +102,22 @@ pub struct BattleSession {
     pub config: BattleConfig,
     pub unit_registry: HashMap<UnitId, (TeamId, UnitKind, HexCoord)>,
     pub hero_assignments: HashMap<String, UnitId>,
+    pub base_zones: HashMap<TeamId, BaseZone>,
+    pub is_match_over: bool,
+    pub winning_team: Option<TeamId>,
+}
+
+impl std::ops::Deref for BattleSession {
+    type Target = GameState;
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for BattleSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
 }
 
 impl BattleSession {
@@ -115,8 +139,18 @@ impl BattleSession {
         let mut state;
         let mut controllers = ControllerMap::new();
         let mut hero_assignments = HashMap::new();
+        let mut base_zones = HashMap::new();
 
         if config.heroes_per_team >= 5 || config.map_radius >= 8 {
+            base_zones.insert(
+                0,
+                BaseZone::new(0, HexCoord::new(-7, 0), config.phase7.base_zone_radius),
+            );
+            base_zones.insert(
+                1,
+                BaseZone::new(1, HexCoord::new(7, 0), config.phase7.base_zone_radius),
+            );
+
             // ==========================================
             // Phase 5 Scaled Arena Topology (Radius 8, 217 Hexes)
             // ==========================================
@@ -130,22 +164,43 @@ impl BattleSession {
 
             state = GameState::new(map);
 
-            // Team 0 Base & Defenses (Left)
-            let mut t0_spawner = Unit::new_spawner(100, 0, HexCoord::new(-7, 0), config.spawn_interval);
-            t0_spawner.hp = 200;
-            t0_spawner.max_hp = 200;
-            let t0_tower = Unit::new_tower(101, 0, HexCoord::new(-5, 0));
+            // Team 0 Core
+            let t0_core = Unit::new_core(
+                500,
+                0,
+                HexCoord::new(-7, 0),
+                config.phase7.core_hp,
+                config.phase7.core_vision_range,
+            );
+            controllers.assign(500, Controller::Automatic);
+            state.add_unit(t0_core);
+
+            // Team 0 Spawners and Towers
+            let mut t0_spawner_north =
+                Unit::new_spawner(100, 0, HexCoord::new(-6, -1), config.spawn_interval);
+            t0_spawner_north.hp = 200;
+            t0_spawner_north.max_hp = 200;
+            let mut t0_spawner_south =
+                Unit::new_spawner(102, 0, HexCoord::new(-6, 1), config.spawn_interval);
+            t0_spawner_south.hp = 200;
+            t0_spawner_south.max_hp = 200;
+            let t0_tower_north = Unit::new_tower(101, 0, HexCoord::new(-4, -1));
+            let t0_tower_south = Unit::new_tower(103, 0, HexCoord::new(-4, 1));
             controllers.assign(100, Controller::Automatic);
             controllers.assign(101, Controller::Automatic);
-            state.add_unit(t0_spawner);
-            state.add_unit(t0_tower);
+            controllers.assign(102, Controller::Automatic);
+            controllers.assign(103, Controller::Automatic);
+            state.add_unit(t0_spawner_north);
+            state.add_unit(t0_spawner_south);
+            state.add_unit(t0_tower_north);
+            state.add_unit(t0_tower_south);
 
             // Team 0 Heroes: Vanguard, Ranger, Warden, Sniper, Berserker
-            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-6, -2), 3));
-            state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-6, -1), 4));
-            state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-6, 0), 2));
-            state.add_unit(Unit::new_sniper(4, 0, HexCoord::new(-6, 1), 4));
-            state.add_unit(Unit::new_berserker(5, 0, HexCoord::new(-6, 2), 3));
+            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-6, 0), 3));
+            state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-7, -1), 4));
+            state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-8, 0), 2));
+            state.add_unit(Unit::new_sniper(4, 0, HexCoord::new(-7, 1), 4));
+            state.add_unit(Unit::new_berserker(5, 0, HexCoord::new(-8, 1), 3));
             for uid in 1..=5 {
                 controllers.assign(uid, Controller::Ai);
             }
@@ -155,22 +210,43 @@ impl BattleSession {
             hero_assignments.insert("sniper_0".to_string(), 4);
             hero_assignments.insert("berserker_0".to_string(), 5);
 
-            // Team 1 Base & Defenses (Right)
-            let mut t1_spawner = Unit::new_spawner(200, 1, HexCoord::new(7, 0), config.spawn_interval);
-            t1_spawner.hp = 200;
-            t1_spawner.max_hp = 200;
-            let t1_tower = Unit::new_tower(201, 1, HexCoord::new(5, 0));
+            // Team 1 Core
+            let t1_core = Unit::new_core(
+                501,
+                1,
+                HexCoord::new(7, 0),
+                config.phase7.core_hp,
+                config.phase7.core_vision_range,
+            );
+            controllers.assign(501, Controller::Automatic);
+            state.add_unit(t1_core);
+
+            // Team 1 Spawners and Towers
+            let mut t1_spawner_north =
+                Unit::new_spawner(200, 1, HexCoord::new(6, -1), config.spawn_interval);
+            t1_spawner_north.hp = 200;
+            t1_spawner_north.max_hp = 200;
+            let mut t1_spawner_south =
+                Unit::new_spawner(202, 1, HexCoord::new(6, 1), config.spawn_interval);
+            t1_spawner_south.hp = 200;
+            t1_spawner_south.max_hp = 200;
+            let t1_tower_north = Unit::new_tower(201, 1, HexCoord::new(4, -1));
+            let t1_tower_south = Unit::new_tower(203, 1, HexCoord::new(4, 1));
             controllers.assign(200, Controller::Automatic);
             controllers.assign(201, Controller::Automatic);
-            state.add_unit(t1_spawner);
-            state.add_unit(t1_tower);
+            controllers.assign(202, Controller::Automatic);
+            controllers.assign(203, Controller::Automatic);
+            state.add_unit(t1_spawner_north);
+            state.add_unit(t1_spawner_south);
+            state.add_unit(t1_tower_north);
+            state.add_unit(t1_tower_south);
 
             // Team 1 Heroes: Vanguard, Ranger, Warden, Sniper, Berserker
-            state.add_unit(Unit::new_vanguard(6, 1, HexCoord::new(6, -2), 3));
-            state.add_unit(Unit::new_ranger(7, 1, HexCoord::new(6, -1), 4));
-            state.add_unit(Unit::new_warden(8, 1, HexCoord::new(6, 0), 2));
-            state.add_unit(Unit::new_sniper(9, 1, HexCoord::new(6, 1), 4));
-            state.add_unit(Unit::new_berserker(10, 1, HexCoord::new(6, 2), 3));
+            state.add_unit(Unit::new_vanguard(6, 1, HexCoord::new(6, 0), 3));
+            state.add_unit(Unit::new_ranger(7, 1, HexCoord::new(7, -1), 4));
+            state.add_unit(Unit::new_warden(8, 1, HexCoord::new(8, 0), 2));
+            state.add_unit(Unit::new_sniper(9, 1, HexCoord::new(7, 1), 4));
+            state.add_unit(Unit::new_berserker(10, 1, HexCoord::new(8, 1), 3));
             for uid in 6..=10 {
                 controllers.assign(uid, Controller::Ai);
             }
@@ -179,6 +255,11 @@ impl BattleSession {
             hero_assignments.insert("warden_1".to_string(), 8);
             hero_assignments.insert("sniper_1".to_string(), 9);
             hero_assignments.insert("berserker_1".to_string(), 10);
+
+            // Central Objective Vault at (0, 0)
+            let vault = Unit::new_vault(300, HexCoord::new(0, 0), config.phase7.objective_hp);
+            controllers.assign(300, Controller::Automatic);
+            state.add_unit(vault);
 
             // Neutral Camps: North (0, -4) and South (0, 4)
             let guardian_north = Unit::new_neutral_guardian(301, HexCoord::new(0, -4));
@@ -199,8 +280,17 @@ impl BattleSession {
                 302,
             ));
 
-            state.next_unit_id = 400;
+            state.next_unit_id = 600;
         } else if config.heroes_per_team == 3 {
+            base_zones.insert(
+                0,
+                BaseZone::new(0, HexCoord::new(-5, 0), config.phase7.base_zone_radius),
+            );
+            base_zones.insert(
+                1,
+                BaseZone::new(1, HexCoord::new(5, 0), config.phase7.base_zone_radius),
+            );
+
             // Phase 4 Terrain Topology (Radius 6/7 3v3)
             map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
             map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
@@ -211,8 +301,12 @@ impl BattleSession {
 
             state = GameState::new(map);
 
+            let t0_core = Unit::new_core(500, 0, HexCoord::new(-5, 0), config.phase7.core_hp, config.phase7.core_vision_range);
+            controllers.assign(500, Controller::Automatic);
+            state.add_unit(t0_core);
+
             // Team 0 Base (Left)
-            let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-5, 0), config.spawn_interval);
+            let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-4, -1), config.spawn_interval);
             let t0_tower = Unit::new_tower(11, 0, HexCoord::new(-3, 0));
             controllers.assign(10, Controller::Automatic);
             controllers.assign(11, Controller::Automatic);
@@ -220,8 +314,8 @@ impl BattleSession {
             state.add_unit(t0_tower);
 
             // Team 0 Heroes: Vanguard, Ranger, Warden
-            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-4, -1), 3));
-            state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-4, 0), 2));
+            state.add_unit(Unit::new_vanguard(1, 0, HexCoord::new(-4, 0), 3));
+            state.add_unit(Unit::new_ranger(2, 0, HexCoord::new(-5, -1), 2));
             state.add_unit(Unit::new_warden(3, 0, HexCoord::new(-4, 1), 1));
             controllers.assign(1, Controller::Ai);
             controllers.assign(2, Controller::Ai);
@@ -230,8 +324,12 @@ impl BattleSession {
             hero_assignments.insert("ranger_0".to_string(), 2);
             hero_assignments.insert("warden_0".to_string(), 3);
 
+            let t1_core = Unit::new_core(501, 1, HexCoord::new(5, 0), config.phase7.core_hp, config.phase7.core_vision_range);
+            controllers.assign(501, Controller::Automatic);
+            state.add_unit(t1_core);
+
             // Team 1 Base (Right)
-            let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(5, 0), config.spawn_interval);
+            let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(4, -1), config.spawn_interval);
             let t1_tower = Unit::new_tower(21, 1, HexCoord::new(3, 0));
             controllers.assign(20, Controller::Automatic);
             controllers.assign(21, Controller::Automatic);
@@ -239,8 +337,8 @@ impl BattleSession {
             state.add_unit(t1_tower);
 
             // Team 1 Heroes: Vanguard, Ranger, Warden
-            state.add_unit(Unit::new_vanguard(4, 1, HexCoord::new(4, -1), 3));
-            state.add_unit(Unit::new_ranger(5, 1, HexCoord::new(4, 0), 2));
+            state.add_unit(Unit::new_vanguard(4, 1, HexCoord::new(4, 0), 3));
+            state.add_unit(Unit::new_ranger(5, 1, HexCoord::new(5, -1), 2));
             state.add_unit(Unit::new_warden(6, 1, HexCoord::new(4, 1), 1));
             controllers.assign(4, Controller::Ai);
             controllers.assign(5, Controller::Ai);
@@ -248,6 +346,11 @@ impl BattleSession {
             hero_assignments.insert("vanguard_1".to_string(), 4);
             hero_assignments.insert("ranger_1".to_string(), 5);
             hero_assignments.insert("warden_1".to_string(), 6);
+
+            // Vault at (0, 0)
+            let vault = Unit::new_vault(300, HexCoord::new(0, 0), config.phase7.objective_hp);
+            controllers.assign(300, Controller::Automatic);
+            state.add_unit(vault);
 
             // Neutral Camps & Guardians
             let guardian_alpha = Unit::new_neutral_guardian(31, HexCoord::new(0, 3));
@@ -268,14 +371,27 @@ impl BattleSession {
                 32,
             ));
 
-            state.next_unit_id = 35;
+            state.next_unit_id = 600;
         } else {
+            base_zones.insert(
+                0,
+                BaseZone::new(0, HexCoord::new(-5, 0), config.phase7.base_zone_radius),
+            );
+            base_zones.insert(
+                1,
+                BaseZone::new(1, HexCoord::new(5, 0), config.phase7.base_zone_radius),
+            );
+
             // 1v1 Configuration
             map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, 2)));
             map.add_obstacle(crate::vision::Obstacle::wall(HexCoord::new(0, -2)));
             state = GameState::new(map);
 
-            let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-5, 0), config.spawn_interval);
+            let t0_core = Unit::new_core(500, 0, HexCoord::new(-5, 0), config.phase7.core_hp, config.phase7.core_vision_range);
+            controllers.assign(500, Controller::Automatic);
+            state.add_unit(t0_core);
+
+            let t0_spawner = Unit::new_spawner(10, 0, HexCoord::new(-4, -1), config.spawn_interval);
             let t0_tower = Unit::new_tower(11, 0, HexCoord::new(-3, 0));
             controllers.assign(10, Controller::Automatic);
             controllers.assign(11, Controller::Automatic);
@@ -286,7 +402,11 @@ impl BattleSession {
             controllers.assign(1, Controller::Ai);
             hero_assignments.insert("vanguard_0".to_string(), 1);
 
-            let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(5, 0), config.spawn_interval);
+            let t1_core = Unit::new_core(501, 1, HexCoord::new(5, 0), config.phase7.core_hp, config.phase7.core_vision_range);
+            controllers.assign(501, Controller::Automatic);
+            state.add_unit(t1_core);
+
+            let t1_spawner = Unit::new_spawner(20, 1, HexCoord::new(4, -1), config.spawn_interval);
             let t1_tower = Unit::new_tower(21, 1, HexCoord::new(3, 0));
             controllers.assign(20, Controller::Automatic);
             controllers.assign(21, Controller::Automatic);
@@ -297,7 +417,11 @@ impl BattleSession {
             controllers.assign(4, Controller::Ai);
             hero_assignments.insert("vanguard_1".to_string(), 4);
 
-            state.next_unit_id = 35;
+            let vault = Unit::new_vault(300, HexCoord::new(0, 0), config.phase7.objective_hp);
+            controllers.assign(300, Controller::Automatic);
+            state.add_unit(vault);
+
+            state.next_unit_id = 600;
         }
 
         // Initialize vision
@@ -323,6 +447,9 @@ impl BattleSession {
             config,
             unit_registry,
             hero_assignments,
+            base_zones,
+            is_match_over: false,
+            winning_team: None,
         }
     }
 
@@ -390,11 +517,11 @@ impl BattleSession {
                 }
             };
 
-            if !unit.is_alive() {
+            if !unit.is_alive() || unit.is_dead_awaiting_respawn() {
                 return Err(OrderSubmissionError {
-                    code: ProtocolErrorCode::UnitDead,
+                    code: ProtocolErrorCode::CannotOrderDeadHero,
                     unit_id: Some(dto.unit_id),
-                    reason: format!("Unit #{} is dead", dto.unit_id),
+                    reason: format!("Unit #{} is dead awaiting respawn", dto.unit_id),
                 });
             }
             if unit.team != team {
@@ -431,12 +558,22 @@ impl BattleSession {
                             });
                         }
                     };
-                    if !target.is_alive() || target.team == team {
+                    if target.team == team {
                         return Err(OrderSubmissionError {
                             code: ProtocolErrorCode::InvalidTarget,
                             unit_id: Some(dto.unit_id),
                             reason: format!(
-                                "Invalid attack target #{}: dead or friendly unit",
+                                "Invalid attack target #{}: friendly unit",
+                                target_id
+                            ),
+                        });
+                    }
+                    if !target.is_alive() || target.is_dead_awaiting_respawn() {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::TargetUntargetable,
+                            unit_id: Some(dto.unit_id),
+                            reason: format!(
+                                "Invalid attack target #{}: dead or untargetable",
                                 target_id
                             ),
                         });
@@ -598,6 +735,13 @@ impl BattleSession {
                             code: ProtocolErrorCode::InvalidTarget,
                             unit_id: Some(dto.unit_id),
                             reason: "Target is not a structure".into(),
+                        });
+                    }
+                    if !target.kind.is_repairable() {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::CoreCannotBeRepaired,
+                            unit_id: Some(dto.unit_id),
+                            reason: "Cores and neutral objectives cannot be repaired".into(),
                         });
                     }
                     if target.team != team {
@@ -1019,6 +1163,71 @@ impl BattleSession {
                         });
                     }
                 }
+                GameEvent::HeroDied {
+                    unit_id,
+                    killed_by,
+                    respawn_rounds,
+                } => {
+                    sanitized.push(SanitizedGameEvent::HeroDied {
+                        unit_id: *unit_id,
+                        killed_by: *killed_by,
+                        respawn_rounds: *respawn_rounds,
+                    });
+                }
+                GameEvent::HeroRespawned {
+                    unit_id,
+                    team: r_team,
+                    pos: r_pos,
+                } => {
+                    sanitized.push(SanitizedGameEvent::HeroRespawned {
+                        unit_id: *unit_id,
+                        team: *r_team,
+                        pos: HexDto::new(r_pos.q, r_pos.r),
+                    });
+                }
+                GameEvent::BaseRegenerationApplied {
+                    unit_id,
+                    team: r_team,
+                    amount,
+                    new_hp,
+                } => {
+                    if *r_team == team {
+                        sanitized.push(SanitizedGameEvent::BaseRegenerationApplied {
+                            unit_id: *unit_id,
+                            team: *r_team,
+                            amount: *amount,
+                            new_hp: *new_hp,
+                        });
+                    }
+                }
+                GameEvent::ObjectiveDestroyed {
+                    objective_id,
+                    destroyer_team,
+                    last_attacker_id,
+                    gold_awarded_per_hero,
+                    xp_awarded_per_hero,
+                    affected_heroes,
+                } => {
+                    sanitized.push(SanitizedGameEvent::ObjectiveDestroyed {
+                        objective_id: *objective_id,
+                        destroyer_team: *destroyer_team,
+                        last_attacker_id: *last_attacker_id,
+                        gold_awarded_per_hero: *gold_awarded_per_hero,
+                        xp_awarded_per_hero: *xp_awarded_per_hero,
+                        affected_heroes: affected_heroes.clone(),
+                    });
+                }
+                GameEvent::CoreDestroyed {
+                    core_id,
+                    team: c_team,
+                    destroyed_by,
+                } => {
+                    sanitized.push(SanitizedGameEvent::CoreDestroyed {
+                        core_id: *core_id,
+                        team: *c_team,
+                        destroyed_by: *destroyed_by,
+                    });
+                }
                 _ => {}
             }
         }
@@ -1088,6 +1297,12 @@ impl BattleSession {
                 max_hp: hero.max_hp,
                 level: if is_visible { hero.level } else { 1 },
                 items: if is_visible { hero.items.clone() } else { Vec::new() },
+                life_state: Some(match hero.life_state {
+                    LifeState::Alive => LifeStateDto::Alive,
+                    LifeState::DeadAwaitingRespawn { .. } => LifeStateDto::DeadAwaitingRespawn,
+                    LifeState::PermanentlyRemoved => LifeStateDto::PermanentlyRemoved,
+                }),
+                respawn_rounds: hero.respawn_rounds,
             });
         }
 
@@ -1114,7 +1329,15 @@ impl BattleSession {
         let visible_units: Vec<UnitDto> = sorted_unit_ids
             .iter()
             .filter_map(|id| self.state.get_unit(*id))
-            .filter(|unit| unit.team == team || visible_hexes.contains(&unit.pos))
+            .filter(|unit| {
+                if unit.is_dead_awaiting_respawn() {
+                    unit.team == team
+                } else if unit.is_alive() {
+                    unit.team == team || visible_hexes.contains(&unit.pos)
+                } else {
+                    false
+                }
+            })
             .map(|u| {
                 let is_ally = u.team == team;
                 let is_sighted = is_ally || visible_hexes.contains(&u.pos);
@@ -1155,6 +1378,13 @@ impl BattleSession {
                     xp: if is_ally { Some(u.xp) } else { None },
                     level: if is_sighted { u.level } else { 1 },
                     items: if is_sighted { u.items.clone() } else { Vec::new() },
+                    life_state: match u.life_state {
+                        LifeState::Alive => LifeStateDto::Alive,
+                        LifeState::DeadAwaitingRespawn { .. } => LifeStateDto::DeadAwaitingRespawn,
+                        LifeState::PermanentlyRemoved => LifeStateDto::PermanentlyRemoved,
+                    },
+                    respawn_rounds: u.respawn_rounds,
+                    death_pos: u.death_pos.map(|d| HexDto::new(d.q, d.r)),
                 }
             })
             .collect();
@@ -1287,7 +1517,68 @@ impl BattleSession {
             })
             .collect();
 
-        let can_shop = self.state.phase == Phase::Planning;
+        let (can_shop, shop_disabled_reason) = if self.state.phase != Phase::Planning {
+            (false, Some(ShopDisabledReasonDto::NotPlanningPhase))
+        } else {
+            let primary_unit_id = if let Some(pid) = player_id {
+                self.controllers.get_units_for_player(pid).into_iter().next()
+            } else {
+                controlled_units.first().copied()
+            };
+            if let Some(uid) = primary_unit_id {
+                if let Some(u) = self.state.get_unit(uid) {
+                    if !u.is_alive() {
+                        (false, Some(ShopDisabledReasonDto::HeroDead))
+                    } else if !self.base_zones.get(&u.team).map_or(false, |bz| bz.contains(u.pos)) {
+                        (false, Some(ShopDisabledReasonDto::OutsideBaseZone))
+                    } else if u.items.len() >= self.config.economy.max_item_slots {
+                        (false, Some(ShopDisabledReasonDto::InventoryFull))
+                    } else {
+                        (true, None)
+                    }
+                } else {
+                    (false, None)
+                }
+            } else {
+                (false, None)
+            }
+        };
+
+        let mut core_hp: HashMap<TeamId, (u32, u32)> = HashMap::new();
+        for &t in &[0, 1] {
+            if let Some(cid) = self.get_core_id(t) {
+                if let Some(core) = self.state.get_unit(cid) {
+                    let is_sighted = t == team || visible_hexes.contains(&core.pos);
+                    if is_sighted {
+                        core_hp.insert(t, (core.hp, core.max_hp));
+                    } else {
+                        core_hp.insert(t, (core.max_hp, core.max_hp));
+                    }
+                }
+            }
+        }
+
+        let objective = self.get_vault_id().and_then(|vid| self.state.get_unit(vid)).map(|v| {
+            let is_sighted = visible_hexes.contains(&v.pos);
+            ObjectiveStatusDto {
+                unit_id: v.id,
+                pos: HexDto::new(v.pos.q, v.pos.r),
+                hp: if is_sighted { v.hp } else { v.max_hp },
+                max_hp: v.max_hp,
+                is_alive: v.is_alive(),
+            }
+        });
+
+        let mut base_zones: Vec<BaseZoneDto> = self
+            .base_zones
+            .values()
+            .map(|bz| BaseZoneDto {
+                team: bz.team,
+                center: HexDto::new(bz.center.q, bz.center.r),
+                radius: bz.radius,
+            })
+            .collect();
+        base_zones.sort_by_key(|b| b.team);
 
         SnapshotDto {
             match_id: self.match_id.clone(),
@@ -1312,6 +1603,11 @@ impl BattleSession {
             allied_hero_economy,
             shop_catalog,
             can_shop,
+            victory_mode: Some(format!("{:?}", self.config.phase7.victory_mode)),
+            base_zones,
+            shop_disabled_reason,
+            core_hp,
+            objective,
         }
     }
 
@@ -1328,9 +1624,13 @@ pub fn build_sanitized_snapshot(session: &BattleSession, team: u8, player_id: &s
 impl BattleSession {
 
     pub fn resolve_ai_round(&mut self) -> Vec<GameEvent> {
-        self.distribute_passive_income();
+        let mut events = Vec::new();
+        events.extend(self.process_round_start_respawns());
+        events.extend(self.process_base_regeneration());
+        events.extend(self.distribute_passive_income());
         self.execute_ai_bot_shopping();
-        self.resolve_round()
+        events.extend(self.resolve_round());
+        events
     }
 
     /// Compute cryptographic BLAKE3 state hash for audit and desync detection.
@@ -1378,6 +1678,19 @@ impl BattleSession {
                 hasher.update(&unit.level.to_le_bytes());
                 for it in &unit.items {
                     hasher.update(it.as_bytes());
+                }
+
+                hasher.update(&[match unit.life_state {
+                    LifeState::Alive => 0,
+                    LifeState::DeadAwaitingRespawn { .. } => 1,
+                    LifeState::PermanentlyRemoved => 2,
+                }]);
+                hasher.update(&unit.respawn_rounds.unwrap_or(0).to_le_bytes());
+                if let Some(dp) = unit.death_pos {
+                    hasher.update(&dp.q.to_le_bytes());
+                    hasher.update(&dp.r.to_le_bytes());
+                } else {
+                    hasher.update(&[0u8; 8]);
                 }
             }
         }
@@ -1434,6 +1747,10 @@ impl BattleSession {
         events
     }
 
+    pub fn distribute_passive_gold(&mut self) -> Vec<GameEvent> {
+        self.distribute_passive_income()
+    }
+
     pub fn execute_ai_bot_shopping(&mut self) {
         let catalog = crate::items::get_canonical_item_catalog();
         let max_slots = self.config.economy.max_item_slots;
@@ -1456,6 +1773,19 @@ impl BattleSession {
         bot_hero_ids.sort_unstable();
 
         for unit_id in bot_hero_ids {
+            // AI heroes execute greedy item purchases strictly when positioned inside their allied base zone.
+            let in_base = if let Some(unit) = self.state.get_unit(unit_id) {
+                self.base_zones
+                    .get(&unit.team)
+                    .map(|bz| bz.contains(unit.pos))
+                    .unwrap_or(true)
+            } else {
+                false
+            };
+            if !in_base {
+                continue;
+            }
+
             loop {
                 let Some(unit) = self.state.units.get_mut(&unit_id) else {
                     break;
@@ -1529,6 +1859,504 @@ impl BattleSession {
             s.hp = 0;
         }
         self.resolve_fatalities()
+    }
+
+    pub fn new_test_session_5v5() -> Self {
+        let mut config = BattleConfig::default();
+        config.heroes_per_team = 5;
+        config.players_per_team = 5;
+        config.skip_draft = true;
+        config.enable_ai_team_1 = true;
+        let mut session = Self::new("test_session_5v5".to_string(), config.clone());
+
+        session.state.units.clear();
+        session.controllers = ControllerMap::default();
+        session.hero_assignments.clear();
+        session.unit_registry.clear();
+        session.is_match_over = false;
+        session.winning_team = None;
+
+        let bz0 = BaseZone::new(0, HexCoord::new(-7, 0), config.phase7.base_zone_radius);
+        let bz1 = BaseZone::new(1, HexCoord::new(7, 0), config.phase7.base_zone_radius);
+        session.base_zones.insert(0, bz0);
+        session.base_zones.insert(1, bz1);
+
+        // Team 0 Core: 500 at (-7, 0)
+        let t0_core = Unit::new_core(
+            500,
+            0,
+            HexCoord::new(-7, 0),
+            config.phase7.core_hp,
+            config.phase7.core_vision_range,
+        );
+        session.controllers.assign(500, Controller::Automatic);
+        session.state.add_unit(t0_core);
+
+        // Team 1 Core: 501 at (7, 0)
+        let t1_core = Unit::new_core(
+            501,
+            1,
+            HexCoord::new(7, 0),
+            config.phase7.core_hp,
+            config.phase7.core_vision_range,
+        );
+        session.controllers.assign(501, Controller::Automatic);
+        session.state.add_unit(t1_core);
+
+        // Neutral Vault: 300 at (0, 0)
+        let vault = Unit::new_vault(300, HexCoord::new(0, 0), config.phase7.objective_hp);
+        session.controllers.assign(300, Controller::Automatic);
+        session.state.add_unit(vault);
+
+        // Team 0 Spawners & Towers
+        let sp0_n = Unit::new_spawner(110, 0, HexCoord::new(-6, -1), config.spawn_interval);
+        let sp0_s = Unit::new_spawner(112, 0, HexCoord::new(-6, 1), config.spawn_interval);
+        let tw0_n = Unit::new_tower(120, 0, HexCoord::new(-4, -1));
+        let tw0_s = Unit::new_tower(122, 0, HexCoord::new(-4, 1));
+        session.controllers.assign(110, Controller::Automatic);
+        session.controllers.assign(112, Controller::Automatic);
+        session.controllers.assign(120, Controller::Automatic);
+        session.controllers.assign(122, Controller::Automatic);
+        session.state.add_unit(sp0_n);
+        session.state.add_unit(sp0_s);
+        session.state.add_unit(tw0_n);
+        session.state.add_unit(tw0_s);
+
+        // Team 1 Spawners & Towers
+        let sp1_n = Unit::new_spawner(210, 1, HexCoord::new(6, -1), config.spawn_interval);
+        let sp1_s = Unit::new_spawner(212, 1, HexCoord::new(6, 1), config.spawn_interval);
+        let tw1_n = Unit::new_tower(220, 1, HexCoord::new(4, -1));
+        let tw1_s = Unit::new_tower(222, 1, HexCoord::new(4, 1));
+        session.controllers.assign(210, Controller::Automatic);
+        session.controllers.assign(212, Controller::Automatic);
+        session.controllers.assign(220, Controller::Automatic);
+        session.controllers.assign(222, Controller::Automatic);
+        session.state.add_unit(sp1_n);
+        session.state.add_unit(sp1_s);
+        session.state.add_unit(tw1_n);
+        session.state.add_unit(tw1_s);
+
+        // Team 0 Heroes: 101..105, all inside base zone (-7, 0) r=2
+        session.state.add_unit(Unit::new_vanguard(101, 0, HexCoord::new(-6, 0), 3));
+        session.state.add_unit(Unit::new_ranger(102, 0, HexCoord::new(-7, -1), 4));
+        session.state.add_unit(Unit::new_warden(103, 0, HexCoord::new(-8, 0), 2));
+        session.state.add_unit(Unit::new_sniper(104, 0, HexCoord::new(-7, 1), 4));
+        session.state.add_unit(Unit::new_berserker(105, 0, HexCoord::new(-8, 1), 3));
+        for uid in 101..=105 {
+            session.controllers.assign(uid, Controller::Ai);
+        }
+
+        // Team 1 Heroes: 201..205, all inside base zone (7, 0) r=2
+        session.state.add_unit(Unit::new_vanguard(201, 1, HexCoord::new(6, 0), 3));
+        session.state.add_unit(Unit::new_ranger(202, 1, HexCoord::new(7, -1), 4));
+        session.state.add_unit(Unit::new_warden(203, 1, HexCoord::new(8, 0), 2));
+        session.state.add_unit(Unit::new_sniper(204, 1, HexCoord::new(7, 1), 4));
+        session.state.add_unit(Unit::new_berserker(205, 1, HexCoord::new(8, 1), 3));
+        for uid in 201..=205 {
+            session.controllers.assign(uid, Controller::Ai);
+        }
+
+        session.state.next_unit_id = 700;
+        session.state.update_fog();
+        session
+    }
+
+    pub fn get_core_id(&self, team: TeamId) -> Option<UnitId> {
+        self.state
+            .units
+            .values()
+            .find(|u| u.team == team && u.kind == UnitKind::Core)
+            .map(|u| u.id)
+    }
+
+    pub fn get_vault_id(&self) -> Option<UnitId> {
+        self.state
+            .units
+            .values()
+            .find(|u| u.kind == UnitKind::Objective)
+            .map(|u| u.id)
+    }
+
+    pub fn get_base_zone(&self, team: TeamId) -> Option<&BaseZone> {
+        self.base_zones.get(&team)
+    }
+
+    pub fn is_hex_occupied(&self, pos: HexCoord) -> bool {
+        self.state.units.values().any(|u| u.is_alive() && u.pos == pos)
+    }
+
+    pub fn inflict_damage(&mut self, target_id: UnitId, damage: u32, attacker_id: UnitId) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+        let attacker_team = self.state.get_unit(attacker_id).map(|u| u.team);
+        let Some(target) = self.state.get_unit_mut(target_id) else {
+            return events;
+        };
+
+        target.hp = target.hp.saturating_sub(damage);
+        target.last_attacker = Some(attacker_id);
+
+        if target.hp == 0 {
+            let target_kind = target.kind;
+            let target_team = target.team;
+            let target_pos = target.pos;
+            let respawn_delay = self.config.phase7.respawn_delay_rounds;
+
+            match target_kind {
+                UnitKind::Hero => {
+                    target.life_state = LifeState::DeadAwaitingRespawn {
+                        rounds_left: respawn_delay,
+                        death_pos: target_pos,
+                    };
+                    target.respawn_rounds = Some(respawn_delay);
+                    target.death_pos = Some(target_pos);
+                    target.statuses.clear();
+
+                    events.push(GameEvent::HeroDied {
+                        unit_id: target_id,
+                        killed_by: attacker_id,
+                        respawn_rounds: respawn_delay,
+                    });
+                    events.push(GameEvent::UnitDied {
+                        unit_id: target_id,
+                        unit_kind: target_kind,
+                        killed_by: attacker_id,
+                    });
+
+                    crate::turn::handle_kill_rewards_in_state(
+                        &mut self.state,
+                        target_kind,
+                        target_team,
+                        attacker_id,
+                        &mut events,
+                    );
+                }
+                UnitKind::Objective => {
+                    target.life_state = LifeState::PermanentlyRemoved;
+                    target.hp = 0;
+                    if let Some(a_team) = attacker_team {
+                        let bounty_gold = self.config.phase7.objective_gold_reward_per_hero;
+                        let bounty_xp = self.config.phase7.objective_xp_reward_per_hero;
+                        let buff_duration = self.config.phase7.objective_buff_duration_rounds;
+                        let buff_bonus = self.config.phase7.objective_buff_damage_bonus;
+
+                        let buff_def = crate::status::vault_damage_buff_def(buff_duration, buff_bonus);
+                        let mut affected = Vec::new();
+                        for hero in self.state.units.values_mut() {
+                            if hero.team == a_team && hero.is_hero() && hero.is_alive() {
+                                hero.gold += bounty_gold;
+                                hero.xp += bounty_xp;
+                                hero.statuses.retain(|s| s.def_id != buff_def.id);
+                                hero.statuses.push(crate::status::StatusInstance::from_def(&buff_def));
+                                affected.push(hero.id);
+                            }
+                        }
+
+                        events.push(GameEvent::ObjectiveDestroyed {
+                            objective_id: target_id,
+                            destroyer_team: a_team,
+                            last_attacker_id: attacker_id,
+                            gold_awarded_per_hero: bounty_gold,
+                            xp_awarded_per_hero: bounty_xp,
+                            affected_heroes: affected,
+                        });
+                    }
+                }
+                UnitKind::Core => {
+                    target.life_state = LifeState::PermanentlyRemoved;
+                    target.hp = 0;
+                    let winning = if target_team == 0 { 1 } else { 0 };
+                    self.is_match_over = true;
+                    self.winning_team = Some(winning);
+                    self.state.winner = Some(winning);
+                    self.state.phase = Phase::MatchEnd;
+
+                    events.push(GameEvent::CoreDestroyed {
+                        core_id: target_id,
+                        team: target_team,
+                        destroyed_by: attacker_id,
+                    });
+                    events.push(GameEvent::UnitDied {
+                        unit_id: target_id,
+                        unit_kind: target_kind,
+                        killed_by: attacker_id,
+                    });
+                    events.push(GameEvent::MatchEnded {
+                        winner: Some(winning),
+                    });
+                }
+                _ => {
+                    self.state.units.remove(&target_id);
+                    events.push(GameEvent::UnitDied {
+                        unit_id: target_id,
+                        unit_kind: target_kind,
+                        killed_by: attacker_id,
+                    });
+                    crate::turn::handle_kill_rewards_in_state(
+                        &mut self.state,
+                        target_kind,
+                        target_team,
+                        attacker_id,
+                        &mut events,
+                    );
+                }
+            }
+        }
+
+        self.check_core_victory();
+        events
+    }
+
+    pub fn kill_hero_for_test(&mut self, hero_id: UnitId) {
+        if let Some(hero) = self.state.get_unit_mut(hero_id) {
+            hero.hp = 0;
+            let death_pos = hero.pos;
+            let respawn_delay = self.config.phase7.respawn_delay_rounds;
+            hero.life_state = LifeState::DeadAwaitingRespawn {
+                rounds_left: respawn_delay,
+                death_pos,
+            };
+            hero.respawn_rounds = Some(respawn_delay);
+            hero.death_pos = Some(death_pos);
+            hero.statuses.clear();
+        }
+    }
+
+    pub fn fast_forward_respawn(&mut self, hero_id: UnitId) {
+        if let Some(hero) = self.state.get_unit_mut(hero_id) {
+            hero.life_state = LifeState::DeadAwaitingRespawn {
+                rounds_left: 0,
+                death_pos: hero.death_pos.unwrap_or(hero.pos),
+            };
+            hero.respawn_rounds = Some(0);
+        }
+        self.execute_hero_respawn(hero_id);
+    }
+
+    pub fn set_unit_pos(&mut self, unit_id: UnitId, pos: HexCoord) {
+        if let Some(unit) = self.state.get_unit_mut(unit_id) {
+            unit.pos = pos;
+        }
+    }
+
+    pub fn set_unit_hp(&mut self, unit_id: UnitId, hp: u32) {
+        if let Some(unit) = self.state.get_unit_mut(unit_id) {
+            unit.hp = hp.min(unit.max_hp);
+        }
+    }
+
+    pub fn destroy_vault(&mut self, attacker_id: UnitId) -> Vec<GameEvent> {
+        let vault_id = self.get_vault_id().expect("Vault not found");
+        self.inflict_damage(vault_id, 250, attacker_id)
+    }
+
+    pub fn has_active_buff(&self, unit_id: UnitId, buff_id: &str) -> bool {
+        if let Some(unit) = self.state.get_unit(unit_id) {
+            unit.statuses.iter().any(|s| {
+                s.def_id == buff_id
+                    || (buff_id == "attack_damage_buff"
+                        && (s.def_id == "attack_damage_buff" || s.def_id == "vault_buff"))
+                    || (buff_id == "vault_buff"
+                        && (s.def_id == "attack_damage_buff" || s.def_id == "vault_buff"))
+            })
+        } else {
+            false
+        }
+    }
+
+    pub fn can_hero_shop(&self, hero_id: UnitId) -> bool {
+        if self.state.phase != Phase::Planning {
+            return false;
+        }
+        let Some(hero) = self.state.get_unit(hero_id) else {
+            return false;
+        };
+        if !hero.is_alive() {
+            return false;
+        }
+        let Some(base_zone) = self.base_zones.get(&hero.team) else {
+            return false;
+        };
+        base_zone.contains(hero.pos)
+    }
+
+    pub fn process_round_start_respawns(&mut self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+        let mut dead_hero_ids: Vec<UnitId> = self
+            .state
+            .units
+            .values()
+            .filter(|u| u.is_hero() && u.is_dead_awaiting_respawn())
+            .map(|u| u.id)
+            .collect();
+        dead_hero_ids.sort_unstable();
+
+        for id in dead_hero_ids {
+            let mut ready_to_respawn = false;
+            if let Some(hero) = self.state.units.get_mut(&id) {
+                if let LifeState::DeadAwaitingRespawn {
+                    rounds_left,
+                    death_pos,
+                } = hero.life_state
+                {
+                    let new_rounds = rounds_left.saturating_sub(1);
+                    if new_rounds == 0 {
+                        ready_to_respawn = true;
+                    } else {
+                        hero.life_state = LifeState::DeadAwaitingRespawn {
+                            rounds_left: new_rounds,
+                            death_pos,
+                        };
+                        hero.respawn_rounds = Some(new_rounds);
+                    }
+                }
+            }
+
+            if ready_to_respawn {
+                if let Some(respawn_event) = self.execute_hero_respawn(id) {
+                    events.push(respawn_event);
+                }
+            }
+        }
+
+        events
+    }
+
+    pub fn execute_hero_respawn(&mut self, hero_id: UnitId) -> Option<GameEvent> {
+        let team = {
+            let hero = self.state.get_unit(hero_id)?;
+            hero.team
+        };
+
+        let base_zone = self.base_zones.get(&team)?.clone();
+        let candidates = base_zone.candidate_spawn_hexes();
+
+        let respawn_hex = candidates.into_iter().find(|hex| {
+            !self.state.map.movement_blockers().contains(hex) && !self.is_hex_occupied(*hex)
+        });
+
+        if let Some(hex) = respawn_hex {
+            if let Some(hero) = self.state.units.get_mut(&hero_id) {
+                hero.pos = hex;
+                hero.hp = hero.max_hp;
+                hero.ap = hero.max_ap;
+                hero.energy = hero.max_energy;
+                hero.cooldowns.clear();
+                hero.statuses.clear();
+                hero.life_state = LifeState::Alive;
+                hero.respawn_rounds = None;
+                hero.death_pos = None;
+
+                return Some(GameEvent::HeroRespawned {
+                    unit_id: hero_id,
+                    team,
+                    pos: hex,
+                });
+            }
+        } else {
+            if let Some(hero) = self.state.units.get_mut(&hero_id) {
+                let death_pos = hero.death_pos.unwrap_or(hero.pos);
+                hero.life_state = LifeState::DeadAwaitingRespawn {
+                    rounds_left: 1,
+                    death_pos,
+                };
+                hero.respawn_rounds = Some(1);
+            }
+        }
+        None
+    }
+
+    pub fn process_base_regeneration(&mut self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+        let regen_amount = self.config.phase7.base_regen_per_round;
+
+        let mut candidate_heroes: Vec<(UnitId, TeamId, HexCoord)> = self
+            .state
+            .units
+            .values()
+            .filter(|u| u.is_hero() && u.is_alive())
+            .map(|u| (u.id, u.team, u.pos))
+            .collect();
+        candidate_heroes.sort_by_key(|(id, ..)| *id);
+
+        for (id, team, pos) in candidate_heroes {
+            if let Some(base_zone) = self.base_zones.get(&team) {
+                if base_zone.contains(pos) {
+                    if let Some(hero) = self.state.units.get_mut(&id) {
+                        if hero.hp < hero.max_hp {
+                            let old_hp = hero.hp;
+                            hero.hp = (hero.hp + regen_amount).min(hero.max_hp);
+                            let restored = hero.hp - old_hp;
+                            events.push(GameEvent::BaseRegenerationApplied {
+                                unit_id: id,
+                                team,
+                                amount: restored,
+                                new_hp: hero.hp,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        events
+    }
+
+    pub fn check_core_victory(&mut self) -> Option<GameEvent> {
+        if self.is_match_over {
+            return self.winning_team.map(|winner| GameEvent::MatchEnded {
+                winner: Some(winner),
+            });
+        }
+        for team in [0, 1] {
+            if let Some(core_id) = self.get_core_id(team) {
+                if let Some(core) = self.state.get_unit(core_id) {
+                    if core.hp == 0 || !core.is_alive() {
+                        let winning = if team == 0 { 1 } else { 0 };
+                        self.is_match_over = true;
+                        self.winning_team = Some(winning);
+                        self.state.winner = Some(winning);
+                        self.state.phase = Phase::MatchEnd;
+                        return Some(GameEvent::MatchEnded {
+                            winner: Some(winning),
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn spawn_test_minion(&mut self, team: TeamId, pos: HexCoord) -> UnitId {
+        let id = self.state.next_unit_id;
+        self.state.next_unit_id += 1;
+        let mut minion = Unit::new_minion(id, team, pos);
+        minion.attack_range = 1;
+        self.state.add_unit(minion);
+        self.controllers.assign(id, Controller::Automatic);
+        id
+    }
+
+    pub fn get_valid_attack_targets(&self, unit_id: UnitId) -> Vec<UnitId> {
+        let Some(unit) = self.state.get_unit(unit_id) else {
+            return Vec::new();
+        };
+
+        self.state
+            .units
+            .values()
+            .filter(|target| {
+                if !target.is_alive() || target.team == unit.team {
+                    return false;
+                }
+                if unit.kind == UnitKind::Minion && target.kind == UnitKind::Objective {
+                    return false;
+                }
+                if unit.kind == UnitKind::Tower && target.kind == UnitKind::Objective {
+                    return false;
+                }
+                true
+            })
+            .map(|target| target.id)
+            .collect()
     }
 }
 

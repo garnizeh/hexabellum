@@ -3,7 +3,7 @@ use crate::minion_ai::MinionAI;
 use crate::orders::{Action, TurnOrders, UnitOrder};
 use crate::state::GameState;
 use crate::tower_ai::TowerAI;
-use crate::unit::{TeamId, UnitId, UnitKind};
+use crate::unit::{TeamId, Unit, UnitId, UnitKind};
 use std::collections::HashSet;
 
 pub struct GameAI;
@@ -23,7 +23,7 @@ impl GameAI {
                 UnitKind::Hero => Self::generate_hero_order(state, unit.id, &occupied),
                 UnitKind::Minion => MinionAI::generate_order(state, unit.id, &occupied),
                 UnitKind::Tower => TowerAI::generate_order(state, unit.id),
-                UnitKind::Spawner | UnitKind::NeutralGuardian => UnitOrder {
+                UnitKind::Spawner | UnitKind::NeutralGuardian | UnitKind::Core | UnitKind::Objective => UnitOrder {
                     unit_id: unit.id,
                     move_target: None,
                     action: Action::Wait,
@@ -52,6 +52,40 @@ impl GameAI {
                 }
             }
         };
+
+        // 1. Core Defense Priority: Intercept enemy unit within 3 hexes of allied Core
+        if let Some(core) = state.units.values().find(|u| u.is_alive() && u.kind == UnitKind::Core && u.team == unit.team) {
+            let mut intruders: Vec<&Unit> = state
+                .units
+                .values()
+                .filter(|u| u.is_alive() && u.team != unit.team && u.team != 255 && u.pos.distance(&core.pos) <= 3)
+                .collect();
+            if !intruders.is_empty() {
+                intruders.sort_by(|a, b| {
+                    unit.pos.distance(&a.pos).cmp(&unit.pos.distance(&b.pos))
+                        .then_with(|| a.hp.cmp(&b.hp))
+                        .then_with(|| a.id.cmp(&b.id))
+                });
+                return Self::order_towards_target(state, unit, intruders[0], occupied);
+            }
+        }
+
+        // 2. Core Siege Priority: Focus enemy Core if visible and within 3 hexes
+        if let Some(enemy_core) = state.units.values().find(|u| u.is_alive() && u.kind == UnitKind::Core && u.team != unit.team && u.team != 255) {
+            if state.fog.is_visible(unit.team, &enemy_core.pos) && unit.pos.distance(&enemy_core.pos) <= 3 {
+                return Self::order_towards_target(state, unit, enemy_core, occupied);
+            }
+        }
+
+        // 3. Objective Vault Contest: If Vault <= 50% HP or nearby
+        if let Some(vault) = state.units.values().find(|u| u.is_alive() && u.kind == UnitKind::Objective) {
+            if state.fog.is_visible(unit.team, &vault.pos) {
+                let dist = unit.pos.distance(&vault.pos);
+                if (vault.hp <= vault.max_hp / 2 && dist <= 4) || dist <= unit.attack_range {
+                    return Self::order_towards_target(state, unit, vault, occupied);
+                }
+            }
+        }
 
         let visible_enemies = state.visible_enemy_units(unit.team);
         let target_pool = if !visible_enemies.is_empty() {
@@ -82,12 +116,21 @@ impl GameAI {
         });
 
         let target = sorted_targets[0];
+        Self::order_towards_target(state, unit, target, occupied)
+    }
+
+    fn order_towards_target(
+        state: &GameState,
+        unit: &Unit,
+        target: &Unit,
+        occupied: &HashSet<HexCoord>,
+    ) -> UnitOrder {
         let distance = unit.pos.distance(&target.pos);
 
         // In range -> attack
         if distance <= unit.attack_range {
             return UnitOrder {
-                unit_id,
+                unit_id: unit.id,
                 move_target: None,
                 action: Action::Attack { target_id: target.id },
             };
@@ -115,20 +158,20 @@ impl GameAI {
             let new_dist = best_hex.distance(&target.pos);
             if new_dist <= unit.attack_range {
                 UnitOrder {
-                    unit_id,
+                    unit_id: unit.id,
                     move_target: Some(*best_hex),
                     action: Action::Attack { target_id: target.id },
                 }
             } else {
                 UnitOrder {
-                    unit_id,
+                    unit_id: unit.id,
                     move_target: Some(*best_hex),
                     action: Action::Wait,
                 }
             }
         } else {
             UnitOrder {
-                unit_id,
+                unit_id: unit.id,
                 move_target: None,
                 action: Action::Wait,
             }

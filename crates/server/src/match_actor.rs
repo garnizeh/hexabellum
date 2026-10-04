@@ -716,10 +716,10 @@ impl MatchActor {
                 return Err(ErrorCode::NotYourUnit);
             }
 
-            // 5. Verify unit is alive
-            let unit = session.state.units.get(&order.unit_id).ok_or(ErrorCode::TargetDead)?;
-            if !unit.is_alive() {
-                return Err(ErrorCode::TargetDead);
+            // 5. Verify unit is alive and not dead awaiting respawn
+            let unit = session.state.units.get(&order.unit_id).ok_or(ErrorCode::CannotOrderDeadHero)?;
+            if !unit.is_alive() || unit.is_dead_awaiting_respawn() {
+                return Err(ErrorCode::CannotOrderDeadHero);
             }
         }
 
@@ -788,9 +788,17 @@ impl MatchActor {
             None => return,
         };
 
-        // Distribute passive income to living heroes and trigger greedy AI shopping
+        // Phase 7 round start pipeline:
+        // 1. Decrement hero respawn timers & respawn ready heroes at base
+        session.process_round_start_respawns();
+        // 2. Apply base regeneration (+15 HP) to living heroes in base zone
+        session.process_base_regeneration();
+        // 3. Distribute passive gold (+6G)
         session.distribute_passive_income();
+        // 4. Greedy AI bot shopping inside base zone
         session.execute_ai_bot_shopping();
+        // 5. Update team line-of-sight and fog of war
+        session.state.update_fog();
 
         let round = session.state.round;
 
@@ -987,6 +995,48 @@ impl MatchActor {
             );
             return;
         };
+
+        let (hero_pos, hero_team, is_alive, is_dead_awaiting_respawn, current_gold) = {
+            let u = match session.state.units.get(&unit_id) {
+                Some(u) => u,
+                None => return,
+            };
+            (u.pos, u.team, u.is_alive(), u.is_dead_awaiting_respawn(), u.gold)
+        };
+
+        if is_dead_awaiting_respawn || !is_alive {
+            self.send_to_player(
+                player_id,
+                ServerMessage::PurchaseResolved {
+                    unit_id,
+                    item_id: item_id.to_string(),
+                    success: false,
+                    gold_remaining: current_gold,
+                    error: Some(ProtocolErrorCode::HeroDeadAwaitingRespawn),
+                },
+            );
+            return;
+        }
+
+        let in_base = session
+            .base_zones
+            .get(&hero_team)
+            .map(|bz| bz.contains(hero_pos))
+            .unwrap_or(false);
+
+        if !in_base {
+            self.send_to_player(
+                player_id,
+                ServerMessage::PurchaseResolved {
+                    unit_id,
+                    item_id: item_id.to_string(),
+                    success: false,
+                    gold_remaining: current_gold,
+                    error: Some(ProtocolErrorCode::CannotShopOutsideBase),
+                },
+            );
+            return;
+        }
 
         let max_slots = session.config.economy.max_item_slots;
         let allow_duplicates = session.config.economy.allow_duplicate_items;
