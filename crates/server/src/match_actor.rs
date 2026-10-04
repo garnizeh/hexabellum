@@ -398,11 +398,13 @@ impl MatchActor {
         if self.phase == MatchPhaseDto::MatchEnd {
             if let Some(ref session) = self.session {
                 let snapshot = session.snapshot_for_team(0, None);
+                let reason = session.state.check_winner_with_reason().map(|(_, r)| r);
                 let _ = sender.send(ServerMessage::MatchEnded {
                     winner: session.state.winner,
                     snapshot,
                     state_hash: Some(session.state_hash()),
                     total_rounds: Some(session.state.round),
+                    reason,
                 });
             }
             return;
@@ -444,6 +446,7 @@ impl MatchActor {
                             round: session.state.round,
                             deadline_unix_ms: deadline,
                             snapshot,
+                            events: Vec::new(),
                         });
                     }
                 }
@@ -790,11 +793,12 @@ impl MatchActor {
 
         // Phase 7 round start pipeline:
         // 1. Decrement hero respawn timers & respawn ready heroes at base
-        session.process_round_start_respawns();
+        let mut start_events = Vec::new();
+        start_events.extend(session.process_round_start_respawns());
         // 2. Apply base regeneration (+15 HP) to living heroes in base zone
-        session.process_base_regeneration();
+        start_events.extend(session.process_base_regeneration());
         // 3. Distribute passive gold (+6G)
-        session.distribute_passive_income();
+        start_events.extend(session.distribute_passive_income());
         // 4. Greedy AI bot shopping inside base zone
         session.execute_ai_bot_shopping();
         // 5. Update team line-of-sight and fog of war
@@ -804,10 +808,12 @@ impl MatchActor {
 
         for conn in self.players.values() {
             let snapshot = session.snapshot_for_player(conn.team, Some(&conn.player_id), Some(deadline_ms));
+            let team_events = session.sanitize_events_for_team(conn.team, &start_events);
             conn.send(ServerMessage::RoundStarted {
                 round,
                 deadline_unix_ms: deadline_ms,
                 snapshot,
+                events: team_events,
             });
         }
 
@@ -819,7 +825,7 @@ impl MatchActor {
         });
     }
 
-    async fn resolve_round(&mut self) {
+    pub async fn resolve_round(&mut self) {
         self.grace_timer_active = false;
         self.turn_deadline_unix_ms = None;
         self.phase = MatchPhaseDto::Resolution;
@@ -841,11 +847,13 @@ impl MatchActor {
             let snapshot = session.snapshot_for_player(team, Some(&conn.player_id), None);
 
             if is_ended {
+                let reason = session.state.check_winner_with_reason().map(|(_, r)| r);
                 conn.send(ServerMessage::MatchEnded {
                     winner: session.state.winner,
                     snapshot,
                     state_hash: Some(state_hash.clone()),
                     total_rounds: Some(round_planned),
+                    reason,
                 });
             } else {
                 conn.send(ServerMessage::RoundResolved {

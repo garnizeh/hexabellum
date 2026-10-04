@@ -256,7 +256,19 @@ export type SanitizedGameEvent =
   | { type: 'UnitDied'; unit_id: number; unit_kind: string; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'RoundEnded'; round: number }
-  | { type: 'MatchEnded'; winner: number | null };
+  | { type: 'MatchEnded'; winner: number | null; reason?: VictoryReasonDto | null };
+
+export type VictoryReasonDto =
+  | {
+      type: 'CoreDestroyed';
+      destroyed_core_id: number;
+      destroyed_team: number;
+      destroyer_team: number;
+    }
+  | {
+      type: 'HeroElimination';
+      eliminated_team: number;
+    };
 
 export type ClientMessage =
   | { type: 'Hello'; player_id: string; reconnect_token?: string | null }
@@ -350,7 +362,13 @@ export type ServerMessage =
     }
   | { type: 'HeroSelected'; player_id: string; team: number; hero_def_id: HeroDefId }
   | { type: 'MatchStarting'; round: number; initial_snapshot: SnapshotDto }
-  | { type: 'RoundStarted'; round: number; deadline_unix_ms: number; snapshot: SnapshotDto }
+  | {
+      type: 'RoundStarted';
+      round: number;
+      deadline_unix_ms: number;
+      snapshot: SnapshotDto;
+      events?: SanitizedGameEvent[];
+    }
   | { type: 'OrdersAccepted'; round: number }
   | { type: 'OrderRejected'; round: number; error_code: ProtocolErrorCode; reason: string }
   | { type: 'EarlyResolutionTriggered'; round: number; resolution_unix_ms: number }
@@ -397,6 +415,7 @@ export type ServerMessage =
       snapshot: SnapshotDto;
       state_hash?: string | null;
       total_rounds?: number | null;
+      reason?: VictoryReasonDto | null;
     }
   | { type: 'OpponentStatus'; online: boolean }
   | { type: 'Pong'; client_time_ms: number; server_time_ms: number }

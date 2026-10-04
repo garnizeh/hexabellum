@@ -258,19 +258,19 @@ export class AbilityDock {
 
     if (phase === 'Resolution') {
       this.shopBtn.classList.add('resolving');
-      this.shopBtn.innerHTML = `<span>⏳ RESOLVING...</span>`;
+      this.shopBtn.innerHTML = `<span>SHOP LOCKED: RESOLUTION</span>`;
       this.shopBtn.title = 'Shop Unavailable: Orders currently resolving';
     } else if (isDead) {
       this.shopBtn.classList.add('hero-dead');
-      this.shopBtn.innerHTML = `<span>💀 HERO DEFEATED</span>`;
+      this.shopBtn.innerHTML = `<span>SHOP LOCKED: HERO DEFEATED</span>`;
       this.shopBtn.title = 'Shop Unavailable: Awaiting respawn at base';
     } else if (canShop) {
       this.shopBtn.classList.add('in-base');
-      this.shopBtn.innerHTML = `<span>🛡️ BASE SHOP</span> <span style="font-size:10px; opacity:0.8; font-family:'JetBrains Mono',monospace;">[B]</span>`;
+      this.shopBtn.innerHTML = `<span>BASE SHOP [B]</span>`;
       this.shopBtn.title = 'Base Shop Open: Buy passive items';
     } else {
       this.shopBtn.classList.add('outside-base');
-      this.shopBtn.innerHTML = `<span>🛡️ SHOP (RETURN TO BASE)</span>`;
+      this.shopBtn.innerHTML = `<span>SHOP LOCKED: RETURN TO BASE</span>`;
       this.shopBtn.title = 'Shop Unavailable: You must be inside your team base to purchase items';
     }
   }

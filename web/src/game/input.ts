@@ -67,7 +67,15 @@ export class InputHandler {
   selectUnit(unitId: number): void {
     const state = this.getState();
     const unit = state.units[unitId];
-    if (!unit) return;
+    if (
+      !unit ||
+      unit.life_state === 'dead_awaiting_respawn' ||
+      unit.life_state === 'permanently_removed' ||
+      unit.hp === 0
+    ) {
+      this.reset();
+      return;
+    }
     this.selectedUnit = unitId;
     this.inputMode = 'normal';
     this.renderNormalOverlays(this.selectedUnit, state);
@@ -307,7 +315,14 @@ export class InputHandler {
     // Normal Mode:
     // 1. Click on a living Player Hero: select
     for (const [idStr, unit] of Object.entries(state.units)) {
-      if (unit.pos.q === hex.q && unit.pos.r === hex.r && unit.team === playerTeam && unit.kind === 'Hero') {
+      if (
+        unit.pos.q === hex.q &&
+        unit.pos.r === hex.r &&
+        unit.team === playerTeam &&
+        unit.kind === 'Hero' &&
+        unit.hp > 0 &&
+        unit.life_state !== 'dead_awaiting_respawn'
+      ) {
         const clickedId = Number(idStr);
         const isControlled = this.session ? this.session.isMyControlledUnit(clickedId) : true;
         if (isControlled) {

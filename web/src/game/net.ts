@@ -25,7 +25,12 @@ export interface NetworkCallbacks {
   ) => void;
   onHeroSelected?: (playerId: string, team: number, heroDefId: HeroDefId) => void;
   onMatchStarting?: (round: number, initialSnapshot: SnapshotDto) => void;
-  onRoundStarted: (round: number, deadlineUnixMs: number, snapshot: SnapshotDto) => void;
+  onRoundStarted: (
+    round: number,
+    deadlineUnixMs: number,
+    snapshot: SnapshotDto,
+    events?: SanitizedGameEvent[]
+  ) => void;
   onOrdersAccepted: (round: number) => void;
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
   onEarlyResolutionTriggered?: (round: number, resolutionUnixMs: number) => void;
@@ -254,7 +259,12 @@ export class NetworkBridge {
         break;
 
       case 'RoundStarted':
-        this.callbacks.onRoundStarted?.(msg.round, msg.deadline_unix_ms, msg.snapshot);
+        this.callbacks.onRoundStarted?.(
+          msg.round,
+          msg.deadline_unix_ms,
+          msg.snapshot,
+          msg.events
+        );
         break;
 
       case 'OrdersAccepted':

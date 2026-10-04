@@ -62,6 +62,18 @@ export class Animator {
       case 'UnitSpawned':
         this.animateSpawn(event, () => this.playNext());
         break;
+      case 'BaseRegenerationApplied':
+        this.animateBaseRegeneration(event as any, () => this.playNext());
+        break;
+      case 'ObjectiveDestroyed':
+        this.animateObjectiveDestroyed(event as any, () => this.playNext());
+        break;
+      case 'HeroRespawned':
+        this.animateHeroRespawned(event as any, () => this.playNext());
+        break;
+      case 'CoreDestroyed':
+        this.animateCoreDestroyed(event as any, () => this.playNext());
+        break;
       default:
         // Immediate events (RoundStarted, FogUpdated, etc.)
         this.playNext();
@@ -529,5 +541,85 @@ export class Animator {
     };
 
     requestAnimationFrame(animate);
+  }
+
+  private createExpandingShockwave(
+    x: number,
+    y: number,
+    color: number,
+    maxRadius: number,
+    duration: number,
+    onComplete?: () => void
+  ): void {
+    const ring = new PIXI.Graphics();
+    this.renderer.getFxLayer().addChild(ring);
+    const startTime = performance.now();
+
+    const animate = () => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const radius = 10 + progress * maxRadius;
+
+      ring.clear();
+      ring.circle(x, y, radius);
+      ring.stroke({ color, width: 4 * (1 - progress), alpha: 0.9 * (1 - progress) });
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        this.renderer.getFxLayer().removeChild(ring);
+        onComplete?.();
+      }
+    };
+    requestAnimationFrame(animate);
+  }
+
+  private animateBaseRegeneration(
+    data: { unit_id: number; amount: number },
+    onDone: () => void
+  ): void {
+    const sprite = this.renderer.getUnitSprite(data.unit_id);
+    if (sprite) {
+      this.showFloatingText(sprite.x, sprite.y, `+${data.amount} HP BASE REGEN`, 0x10b981);
+    }
+    setTimeout(onDone, 120);
+  }
+
+  private animateObjectiveDestroyed(
+    data: { objective_id: number; gold_awarded_per_hero?: number; xp_awarded_per_hero?: number },
+    onDone: () => void
+  ): void {
+    const gold = data.gold_awarded_per_hero ?? 50;
+    const xp = data.xp_awarded_per_hero ?? 40;
+    this.showFloatingBanner(`VAULT REWARD: +${gold}G +${xp}XP`, 0xffd700);
+    const center = this.renderer.hexToPixel(0, 0);
+    this.createExpandingShockwave(center.x, center.y, 0xffd700, 120, 500, onDone);
+  }
+
+  private animateHeroRespawned(
+    data: { unit_id: number; pos?: HexCoord },
+    onDone: () => void
+  ): void {
+    const pixelPos = data.pos
+      ? this.renderer.hexToPixel(data.pos.q, data.pos.r)
+      : this.renderer.getUnitSprite(data.unit_id);
+    if (pixelPos) {
+      this.showFloatingText(pixelPos.x, pixelPos.y, 'RESPAWNED!', 0x00f5ff);
+      this.createExpandingShockwave(pixelPos.x, pixelPos.y, 0x00f5ff, 60, 400, onDone);
+    } else {
+      onDone();
+    }
+  }
+
+  private animateCoreDestroyed(
+    data: { core_id: number; team: number },
+    onDone: () => void
+  ): void {
+    const sprite = this.renderer.getUnitSprite(data.core_id);
+    const app = this.renderer.getApp();
+    const x = sprite ? sprite.x : app.screen.width / 2;
+    const y = sprite ? sprite.y : app.screen.height / 2;
+    this.showFloatingBanner(`CORE DESTROYED!`, 0xff0055);
+    this.createExpandingShockwave(x, y, 0xff0055, 180, 700, onDone);
   }
 }

@@ -271,6 +271,13 @@ export class HexRenderer {
     this.unitSprites.clear();
 
     for (const [idStr, unit] of Object.entries(state.units)) {
+      if (
+        unit.life_state === 'dead_awaiting_respawn' ||
+        unit.life_state === 'permanently_removed' ||
+        unit.hp === 0
+      ) {
+        continue;
+      }
       const id = Number(idStr);
       const sprite = this.createUnitSprite(unit);
       this.unitLayer.addChild(sprite);

@@ -122,9 +122,8 @@ impl GameState {
         })
     }
 
-    /// Evaluates match winner. If Cores exist (Phase 7), Core destruction governs victory.
-    /// Otherwise, falls back to legacy dual check (All heroes dead OR Spawner Tower destroyed).
-    pub fn check_winner(&self) -> Option<TeamId> {
+    /// Evaluates match winner and provides the structured victory reason.
+    pub fn check_winner_with_reason(&self) -> Option<(TeamId, hexabellum_protocol::VictoryReasonDto)> {
         let cores: Vec<&Unit> = self.units.values().filter(|u| u.kind == UnitKind::Core).collect();
         if !cores.is_empty() {
             let team0_core_alive = cores.iter().any(|u| u.team == 0 && u.is_alive());
@@ -133,9 +132,33 @@ impl GameState {
             if !team0_core_alive && !team1_core_alive {
                 return None; // Draw
             } else if !team0_core_alive {
-                return Some(1);
+                let destroyed_id = cores
+                    .iter()
+                    .find(|u| u.team == 0 && !u.is_alive())
+                    .map(|u| u.id)
+                    .unwrap_or(0);
+                return Some((
+                    1,
+                    hexabellum_protocol::VictoryReasonDto::CoreDestroyed {
+                        destroyed_core_id: destroyed_id,
+                        destroyed_team: 0,
+                        destroyer_team: 1,
+                    },
+                ));
             } else if !team1_core_alive {
-                return Some(0);
+                let destroyed_id = cores
+                    .iter()
+                    .find(|u| u.team == 1 && !u.is_alive())
+                    .map(|u| u.id)
+                    .unwrap_or(0);
+                return Some((
+                    0,
+                    hexabellum_protocol::VictoryReasonDto::CoreDestroyed {
+                        destroyed_core_id: destroyed_id,
+                        destroyed_team: 1,
+                        destroyer_team: 0,
+                    },
+                ));
             } else {
                 return None;
             }
@@ -152,12 +175,24 @@ impl GameState {
         if team0_lost && team1_lost {
             None // Draw
         } else if team0_lost {
-            Some(1)
+            Some((
+                1,
+                hexabellum_protocol::VictoryReasonDto::HeroElimination { eliminated_team: 0 },
+            ))
         } else if team1_lost {
-            Some(0)
+            Some((
+                0,
+                hexabellum_protocol::VictoryReasonDto::HeroElimination { eliminated_team: 1 },
+            ))
         } else {
             None
         }
+    }
+
+    /// Evaluates match winner. If Cores exist (Phase 7), Core destruction governs victory.
+    /// Otherwise, falls back to legacy dual check (All heroes dead OR Spawner Tower destroyed).
+    pub fn check_winner(&self) -> Option<TeamId> {
+        self.check_winner_with_reason().map(|(w, _)| w)
     }
 
     pub fn reset_all_ap(&mut self) {

@@ -153,5 +153,7 @@ pub enum GameEvent {
 
     MatchEnded {
         winner: Option<TeamId>,
+        #[serde(default)]
+        reason: Option<hexabellum_protocol::VictoryReasonDto>,
     },
 }

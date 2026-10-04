@@ -318,6 +318,12 @@ impl TurnProcessor {
                     Self::resolve_repair(unit_idx, target_id, units, &mut events);
                 }
             }
+
+            // Phase 7: Evaluate Core status after each resolution step.
+            // If a Core reaches 0 HP, terminate immediately, discarding pending orders.
+            if units.iter().any(|u| u.kind == UnitKind::Core && (u.hp == 0 || !u.is_alive())) {
+                break;
+            }
         }
 
         // Stage 4: Neutral Camp Leash & Reset Verification
@@ -759,6 +765,14 @@ impl TurnProcessor {
                 &mut pending_movers,
             );
             events.extend(unit_events);
+
+            // Phase 7: Evaluate Core status after each resolution step.
+            // If a Core reaches 0 HP, terminate immediately, discarding pending orders.
+            if state.units.values().any(|u| u.kind == UnitKind::Core && (u.hp == 0 || !u.is_alive()))
+                || state.winner.is_some()
+            {
+                break;
+            }
         }
 
         // Leash check for neutral camps
@@ -824,11 +838,12 @@ impl TurnProcessor {
             });
         }
 
-        if let Some(winner) = state.check_winner() {
+        if let Some((winner, reason)) = state.check_winner_with_reason() {
             state.winner = Some(winner);
             state.phase = Phase::MatchEnd;
             events.push(GameEvent::MatchEnded {
                 winner: Some(winner),
+                reason: Some(reason),
             });
         } else {
             state.round += 1;
@@ -1586,6 +1601,10 @@ pub fn handle_unit_death_in_state(
         });
         handle_kill_rewards_in_state(state, target_kind, target_team, killer_id, events);
     } else if target_kind == UnitKind::Core {
+        if let Some(core) = state.units.get_mut(&target_id) {
+            core.life_state = LifeState::PermanentlyRemoved;
+            core.hp = 0;
+        }
         events.push(GameEvent::CoreDestroyed {
             core_id: target_id,
             team: target_team,
@@ -1701,6 +1720,8 @@ pub fn handle_unit_death_in_slice(
         });
         handle_kill_rewards_in_slice(units, target_kind, target_team, killer_id, events);
     } else if target_kind == UnitKind::Core {
+        units[target_idx].life_state = LifeState::PermanentlyRemoved;
+        units[target_idx].hp = 0;
         events.push(GameEvent::CoreDestroyed {
             core_id: target_id,
             team: target_team,
@@ -1996,7 +2017,7 @@ pub(crate) mod tests {
         assert_eq!(state.phase, Phase::MatchEnd);
         assert!(events
             .iter()
-            .any(|e| matches!(e, GameEvent::MatchEnded { winner: Some(0) })));
+            .any(|e| matches!(e, GameEvent::MatchEnded { winner: Some(0), .. })));
 
         // Normal round increments
         let mut state2 = base_state();

@@ -545,9 +545,26 @@ impl BattleSession {
             }
 
             let move_target = dto.move_target.map(|h| HexCoord::new(h.q, h.r));
+            if move_target.is_some() && unit.is_stationary() {
+                return Err(OrderSubmissionError {
+                    code: ProtocolErrorCode::UnauthorizedAction,
+                    unit_id: Some(dto.unit_id),
+                    reason: format!("Unit #{} is stationary and cannot move", dto.unit_id),
+                });
+            }
             let action = match dto.action {
                 ActionDto::Wait => Action::Wait,
                 ActionDto::Attack { target_id } => {
+                    if unit.attack_damage == 0 {
+                        return Err(OrderSubmissionError {
+                            code: ProtocolErrorCode::UnauthorizedAction,
+                            unit_id: Some(dto.unit_id),
+                            reason: format!(
+                                "Unit #{} has 0 attack damage and cannot attack",
+                                dto.unit_id
+                            ),
+                        });
+                    }
                     let target = match self.state.get_unit(target_id) {
                         Some(t) => t,
                         None => {
@@ -637,15 +654,39 @@ impl BattleSession {
                         }
                         hexabellum_protocol::SpellTargetDto::Unit { unit_id: tid } => {
                             let t = match self.state.get_unit(tid) {
-                                Some(u) if u.is_alive() => u,
-                                _ => {
+                                Some(u) => {
+                                    if !u.is_alive() || u.is_dead_awaiting_respawn() {
+                                        return Err(OrderSubmissionError {
+                                            code: ProtocolErrorCode::TargetUntargetable,
+                                            unit_id: Some(dto.unit_id),
+                                            reason: format!(
+                                                "Target unit #{} is dead or untargetable",
+                                                tid
+                                            ),
+                                        });
+                                    }
+                                    u
+                                }
+                                None => {
                                     return Err(OrderSubmissionError {
                                         code: ProtocolErrorCode::InvalidTarget,
                                         unit_id: Some(dto.unit_id),
-                                        reason: format!("Target unit #{} not found or dead", tid),
+                                        reason: format!("Target unit #{} not found", tid),
                                     });
                                 }
                             };
+                            if spell
+                                .effects
+                                .iter()
+                                .any(|e| e.kind == crate::ability::EffectKind::Heal)
+                                && t.is_structure()
+                            {
+                                return Err(OrderSubmissionError {
+                                    code: ProtocolErrorCode::InvalidTarget,
+                                    unit_id: Some(dto.unit_id),
+                                    reason: "Healing spells cannot target structures".into(),
+                                });
+                            }
                             if spell.targeting == crate::ability::TargetingMode::EnemyUnit
                                 && t.team == team
                             {
@@ -860,6 +901,8 @@ impl BattleSession {
             self.state.phase = Phase::Planning;
         } else {
             self.state.phase = Phase::MatchEnd;
+            self.is_match_over = true;
+            self.winning_team = self.state.winner;
         }
 
         events
@@ -1003,8 +1046,11 @@ impl BattleSession {
                 GameEvent::RoundEnded { round } => {
                     sanitized.push(SanitizedGameEvent::RoundEnded { round: *round });
                 }
-                GameEvent::MatchEnded { winner } => {
-                    sanitized.push(SanitizedGameEvent::MatchEnded { winner: *winner });
+                GameEvent::MatchEnded { winner, reason } => {
+                    sanitized.push(SanitizedGameEvent::MatchEnded {
+                        winner: *winner,
+                        reason: *reason,
+                    });
                 }
                 GameEvent::SpellCast {
                     caster_id,
@@ -2082,6 +2128,11 @@ impl BattleSession {
                     });
                     events.push(GameEvent::MatchEnded {
                         winner: Some(winning),
+                        reason: Some(hexabellum_protocol::VictoryReasonDto::CoreDestroyed {
+                            destroyed_core_id: target_id,
+                            destroyed_team: target_team,
+                            destroyer_team: winning,
+                        }),
                     });
                 }
                 _ => {
@@ -2302,8 +2353,12 @@ impl BattleSession {
 
     pub fn check_core_victory(&mut self) -> Option<GameEvent> {
         if self.is_match_over {
-            return self.winning_team.map(|winner| GameEvent::MatchEnded {
-                winner: Some(winner),
+            return self.winning_team.map(|winner| {
+                let reason = self.state.check_winner_with_reason().map(|(_, r)| r);
+                GameEvent::MatchEnded {
+                    winner: Some(winner),
+                    reason,
+                }
             });
         }
         for team in [0, 1] {
@@ -2317,6 +2372,11 @@ impl BattleSession {
                         self.state.phase = Phase::MatchEnd;
                         return Some(GameEvent::MatchEnded {
                             winner: Some(winning),
+                            reason: Some(hexabellum_protocol::VictoryReasonDto::CoreDestroyed {
+                                destroyed_core_id: core_id,
+                                destroyed_team: team,
+                                destroyer_team: winning,
+                            }),
                         });
                     }
                 }

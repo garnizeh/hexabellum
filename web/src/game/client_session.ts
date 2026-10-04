@@ -93,7 +93,12 @@ export interface ClientSessionEvents {
   onLobbyUpdated: (lobby: LobbyState) => void;
   onHeroSelected: (playerId: string, team: number, heroDefId: HeroDefId) => void;
   onMatchStarting: (round: number, snapshot: SnapshotDto) => void;
-  onRoundStarted: (round: number, deadlineUnixMs: number, snapshot: SnapshotDto) => void;
+  onRoundStarted: (
+    round: number,
+    deadlineUnixMs: number,
+    snapshot: SnapshotDto,
+    events?: SanitizedGameEvent[]
+  ) => void;
   onOrdersAccepted: (round: number) => void;
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
   onEarlyResolutionTriggered: (round: number, resolutionUnixMs: number) => void;
@@ -537,10 +542,10 @@ export class ClientSession {
         this.currentSnapshot = snapshot;
         this.events.onMatchStarting?.(round, snapshot);
       },
-      onRoundStarted: (round, deadlineUnixMs, snapshot) => {
+      onRoundStarted: (round, deadlineUnixMs, snapshot, events) => {
         this.currentSnapshot = snapshot;
         this.stagedOrders.clear();
-        this.events.onRoundStarted?.(round, deadlineUnixMs, snapshot);
+        this.events.onRoundStarted?.(round, deadlineUnixMs, snapshot, events);
       },
       onOrdersAccepted: (round) => {
         this.events.onOrdersAccepted?.(round);

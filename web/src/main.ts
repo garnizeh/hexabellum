@@ -151,7 +151,13 @@ async function main() {
 
       // Auto-select player's assigned hero in 5v5 if none selected
       const primaryId = session.getPrimaryControlledUnitId();
-      if (primaryId && input.getSelectedUnitId() === null && state.units[primaryId]) {
+      if (
+        primaryId &&
+        input.getSelectedUnitId() === null &&
+        state.units[primaryId] &&
+        state.units[primaryId].hp > 0 &&
+        state.units[primaryId].life_state !== 'dead_awaiting_respawn'
+      ) {
         input.selectUnit(primaryId);
       }
 
@@ -252,10 +258,20 @@ async function main() {
     }
   };
 
-  let pendingRoundStarted: { round: number; deadlineUnixMs: number; snapshot: SnapshotDto } | null = null;
+  let pendingRoundStarted: {
+    round: number;
+    deadlineUnixMs: number;
+    snapshot: SnapshotDto;
+    events?: SanitizedGameEvent[];
+  } | null = null;
   let pendingMatchEnded: { winner: number | null; snapshot: SnapshotDto } | null = null;
 
-  const applyRoundStarted = (round: number, deadlineUnixMs: number, _snapshot: SnapshotDto) => {
+  const applyRoundStarted = (
+    round: number,
+    deadlineUnixMs: number,
+    _snapshot: SnapshotDto,
+    events?: SanitizedGameEvent[]
+  ) => {
     isOnline = true;
     lobbyScreen.hide();
     heroSelectScreen.hide();
@@ -265,6 +281,10 @@ async function main() {
     shopDrawer.update();
     renderer.setPlayerTeam(session.getCurrentTeam());
     renderCurrentState();
+
+    if (events && events.length > 0) {
+      animator.playEvents(events);
+    }
 
     if (statusEl) {
       statusEl.textContent = 'Planning Phase — Submit orders before timer expires';
@@ -339,7 +359,7 @@ async function main() {
         hud.showToast(`Player ${playerId.slice(0, 6)} reconnected! Control restored.`);
       }
     },
-    onRoundStarted: (round, deadlineUnixMs, snapshot) => {
+    onRoundStarted: (round, deadlineUnixMs, snapshot, events) => {
       isOnline = true;
       lobbyScreen.hide();
       heroSelectScreen.hide();
@@ -348,7 +368,7 @@ async function main() {
       hud.setOpponentStatus(session.getIsPvAI() ? 'ai' : 'ready');
 
       if (input.getIsResolving()) {
-        pendingRoundStarted = { round, deadlineUnixMs, snapshot };
+        pendingRoundStarted = { round, deadlineUnixMs, snapshot, events };
         timer.startWithDeadline(deadlineUnixMs, () => {
           if (endTurnBtn) endTurnBtn.disabled = true;
           if (statusEl) {
@@ -357,7 +377,7 @@ async function main() {
           }
         });
       } else {
-        applyRoundStarted(round, deadlineUnixMs, snapshot);
+        applyRoundStarted(round, deadlineUnixMs, snapshot, events);
       }
     },
     onPurchaseResolved: (_unitId, itemId, success, _goldRemaining, error) => {
@@ -434,9 +454,9 @@ async function main() {
           renderCurrentState();
           pendingMatchEnded = null;
         } else if (pendingRoundStarted) {
-          const { round: r, deadlineUnixMs, snapshot: snap } = pendingRoundStarted;
+          const { round: r, deadlineUnixMs, snapshot: snap, events: evs } = pendingRoundStarted;
           pendingRoundStarted = null;
-          applyRoundStarted(r, deadlineUnixMs, snap);
+          applyRoundStarted(r, deadlineUnixMs, snap, evs);
         } else {
           renderCurrentState();
         }

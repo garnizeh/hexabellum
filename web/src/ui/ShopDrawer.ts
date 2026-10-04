@@ -73,7 +73,7 @@ export class ShopDrawer {
       <div class="hb-shop-header">
         <div class="hb-shop-title-group">
           <div class="hb-shop-title">
-            <span>🛡️ FIELD SHOP</span>
+            <span>🛡️ BASE SHOP</span>
             <span class="badge">PLANNING</span>
           </div>
         </div>

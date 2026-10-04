@@ -328,6 +328,21 @@ pub struct OrderDto {
 
 pub type UnitOrderDto = OrderDto;
 
+/// Victory reason declaration for match completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VictoryReasonDto {
+    CoreDestroyed {
+        destroyed_core_id: UnitId,
+        destroyed_team: TeamId,
+        destroyer_team: TeamId,
+    },
+    HeroElimination {
+        eliminated_team: TeamId,
+    },
+}
+
+pub type VictoryReason = VictoryReasonDto;
+
 /// Fog-sanitized event emitted during round resolution.
 /// Ensures coordinates and hidden unit activities in fog are masked or omitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,6 +467,8 @@ pub enum SanitizedGameEvent {
     },
     MatchEnded {
         winner: Option<TeamId>,
+        #[serde(default)]
+        reason: Option<VictoryReasonDto>,
     },
 }
 
@@ -578,6 +595,8 @@ pub enum ServerMessage {
         round: Round,
         deadline_unix_ms: u64,
         snapshot: SnapshotDto,
+        #[serde(default)]
+        events: Vec<SanitizedGameEvent>,
     },
     OrdersAccepted {
         round: Round,
@@ -611,6 +630,8 @@ pub enum ServerMessage {
         state_hash: Option<String>,
         #[serde(default)]
         total_rounds: Option<Round>,
+        #[serde(default)]
+        reason: Option<VictoryReasonDto>,
     },
     OpponentStatus {
         online: bool,
@@ -802,6 +823,7 @@ mod tests {
             round: 1,
             deadline_unix_ms: 1700000030000,
             snapshot: snap.clone(),
+            events: Vec::new(),
         };
 
         let json = serde_json::to_string(&msg).expect("Failed to serialize ServerMessage");

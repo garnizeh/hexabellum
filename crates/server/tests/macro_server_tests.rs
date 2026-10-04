@@ -2,9 +2,9 @@ use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use hexabellum_core::session::BattleConfig;
 use hexabellum_protocol::{
-    ActionDto, ClientMessage, OrderDto, ProtocolErrorCode, ServerMessage,
+    ActionDto, ClientMessage, MatchPhaseDto, OrderDto, ProtocolErrorCode, ServerMessage,
 };
-use hexabellum_server::{build_router, MatchActorHandle, MatchRegistry};
+use hexabellum_server::{build_router, MatchActor, MatchActorHandle, MatchRegistry};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -142,4 +142,75 @@ async fn test_ws_phase7_order_validation_dead_hero_and_repair() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn test_cannot_shop_outside_base() {
+    let mut actor = MatchActor::new_test_match();
+    actor.setup_5v5_session();
+    actor.phase = MatchPhaseDto::Planning;
+
+    // Move player_1's hero outside base zone to (0, 0)
+    let hero_id = actor.players.get("player_1").unwrap().hero_unit_id.unwrap();
+    actor
+        .session
+        .as_mut()
+        .unwrap()
+        .set_unit_pos(hero_id, hexabellum_core::hex::HexCoord::new(0, 0));
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    actor.players.get_mut("player_1").unwrap().sender = Some(tx);
+
+    actor.handle_buy_item("player_1", "longblade").await;
+
+    let msg = rx.try_recv().expect("Expected message");
+    match msg {
+        ServerMessage::PurchaseResolved { success, error, .. } => {
+            assert!(!success);
+            assert_eq!(error, Some(ProtocolErrorCode::CannotShopOutsideBase));
+        }
+        ServerMessage::Error { error_code, .. } => {
+            assert_eq!(error_code, ProtocolErrorCode::CannotShopOutsideBase);
+        }
+        other => panic!("Expected CannotShopOutsideBase, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn test_match_ended_carries_victory_reason() {
+    let mut actor = MatchActor::new_test_match();
+    actor.setup_5v5_session();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    actor.players.get_mut("player_1").unwrap().sender = Some(tx);
+
+    // Destroy Team 1 core
+    let team1_core = actor.session.as_ref().unwrap().get_core_id(1).unwrap();
+    actor
+        .session
+        .as_mut()
+        .unwrap()
+        .inflict_damage(team1_core, 1000, 1);
+
+    actor.resolve_round().await;
+
+    let mut found_match_ended = false;
+    while let Ok(msg) = rx.try_recv() {
+        if let ServerMessage::MatchEnded {
+            winner, reason, ..
+        } = msg
+        {
+            assert_eq!(winner, Some(0));
+            assert!(matches!(
+                reason,
+                Some(hexabellum_protocol::VictoryReasonDto::CoreDestroyed {
+                    destroyed_team: 1,
+                    destroyer_team: 0,
+                    ..
+                })
+            ));
+            found_match_ended = true;
+            break;
+        }
+    }
+    assert!(found_match_ended);
 }

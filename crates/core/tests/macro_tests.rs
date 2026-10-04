@@ -1,5 +1,8 @@
 use hexabellum_core::hex::HexCoord;
 use hexabellum_core::session::{BattleConfig, BattleSession};
+use hexabellum_protocol::{
+    ActionDto, HexDto, OrderDto, ProtocolErrorCode, SpellTargetDto, VictoryReasonDto,
+};
 
 #[test]
 fn test_core_destruction_triggers_victory() {
@@ -13,6 +16,24 @@ fn test_core_destruction_triggers_victory() {
     assert!(victory_event.is_some());
     assert_eq!(session.is_match_over, true);
     assert_eq!(session.winning_team, Some(0));
+
+    if let Some(hexabellum_core::event::GameEvent::MatchEnded {
+        winner,
+        reason: Some(reason),
+    }) = victory_event
+    {
+        assert_eq!(winner, Some(0));
+        assert_eq!(
+            reason,
+            VictoryReasonDto::CoreDestroyed {
+                destroyed_core_id: team1_core_id,
+                destroyed_team: 1,
+                destroyer_team: 0,
+            }
+        );
+    } else {
+        panic!("Expected MatchEnded with VictoryReasonDto::CoreDestroyed");
+    }
 }
 
 #[test]
@@ -151,6 +172,115 @@ fn test_core_cannot_be_repaired() {
     let _vault_id = session.get_vault_id().unwrap();
     let vault = session.units.get(&_vault_id).unwrap();
     assert!(!vault.kind.is_repairable());
+}
+
+#[test]
+fn test_dead_hero_order_and_targeting_validation() {
+    let mut session = BattleSession::new_test_session_5v5();
+    let dead_hero_id = 101;
+    session.kill_hero_for_test(dead_hero_id);
+
+    // Assign player controller to dead hero for order submission
+    session
+        .controllers
+        .assign(dead_hero_id, hexabellum_core::controller::Controller::Player("p1".into()));
+
+    // 1. Cannot order dead hero
+    let round = session.state.round;
+    let res = session.submit_player_orders(
+        &"p1".to_string(),
+        0,
+        round,
+        vec![OrderDto {
+            unit_id: dead_hero_id,
+            move_target: Some(HexDto { q: -5, r: 0 }),
+            action: ActionDto::Wait,
+        }],
+    );
+    assert_eq!(res.unwrap_err().code, ProtocolErrorCode::CannotOrderDeadHero);
+
+    // 2. Cannot target dead hero with spell (TargetUntargetable)
+    let caster_hero_id = 103;
+    session
+        .controllers
+        .assign(caster_hero_id, hexabellum_core::controller::Controller::Player("p2".into()));
+
+    // Give caster energy and AP for mend, ensure mend is ready
+    if let Some(caster) = session.state.get_unit_mut(caster_hero_id) {
+        caster.energy = 5;
+        caster.ap = 5;
+        caster.cooldowns.insert("mend".to_string(), 0);
+    }
+
+    let res_spell = session.submit_player_orders(
+        &"p2".to_string(),
+        0,
+        round,
+        vec![OrderDto {
+            unit_id: caster_hero_id,
+            move_target: None,
+            action: ActionDto::Cast {
+                spell_id: "mend".into(),
+                target: SpellTargetDto::Unit { unit_id: dead_hero_id },
+            },
+        }],
+    );
+    assert_eq!(res_spell.unwrap_err().code, ProtocolErrorCode::TargetUntargetable);
+
+    // 3. Healing spell cannot target structures
+    let core0_id = session.get_core_id(0).unwrap();
+    let res_mend_core = session.submit_player_orders(
+        &"p2".to_string(),
+        0,
+        round,
+        vec![OrderDto {
+            unit_id: caster_hero_id,
+            move_target: None,
+            action: ActionDto::Cast {
+                spell_id: "mend".into(),
+                target: SpellTargetDto::Unit { unit_id: core0_id },
+            },
+        }],
+    );
+    assert_eq!(res_mend_core.unwrap_err().code, ProtocolErrorCode::InvalidTarget);
+}
+
+#[test]
+fn test_stationary_unit_order_rejections() {
+    let mut session = BattleSession::new_test_session_5v5();
+    let core0_id = session.get_core_id(0).unwrap();
+
+    session
+        .controllers
+        .assign(core0_id, hexabellum_core::controller::Controller::Player("p1".into()));
+
+    let round = session.state.round;
+
+    // Moving a stationary unit is rejected with UnauthorizedAction
+    let res = session.submit_player_orders(
+        &"p1".to_string(),
+        0,
+        round,
+        vec![OrderDto {
+            unit_id: core0_id,
+            move_target: Some(HexDto { q: -6, r: 1 }),
+            action: ActionDto::Wait,
+        }],
+    );
+    assert_eq!(res.unwrap_err().code, ProtocolErrorCode::UnauthorizedAction);
+
+    // Attacking with a 0-damage unit is rejected with UnauthorizedAction
+    let res_atk = session.submit_player_orders(
+        &"p1".to_string(),
+        0,
+        round,
+        vec![OrderDto {
+            unit_id: core0_id,
+            move_target: None,
+            action: ActionDto::Attack { target_id: 201 },
+        }],
+    );
+    assert_eq!(res_atk.unwrap_err().code, ProtocolErrorCode::UnauthorizedAction);
 }
 
 #[test]
