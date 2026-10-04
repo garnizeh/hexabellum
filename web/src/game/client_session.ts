@@ -13,6 +13,10 @@ import {
   HeroDefId,
   ItemDto,
   HeroEconomyDto,
+  LifeStateDto,
+  BaseZoneDto,
+  ObjectiveStatusDto,
+  ShopDisabledReasonDto,
 } from './types';
 import { GameState, UnitData, HexCoord, UnitKind } from './bridge';
 import {
@@ -51,6 +55,9 @@ export function snapshotToGameState(snapshot: SnapshotDto): GameState {
       xp: u.xp ?? undefined,
       level: u.level ?? 1,
       items: u.items ?? [],
+      life_state: u.life_state,
+      respawn_rounds: u.respawn_rounds,
+      death_pos: u.death_pos,
     };
   }
 
@@ -66,6 +73,9 @@ export function snapshotToGameState(snapshot: SnapshotDto): GameState {
     phase,
     units,
     winner: snapshot.winner,
+    base_zones: snapshot.base_zones,
+    core_hp: snapshot.core_hp,
+    objective: snapshot.objective,
   };
 }
 
@@ -83,7 +93,12 @@ export interface ClientSessionEvents {
   onLobbyUpdated: (lobby: LobbyState) => void;
   onHeroSelected: (playerId: string, team: number, heroDefId: HeroDefId) => void;
   onMatchStarting: (round: number, snapshot: SnapshotDto) => void;
-  onRoundStarted: (round: number, deadlineUnixMs: number, snapshot: SnapshotDto) => void;
+  onRoundStarted: (
+    round: number,
+    deadlineUnixMs: number,
+    snapshot: SnapshotDto,
+    events?: SanitizedGameEvent[]
+  ) => void;
   onOrdersAccepted: (round: number) => void;
   onOrderRejected: (round: number, code: ProtocolErrorCode, reason: string) => void;
   onEarlyResolutionTriggered: (round: number, resolutionUnixMs: number) => void;
@@ -527,10 +542,10 @@ export class ClientSession {
         this.currentSnapshot = snapshot;
         this.events.onMatchStarting?.(round, snapshot);
       },
-      onRoundStarted: (round, deadlineUnixMs, snapshot) => {
+      onRoundStarted: (round, deadlineUnixMs, snapshot, events) => {
         this.currentSnapshot = snapshot;
         this.stagedOrders.clear();
-        this.events.onRoundStarted?.(round, deadlineUnixMs, snapshot);
+        this.events.onRoundStarted?.(round, deadlineUnixMs, snapshot, events);
       },
       onOrdersAccepted: (round) => {
         this.events.onOrdersAccepted?.(round);
@@ -694,5 +709,53 @@ export class ClientSession {
       (this.currentSnapshot?.can_shop ?? false) &&
       this.getPhase() === 'Planning'
     );
+  }
+
+  getBaseZones(): BaseZoneDto[] {
+    return this.currentSnapshot?.base_zones ?? [];
+  }
+
+  getCoreHp(): Record<number, [number, number]> | undefined {
+    return this.currentSnapshot?.core_hp;
+  }
+
+  getObjective(): ObjectiveStatusDto | null | undefined {
+    return this.currentSnapshot?.objective;
+  }
+
+  getShopDisabledReason(): ShopDisabledReasonDto | null | undefined {
+    return this.currentSnapshot?.shop_disabled_reason;
+  }
+
+  isHeroDead(): boolean {
+    const hero = this.getMyHero();
+    if (hero) {
+      if (hero.life_state === 'dead_awaiting_respawn' || (hero.respawn_rounds !== undefined && hero.respawn_rounds !== null)) {
+        return true;
+      }
+    }
+    const primaryId = this.getPrimaryControlledUnitId();
+    if (primaryId !== null) {
+      const rosterEntry = this.getRoster().find((r) => r.unit_id === primaryId);
+      if (rosterEntry && rosterEntry.life_state) {
+        return rosterEntry.life_state === 'dead_awaiting_respawn';
+      }
+    }
+    return false;
+  }
+
+  getHeroRespawnRounds(): number | null {
+    const hero = this.getMyHero();
+    if (hero && hero.respawn_rounds != null) {
+      return hero.respawn_rounds;
+    }
+    const primaryId = this.getPrimaryControlledUnitId();
+    if (primaryId !== null) {
+      const rosterEntry = this.getRoster().find((r) => r.unit_id === primaryId);
+      if (rosterEntry && rosterEntry.life_state === 'dead_awaiting_respawn') {
+        return rosterEntry.respawn_rounds ?? 3;
+      }
+    }
+    return null;
   }
 }

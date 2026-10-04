@@ -9,7 +9,7 @@ use crate::repair::execute_repair;
 use crate::spawner::SpawnerSystem;
 use crate::state::{GameState, Phase};
 use crate::status::StatusInstance;
-use crate::unit::{TeamId, Unit, UnitId, UnitKind, ATTACK_AP_COST};
+use crate::unit::{LifeState, TeamId, Unit, UnitId, UnitKind, ATTACK_AP_COST};
 use crate::vision::{compute_team_los_fog, has_line_of_sight};
 use std::collections::{HashMap, HashSet};
 
@@ -318,6 +318,12 @@ impl TurnProcessor {
                     Self::resolve_repair(unit_idx, target_id, units, &mut events);
                 }
             }
+
+            // Phase 7: Evaluate Core status after each resolution step.
+            // If a Core reaches 0 HP, terminate immediately, discarding pending orders.
+            if units.iter().any(|u| u.kind == UnitKind::Core && (u.hp == 0 || !u.is_alive())) {
+                break;
+            }
         }
 
         // Stage 4: Neutral Camp Leash & Reset Verification
@@ -444,21 +450,17 @@ impl TurnProcessor {
         if target_remaining_hp == 0 && !dead_ids.contains(&target_id) {
             dead_ids.insert(target_id);
             let target_team = units[target_idx].team;
-            events.push(GameEvent::UnitDied {
-                unit_id: target_id,
-                unit_kind: target_kind,
-                killed_by: attacker_id,
-            });
-
-            handle_kill_rewards_in_slice(units, target_kind, target_team, attacker_id, events);
-
-            if target_kind == UnitKind::NeutralGuardian {
-                for camp in camps.iter_mut() {
-                    if camp.guardian_id == target_id {
-                        camp.handle_guardian_death(attacker_team, units, events);
-                    }
-                }
-            }
+            handle_unit_death_in_slice(
+                units,
+                target_idx,
+                target_id,
+                target_kind,
+                target_team,
+                attacker_id,
+                attacker_team,
+                camps,
+                events,
+            );
         }
     }
 
@@ -527,25 +529,17 @@ impl TurnProcessor {
                                 if other_hp == 0 && !dead_ids.contains(&other_id) {
                                     dead_ids.insert(other_id);
                                     let other_team = units[i].team;
-                                    events.push(GameEvent::UnitDied {
-                                        unit_id: other_id,
-                                        unit_kind: other_kind,
-                                        killed_by: caster_id,
-                                    });
-
-                                    handle_kill_rewards_in_slice(units, other_kind, other_team, caster_id, events);
-
-                                    if other_kind == UnitKind::NeutralGuardian {
-                                        for camp in camps.iter_mut() {
-                                            if camp.guardian_id == other_id {
-                                                camp.handle_guardian_death(
-                                                    caster_team,
-                                                    units,
-                                                    events,
-                                                );
-                                            }
-                                        }
-                                    }
+                                    handle_unit_death_in_slice(
+                                        units,
+                                        i,
+                                        other_id,
+                                        other_kind,
+                                        other_team,
+                                        caster_id,
+                                        caster_team,
+                                        camps,
+                                        events,
+                                    );
                                 }
                             }
                         }
@@ -630,21 +624,17 @@ impl TurnProcessor {
                             if target_hp == 0 && !dead_ids.contains(&target_id) {
                                 dead_ids.insert(target_id);
                                 let target_team = units[target_idx].team;
-                                events.push(GameEvent::UnitDied {
-                                    unit_id: target_id,
-                                    unit_kind: target_kind,
-                                    killed_by: caster_id,
-                                });
-
-                                handle_kill_rewards_in_slice(units, target_kind, target_team, caster_id, events);
-
-                                if target_kind == UnitKind::NeutralGuardian {
-                                    for camp in camps.iter_mut() {
-                                        if camp.guardian_id == target_id {
-                                            camp.handle_guardian_death(caster_team, units, events);
-                                        }
-                                    }
-                                }
+                                handle_unit_death_in_slice(
+                                    units,
+                                    target_idx,
+                                    target_id,
+                                    target_kind,
+                                    target_team,
+                                    caster_id,
+                                    caster_team,
+                                    camps,
+                                    events,
+                                );
                             }
                         }
                         EffectKind::Heal => {
@@ -775,6 +765,14 @@ impl TurnProcessor {
                 &mut pending_movers,
             );
             events.extend(unit_events);
+
+            // Phase 7: Evaluate Core status after each resolution step.
+            // If a Core reaches 0 HP, terminate immediately, discarding pending orders.
+            if state.units.values().any(|u| u.kind == UnitKind::Core && (u.hp == 0 || !u.is_alive()))
+                || state.winner.is_some()
+            {
+                break;
+            }
         }
 
         // Leash check for neutral camps
@@ -840,11 +838,12 @@ impl TurnProcessor {
             });
         }
 
-        if let Some(winner) = state.check_winner() {
+        if let Some((winner, reason)) = state.check_winner_with_reason() {
             state.winner = Some(winner);
             state.phase = Phase::MatchEnd;
             events.push(GameEvent::MatchEnded {
                 winner: Some(winner),
+                reason: Some(reason),
             });
         } else {
             state.round += 1;
@@ -1149,28 +1148,16 @@ impl TurnProcessor {
         }
 
         if target_dead {
-            state.units.remove(&target_id);
-            claims.retain(|_, &mut claimant| claimant != target_id);
-
-            events.push(GameEvent::UnitDied {
-                unit_id: target_id,
-                unit_kind: target_kind,
-                killed_by: attacker_id,
-            });
-
-            handle_kill_rewards_in_state(state, target_kind, target_team, attacker_id, &mut events);
-
-            if target_kind == UnitKind::NeutralGuardian {
-                for camp in state.neutral_camps.iter_mut() {
-                    if camp.guardian_id == target_id {
-                        let mut all_units: Vec<Unit> = state.units.values().cloned().collect();
-                        camp.handle_guardian_death(attacker_team, &mut all_units, &mut events);
-                        for u in all_units {
-                            state.units.insert(u.id, u);
-                        }
-                    }
-                }
-            }
+            handle_unit_death_in_state(
+                state,
+                target_id,
+                target_kind,
+                target_team,
+                attacker_id,
+                attacker_team,
+                Some(claims),
+                &mut events,
+            );
         }
 
         events
@@ -1249,27 +1236,16 @@ impl TurnProcessor {
                             });
 
                             if dead {
-                                state.units.remove(&other_id);
-                                events.push(GameEvent::UnitDied {
-                                    unit_id: other_id,
-                                    unit_kind: kind,
-                                    killed_by: caster_id,
-                                });
-
-                                handle_kill_rewards_in_state(state, kind, other_team, caster_id, events);
-
-                                if kind == UnitKind::NeutralGuardian {
-                                    for camp in state.neutral_camps.iter_mut() {
-                                        if camp.guardian_id == other_id {
-                                            let mut all_units: Vec<Unit> =
-                                                state.units.values().cloned().collect();
-                                            camp.handle_guardian_death(caster_team, &mut all_units, events);
-                                            for u in all_units {
-                                                state.units.insert(u.id, u);
-                                            }
-                                        }
-                                    }
-                                }
+                                handle_unit_death_in_state(
+                                    state,
+                                    other_id,
+                                    kind,
+                                    other_team,
+                                    caster_id,
+                                    caster_team,
+                                    None,
+                                    events,
+                                );
                             }
                         }
                     } else if effect.kind == EffectKind::ApplyStatus {
@@ -1347,27 +1323,16 @@ impl TurnProcessor {
                             });
 
                             if dead {
-                                state.units.remove(target_id);
-                                events.push(GameEvent::UnitDied {
-                                    unit_id: *target_id,
-                                    unit_kind: target_kind,
-                                    killed_by: caster_id,
-                                });
-
-                                handle_kill_rewards_in_state(state, target_kind, target_team, caster_id, events);
-
-                                if target_kind == UnitKind::NeutralGuardian {
-                                    for camp in state.neutral_camps.iter_mut() {
-                                        if camp.guardian_id == *target_id {
-                                            let mut all_units: Vec<Unit> =
-                                                state.units.values().cloned().collect();
-                                            camp.handle_guardian_death(caster_team, &mut all_units, events);
-                                            for u in all_units {
-                                                state.units.insert(u.id, u);
-                                            }
-                                        }
-                                    }
-                                }
+                                handle_unit_death_in_state(
+                                    state,
+                                    *target_id,
+                                    target_kind,
+                                    target_team,
+                                    caster_id,
+                                    caster_team,
+                                    None,
+                                    events,
+                                );
                             }
                         }
                         EffectKind::Heal => {
@@ -1555,6 +1520,245 @@ pub fn handle_kill_rewards_in_slice(
     }
 }
 
+pub fn handle_vault_destruction_in_state(
+    state: &mut GameState,
+    vault_id: UnitId,
+    killer_id: UnitId,
+    events: &mut Vec<GameEvent>,
+) {
+    let killer_team = match state.units.get(&killer_id) {
+        Some(u) if u.team == 0 || u.team == 1 => u.team,
+        _ => return,
+    };
+
+    let gold_reward = 50;
+    let xp_reward = 40;
+    let buff_dmg = 5;
+    let buff_dur = 5;
+
+    let mut living_allies: Vec<UnitId> = state
+        .units
+        .values()
+        .filter(|u| u.team == killer_team && u.is_hero() && u.is_alive())
+        .map(|u| u.id)
+        .collect();
+    living_allies.sort_unstable();
+
+    let buff_def = crate::status::vault_damage_buff_def(buff_dur, buff_dmg);
+
+    for ally_id in &living_allies {
+        if let Some(hero) = state.units.get_mut(ally_id) {
+            hero.gold += gold_reward;
+            crate::progression::grant_xp(hero, xp_reward, events);
+            hero.statuses.retain(|s| s.def_id != buff_def.id);
+            hero.statuses.push(crate::status::StatusInstance::from_def(&buff_def));
+        }
+    }
+
+    events.push(GameEvent::ObjectiveDestroyed {
+        objective_id: vault_id,
+        destroyer_team: killer_team,
+        last_attacker_id: killer_id,
+        gold_awarded_per_hero: gold_reward,
+        xp_awarded_per_hero: xp_reward,
+        affected_heroes: living_allies,
+    });
+}
+
+pub fn handle_unit_death_in_state(
+    state: &mut GameState,
+    target_id: UnitId,
+    target_kind: UnitKind,
+    target_team: TeamId,
+    killer_id: UnitId,
+    killer_team: TeamId,
+    mut claims: Option<&mut HashMap<HexCoord, UnitId>>,
+    events: &mut Vec<GameEvent>,
+) {
+    if let Some(ref mut c) = claims {
+        c.retain(|_, claimant| *claimant != target_id);
+    }
+
+    if target_kind == UnitKind::Hero {
+        if let Some(hero) = state.units.get_mut(&target_id) {
+            hero.life_state = LifeState::DeadAwaitingRespawn {
+                rounds_left: 3,
+                death_pos: hero.pos,
+            };
+            hero.respawn_rounds = Some(3);
+            hero.death_pos = Some(hero.pos);
+            hero.statuses.clear();
+        }
+        events.push(GameEvent::HeroDied {
+            unit_id: target_id,
+            killed_by: killer_id,
+            respawn_rounds: 3,
+        });
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+        handle_kill_rewards_in_state(state, target_kind, target_team, killer_id, events);
+    } else if target_kind == UnitKind::Core {
+        if let Some(core) = state.units.get_mut(&target_id) {
+            core.life_state = LifeState::PermanentlyRemoved;
+            core.hp = 0;
+        }
+        events.push(GameEvent::CoreDestroyed {
+            core_id: target_id,
+            team: target_team,
+            destroyed_by: killer_id,
+        });
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+    } else if target_kind == UnitKind::Objective {
+        if let Some(vault) = state.units.get_mut(&target_id) {
+            vault.life_state = LifeState::PermanentlyRemoved;
+            vault.hp = 0;
+        }
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+        handle_vault_destruction_in_state(state, target_id, killer_id, events);
+    } else {
+        state.units.remove(&target_id);
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+        handle_kill_rewards_in_state(state, target_kind, target_team, killer_id, events);
+        if target_kind == UnitKind::NeutralGuardian {
+            for camp in state.neutral_camps.iter_mut() {
+                if camp.guardian_id == target_id {
+                    let mut all_units: Vec<Unit> = state.units.values().cloned().collect();
+                    camp.handle_guardian_death(killer_team, &mut all_units, events);
+                    for u in all_units {
+                        state.units.insert(u.id, u);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn handle_vault_destruction_in_slice(
+    units: &mut [Unit],
+    vault_id: UnitId,
+    killer_id: UnitId,
+    events: &mut Vec<GameEvent>,
+) {
+    let killer_team = match units.iter().find(|u| u.id == killer_id) {
+        Some(u) if u.team == 0 || u.team == 1 => u.team,
+        _ => return,
+    };
+
+    let gold_reward = 50;
+    let xp_reward = 40;
+    let buff_dmg = 5;
+    let buff_dur = 5;
+
+    let mut living_allies: Vec<UnitId> = Vec::new();
+    let buff_def = crate::status::vault_damage_buff_def(buff_dur, buff_dmg);
+
+    for u in units.iter_mut() {
+        if u.team == killer_team && u.is_hero() && u.is_alive() {
+            u.gold += gold_reward;
+            let uid = u.id;
+            living_allies.push(uid);
+            crate::progression::grant_xp(u, xp_reward, events);
+            u.statuses.retain(|s| s.def_id != buff_def.id);
+            u.statuses.push(crate::status::StatusInstance::from_def(&buff_def));
+        }
+    }
+    living_allies.sort_unstable();
+
+    events.push(GameEvent::ObjectiveDestroyed {
+        objective_id: vault_id,
+        destroyer_team: killer_team,
+        last_attacker_id: killer_id,
+        gold_awarded_per_hero: gold_reward,
+        xp_awarded_per_hero: xp_reward,
+        affected_heroes: living_allies,
+    });
+}
+
+pub fn handle_unit_death_in_slice(
+    units: &mut [Unit],
+    target_idx: usize,
+    target_id: UnitId,
+    target_kind: UnitKind,
+    target_team: TeamId,
+    killer_id: UnitId,
+    killer_team: TeamId,
+    camps: &mut [NeutralCamp],
+    events: &mut Vec<GameEvent>,
+) {
+    if target_kind == UnitKind::Hero {
+        units[target_idx].life_state = LifeState::DeadAwaitingRespawn {
+            rounds_left: 3,
+            death_pos: units[target_idx].pos,
+        };
+        units[target_idx].respawn_rounds = Some(3);
+        units[target_idx].death_pos = Some(units[target_idx].pos);
+        units[target_idx].statuses.clear();
+        events.push(GameEvent::HeroDied {
+            unit_id: target_id,
+            killed_by: killer_id,
+            respawn_rounds: 3,
+        });
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+        handle_kill_rewards_in_slice(units, target_kind, target_team, killer_id, events);
+    } else if target_kind == UnitKind::Core {
+        units[target_idx].life_state = LifeState::PermanentlyRemoved;
+        units[target_idx].hp = 0;
+        events.push(GameEvent::CoreDestroyed {
+            core_id: target_id,
+            team: target_team,
+            destroyed_by: killer_id,
+        });
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+    } else if target_kind == UnitKind::Objective {
+        units[target_idx].life_state = LifeState::PermanentlyRemoved;
+        units[target_idx].hp = 0;
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+        handle_vault_destruction_in_slice(units, target_id, killer_id, events);
+    } else {
+        events.push(GameEvent::UnitDied {
+            unit_id: target_id,
+            unit_kind: target_kind,
+            killed_by: killer_id,
+        });
+        handle_kill_rewards_in_slice(units, target_kind, target_team, killer_id, events);
+        if target_kind == UnitKind::NeutralGuardian {
+            for camp in camps.iter_mut() {
+                if camp.guardian_id == target_id {
+                    camp.handle_guardian_death(killer_team, units, events);
+                }
+            }
+        }
+    }
+}
+
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1666,7 +1870,9 @@ pub(crate) mod tests {
         });
 
         let events = TurnProcessor::resolve(&mut state, &orders);
-        assert!(state.get_unit(2).is_none());
+        let victim = state.get_unit(2).unwrap();
+        assert!(!victim.is_alive());
+        assert!(victim.is_dead_awaiting_respawn());
         assert_eq!(state.get_unit(1).unwrap().hp, 100);
 
         let died = events
@@ -1811,7 +2017,7 @@ pub(crate) mod tests {
         assert_eq!(state.phase, Phase::MatchEnd);
         assert!(events
             .iter()
-            .any(|e| matches!(e, GameEvent::MatchEnded { winner: Some(0) })));
+            .any(|e| matches!(e, GameEvent::MatchEnded { winner: Some(0), .. })));
 
         // Normal round increments
         let mut state2 = base_state();

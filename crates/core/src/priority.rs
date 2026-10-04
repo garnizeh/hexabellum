@@ -7,6 +7,7 @@ pub enum PriorityClass {
     Medium = 2,
     Low = 3,
     Lowest = 4,
+    Excluded = 5,
 }
 
 pub struct TargetScore {
@@ -27,8 +28,10 @@ pub fn evaluate_minion_target_priority(target: &Unit) -> PriorityClass {
     match target.kind {
         UnitKind::Minion => PriorityClass::Highest,
         UnitKind::Hero => PriorityClass::High,
-        UnitKind::Tower | UnitKind::Spawner => PriorityClass::Medium,
-        UnitKind::NeutralGuardian => PriorityClass::Lowest,
+        UnitKind::Tower => PriorityClass::Medium,
+        UnitKind::Spawner => PriorityClass::Low,
+        UnitKind::Core => PriorityClass::Lowest,
+        UnitKind::Objective | UnitKind::NeutralGuardian => PriorityClass::Excluded,
     }
 }
 
@@ -36,7 +39,8 @@ pub fn evaluate_tower_target_priority(target: &Unit) -> PriorityClass {
     match target.kind {
         UnitKind::Minion => PriorityClass::Highest,
         UnitKind::Hero => PriorityClass::High,
-        _ => PriorityClass::Lowest,
+        UnitKind::Tower | UnitKind::Spawner | UnitKind::Core => PriorityClass::Medium,
+        UnitKind::Objective | UnitKind::NeutralGuardian => PriorityClass::Excluded,
     }
 }
 
@@ -45,7 +49,8 @@ pub fn evaluate_hero_ai_target_priority(target: &Unit) -> PriorityClass {
         UnitKind::Hero => PriorityClass::Highest,
         UnitKind::Minion => PriorityClass::High,
         UnitKind::Tower | UnitKind::Spawner => PriorityClass::Medium,
-        UnitKind::NeutralGuardian => PriorityClass::Lowest,
+        UnitKind::Core => PriorityClass::Low,
+        UnitKind::Objective | UnitKind::NeutralGuardian => PriorityClass::Lowest,
     }
 }
 

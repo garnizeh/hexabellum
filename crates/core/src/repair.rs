@@ -12,6 +12,7 @@ pub enum RepairValidationError {
     TargetNotFound,
     TargetDead,
     TargetNotStructure,
+    TargetNotRepairable,
     TargetNotAllied,
     TargetFullHealth,
     OutOfRange,
@@ -33,6 +34,9 @@ pub fn validate_repair(
     }
     if !target.is_structure() {
         return Err(RepairValidationError::TargetNotStructure);
+    }
+    if !target.kind.is_repairable() {
+        return Err(RepairValidationError::TargetNotRepairable);
     }
     if repairer.team != target.team {
         return Err(RepairValidationError::TargetNotAllied);

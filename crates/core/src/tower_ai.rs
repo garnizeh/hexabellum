@@ -24,6 +24,11 @@ impl TowerAI {
         let in_range: Vec<&Unit> = enemies
             .into_iter()
             .filter(|e| {
+                if crate::priority::evaluate_tower_target_priority(e)
+                    == crate::priority::PriorityClass::Excluded
+                {
+                    return false;
+                }
                 let dist = tower.pos.distance(&e.pos);
                 dist <= tower.attack_range
                     && (dist <= 1 || crate::vision::has_line_of_sight(&blockers, tower.pos, e.pos))

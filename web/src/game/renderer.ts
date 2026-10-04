@@ -1,5 +1,6 @@
 import * as PIXI from 'pixi.js';
 import { HexCoord, GameState, MoveTarget, UnitData, UnitKind } from './bridge';
+import { BaseZoneDto } from './types';
 import { CameraController } from './camera';
 
 export const HEX_SIZE = 30;
@@ -8,6 +9,7 @@ export class HexRenderer {
   private app: PIXI.Application;
   private worldContainer = new PIXI.Container();
   private hexLayer = new PIXI.Container();
+  private baseZoneLayer = new PIXI.Container();
   private obstacleLayer = new PIXI.Container();
   private overlayLayer = new PIXI.Container();
   private pathLayer = new PIXI.Container();
@@ -27,6 +29,7 @@ export class HexRenderer {
     // Attach world container to stage to allow unified pan/zoom
     this.app.stage.addChild(this.worldContainer);
     this.worldContainer.addChild(this.hexLayer);
+    this.worldContainer.addChild(this.baseZoneLayer);
     this.worldContainer.addChild(this.obstacleLayer);
     this.worldContainer.addChild(this.overlayLayer);
     this.worldContainer.addChild(this.pathLayer);
@@ -200,6 +203,49 @@ export class HexRenderer {
     }
   }
 
+  drawBaseZones(baseZones: BaseZoneDto[]): void {
+    this.baseZoneLayer.removeChildren();
+
+    for (const bz of baseZones) {
+      const isAlly = bz.team === this.playerTeam;
+      const fillColor = isAlly ? 0x22d3ee : 0xf43f5e;
+      const strokeColor = isAlly ? 0x38bdf8 : 0xfb7185;
+
+      // Draw all hexes within base radius (r=2, 19 hexes)
+      for (let dq = -bz.radius; dq <= bz.radius; dq++) {
+        for (
+          let dr = Math.max(-bz.radius, -dq - bz.radius);
+          dr <= Math.min(bz.radius, -dq + bz.radius);
+          dr++
+        ) {
+          const q = bz.center.q + dq;
+          const r = bz.center.r + dr;
+          const { x, y } = this.hexToPixel(q, r);
+
+          const g = new PIXI.Graphics();
+          const points: number[] = [];
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            points.push(x + HEX_SIZE * Math.cos(angle), y + HEX_SIZE * Math.sin(angle));
+          }
+          g.poly(points);
+          g.fill({ color: fillColor, alpha: 0.12 });
+          g.stroke({ color: strokeColor, width: 1.5, alpha: 0.45 });
+          this.baseZoneLayer.addChild(g);
+        }
+      }
+
+      // Celestial beacon rings at Core center hex
+      const centerPos = this.hexToPixel(bz.center.q, bz.center.r);
+      const beacon = new PIXI.Graphics();
+      beacon.circle(centerPos.x, centerPos.y, HEX_SIZE * 0.85);
+      beacon.stroke({ color: strokeColor, width: 2, alpha: 0.65 });
+      beacon.circle(centerPos.x, centerPos.y, HEX_SIZE * 1.15);
+      beacon.stroke({ color: strokeColor, width: 1, alpha: 0.3 });
+      this.baseZoneLayer.addChild(beacon);
+    }
+  }
+
   drawFog(visibleHexes: HexCoord[], allHexes: HexCoord[]): void {
     this.fogLayer.removeChildren();
     const visibleSet = new Set(visibleHexes.map(h => `${h.q},${h.r}`));
@@ -225,6 +271,13 @@ export class HexRenderer {
     this.unitSprites.clear();
 
     for (const [idStr, unit] of Object.entries(state.units)) {
+      if (
+        unit.life_state === 'dead_awaiting_respawn' ||
+        unit.life_state === 'permanently_removed' ||
+        unit.hp === 0
+      ) {
+        continue;
+      }
       const id = Number(idStr);
       const sprite = this.createUnitSprite(unit);
       this.unitLayer.addChild(sprite);
@@ -339,6 +392,77 @@ export class HexRenderer {
         g.stroke({ color: 0xffffff, width: 2 });
         break;
       }
+      case 'Core': {
+        // Monolithic towering crystal pulsing with team energy (2.5x scale)
+        const crystalColor = unit.team === 0 ? 0x00d2ff : 0xff3366;
+        const crystalGlow = unit.team === 0 ? 0x38bdf8 : 0xfb7185;
+
+        // Base pedestal
+        g.ellipse(0, HEX_SIZE * 0.75, HEX_SIZE * 0.9, HEX_SIZE * 0.35);
+        g.fill({ color: 0x0f172a, alpha: 0.9 });
+        g.stroke({ color: crystalColor, width: 2, alpha: 0.8 });
+
+        // Outer crystal prism (towering 2.5x height)
+        g.poly([
+          0, -HEX_SIZE * 1.45,
+          HEX_SIZE * 0.75, -HEX_SIZE * 0.3,
+          HEX_SIZE * 0.55, HEX_SIZE * 0.75,
+          0, HEX_SIZE * 0.95,
+          -HEX_SIZE * 0.55, HEX_SIZE * 0.75,
+          -HEX_SIZE * 0.75, -HEX_SIZE * 0.3,
+        ]);
+        g.fill({ color: crystalColor, alpha: 0.85 });
+        g.stroke({ color: 0xffffff, width: 2.5 });
+
+        // Inner core facets & highlights
+        g.poly([
+          0, -HEX_SIZE * 1.25,
+          HEX_SIZE * 0.4, -HEX_SIZE * 0.2,
+          0, HEX_SIZE * 0.65,
+          -HEX_SIZE * 0.4, -HEX_SIZE * 0.2,
+        ]);
+        g.fill({ color: 0xffffff, alpha: 0.4 });
+
+        // Glowing heart
+        g.circle(0, 0, HEX_SIZE * 0.25);
+        g.fill({ color: 0xffffff, alpha: 0.9 });
+        g.stroke({ color: crystalGlow, width: 2 });
+        break;
+      }
+      case 'Objective': {
+        // Ancient Runic Stone Obelisk at (0, 0)
+        // Stepped slate pedestal
+        g.rect(-HEX_SIZE * 0.7, HEX_SIZE * 0.35, HEX_SIZE * 1.4, HEX_SIZE * 0.4);
+        g.fill({ color: 0x0f172a });
+        g.stroke({ color: 0xd97706, width: 2 });
+
+        // Tapered ancient obelisk
+        g.poly([
+          -HEX_SIZE * 0.5, HEX_SIZE * 0.4,
+          HEX_SIZE * 0.5, HEX_SIZE * 0.4,
+          HEX_SIZE * 0.35, -HEX_SIZE * 0.9,
+          0, -HEX_SIZE * 1.35,
+          -HEX_SIZE * 0.35, -HEX_SIZE * 0.9,
+        ]);
+        g.fill({ color: 0x1e293b });
+        g.stroke({ color: 0xf59e0b, width: 2.5 });
+
+        // Amber mystical runes & carvings
+        // Central rune eye
+        g.circle(0, -HEX_SIZE * 0.15, HEX_SIZE * 0.22);
+        g.fill({ color: 0xf59e0b, alpha: 0.85 });
+        g.stroke({ color: 0xfef08a, width: 1.5 });
+        g.circle(0, -HEX_SIZE * 0.15, HEX_SIZE * 0.08);
+        g.fill({ color: 0xffffff });
+
+        // Runic diamond glyphs
+        g.poly([0, -HEX_SIZE * 0.65, 6, -HEX_SIZE * 0.5, 0, -HEX_SIZE * 0.35, -6, -HEX_SIZE * 0.5]);
+        g.fill({ color: 0xfbbf24, alpha: 0.9 });
+
+        g.poly([0, HEX_SIZE * 0.05, 5, HEX_SIZE * 0.18, 0, HEX_SIZE * 0.3, -5, HEX_SIZE * 0.18]);
+        g.fill({ color: 0xfbbf24, alpha: 0.9 });
+        break;
+      }
       default:
         g.circle(0, 0, HEX_SIZE * 0.4);
         g.fill({ color: 0x888888 });
@@ -389,16 +513,75 @@ export class HexRenderer {
 
     // Dedicated HP Bar Graphic
     const hpBar = new PIXI.Graphics();
-    this.renderHpBar(hpBar, unit.hp, unit.max_hp);
+    this.renderHpBar(hpBar, unit.hp, unit.max_hp, unit);
     container.addChild(hpBar);
     (container as any).hpBar = hpBar;
     (container as any).maxHp = unit.max_hp;
+    (container as any).unit = unit;
 
     return container;
   }
 
-  private renderHpBar(g: PIXI.Graphics, hp: number, maxHp: number): void {
+  private renderHpBar(g: PIXI.Graphics, hp: number, maxHp: number, unit?: UnitData): void {
     g.clear();
+    const kind = unit?.kind;
+
+    if (kind === 'Core') {
+      // Large segmented bar (10 segments of 70 HP each) displaying current and max HP
+      const hpWidth = HEX_SIZE * 2.2;
+      const hpHeight = 9;
+      const hpX = -hpWidth / 2;
+      const hpY = -HEX_SIZE * 1.75;
+      const segments = 10;
+      const segWidth = (hpWidth - (segments - 1) * 1.5) / segments;
+      const hpPerSeg = maxHp / segments;
+
+      // Dark background panel
+      g.rect(hpX - 3, hpY - 3, hpWidth + 6, hpHeight + 6);
+      g.fill({ color: 0x090b14, alpha: 0.95 });
+      g.stroke({ color: unit?.team === 0 ? 0x00d2ff : 0xff3366, width: 1.5 });
+
+      for (let i = 0; i < segments; i++) {
+        const segX = hpX + i * (segWidth + 1.5);
+        const segMinHp = i * hpPerSeg;
+
+        // Base slot
+        g.rect(segX, hpY, segWidth, hpHeight);
+        g.fill({ color: 0x1e293b });
+
+        if (hp > segMinHp) {
+          const segRatio = Math.min(1, Math.max(0, (hp - segMinHp) / hpPerSeg));
+          g.rect(segX, hpY, segWidth * segRatio, hpHeight);
+          const color = unit?.team === 0 ? 0x00d2ff : 0xff3366;
+          g.fill({ color });
+        }
+      }
+      return;
+    }
+
+    if (kind === 'Objective') {
+      // Ancient Vault Amber HP bar
+      const hpWidth = HEX_SIZE * 1.6;
+      const hpHeight = 7;
+      const hpX = -hpWidth / 2;
+      const hpY = -HEX_SIZE * 1.55;
+      const hpRatio = Math.max(0, Math.min(1, hp / maxHp));
+
+      g.rect(hpX - 2, hpY - 2, hpWidth + 4, hpHeight + 4);
+      g.fill({ color: 0x0f172a, alpha: 0.9 });
+      g.stroke({ color: 0xf59e0b, width: 1.5 });
+
+      g.rect(hpX, hpY, hpWidth, hpHeight);
+      g.fill({ color: 0x292524 });
+
+      if (hpRatio > 0) {
+        g.rect(hpX, hpY, hpWidth * hpRatio, hpHeight);
+        g.fill({ color: 0xf59e0b });
+      }
+      return;
+    }
+
+    // Standard Unit HP bar
     const hpWidth = HEX_SIZE * 0.9;
     const hpHeight = 5;
     const hpX = -hpWidth / 2;
@@ -418,8 +601,9 @@ export class HexRenderer {
     if (!sprite) return;
     const hpBar = (sprite as any).hpBar as PIXI.Graphics;
     const mHp = maxHp ?? (sprite as any).maxHp ?? 100;
+    const unit = (sprite as any).unit as UnitData | undefined;
     if (hpBar) {
-      this.renderHpBar(hpBar, hp, mHp);
+      this.renderHpBar(hpBar, hp, mHp, unit);
     }
   }
 

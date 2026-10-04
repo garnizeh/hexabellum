@@ -62,9 +62,35 @@ export type RewardReason =
   | 'SpawnerKill'
   | 'NeutralCamp';
 
+export type LifeStateDto =
+  | 'alive'
+  | 'dead_awaiting_respawn'
+  | 'permanently_removed';
+
+export interface BaseZoneDto {
+  team: number;
+  center: HexDto;
+  radius: number;
+}
+
+export interface ObjectiveStatusDto {
+  unit_id: number;
+  pos: HexDto;
+  hp: number;
+  max_hp: number;
+  is_alive: boolean;
+}
+
+export type ShopDisabledReasonDto =
+  | 'not_planning_phase'
+  | 'hero_dead'
+  | 'outside_base_zone'
+  | 'inventory_full'
+  | 'insufficient_gold';
+
 export interface UnitDto {
   id: number;
-  kind: string; // "Hero" | "Minion" | "Tower" | "Spawner" | "NeutralGuardian"
+  kind: string; // "Hero" | "Minion" | "Tower" | "Spawner" | "NeutralGuardian" | "Core" | "Objective"
   team: number;
   pos: HexDto;
   hp: number;
@@ -86,6 +112,9 @@ export interface UnitDto {
   xp?: number | null;
   level: number;
   items: ItemDefId[];
+  life_state?: LifeStateDto;
+  respawn_rounds?: number | null;
+  death_pos?: HexDto | null;
 }
 
 export interface MapDto {
@@ -142,6 +171,8 @@ export interface RosterEntryDto {
   max_hp: number;
   level: number;
   items: ItemDefId[];
+  life_state?: LifeStateDto | null;
+  respawn_rounds?: number | null;
 }
 
 export interface SnapshotDto {
@@ -163,6 +194,11 @@ export interface SnapshotDto {
   allied_hero_economy: HeroEconomyDto[];
   shop_catalog: ItemDto[];
   can_shop: boolean;
+  victory_mode?: string | null;
+  base_zones?: BaseZoneDto[];
+  shop_disabled_reason?: ShopDisabledReasonDto | null;
+  core_hp?: Record<number, [number, number]>;
+  objective?: ObjectiveStatusDto | null;
 }
 
 export type SpellTargetDto =
@@ -204,10 +240,35 @@ export type SanitizedGameEvent =
       new_attack_damage: number;
       new_max_energy: number;
     }
+  | { type: 'HeroDied'; unit_id: number; killed_by: number; respawn_rounds: number }
+  | { type: 'HeroRespawned'; unit_id: number; team: number; pos: HexDto }
+  | { type: 'BaseRegenerationApplied'; unit_id: number; team: number; amount: number; new_hp: number }
+  | {
+      type: 'ObjectiveDestroyed';
+      objective_id: number;
+      destroyer_team: number;
+      last_attacker_id: number;
+      gold_awarded_per_hero: number;
+      xp_awarded_per_hero: number;
+      affected_heroes: number[];
+    }
+  | { type: 'CoreDestroyed'; core_id: number; team: number; destroyed_by: number }
   | { type: 'UnitDied'; unit_id: number; unit_kind: string; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'RoundEnded'; round: number }
-  | { type: 'MatchEnded'; winner: number | null };
+  | { type: 'MatchEnded'; winner: number | null; reason?: VictoryReasonDto | null };
+
+export type VictoryReasonDto =
+  | {
+      type: 'CoreDestroyed';
+      destroyed_core_id: number;
+      destroyed_team: number;
+      destroyer_team: number;
+    }
+  | {
+      type: 'HeroElimination';
+      eliminated_team: number;
+    };
 
 export type ClientMessage =
   | { type: 'Hello'; player_id: string; reconnect_token?: string | null }
@@ -279,7 +340,14 @@ export type ProtocolErrorCode =
   | 'ItemAlreadyOwned'
   | 'NoSuchItem'
   | 'CannotShopInPhase'
-  | 'NotAHero';
+  | 'NotAHero'
+
+  // Phase 7 Macro Error Codes
+  | 'CannotShopOutsideBase'
+  | 'HeroDeadAwaitingRespawn'
+  | 'CannotOrderDeadHero'
+  | 'TargetUntargetable'
+  | 'CoreCannotBeRepaired';
 
 export type ServerMessage =
   | { type: 'HelloAck'; player_id: string; reconnect_token: string }
@@ -294,7 +362,13 @@ export type ServerMessage =
     }
   | { type: 'HeroSelected'; player_id: string; team: number; hero_def_id: HeroDefId }
   | { type: 'MatchStarting'; round: number; initial_snapshot: SnapshotDto }
-  | { type: 'RoundStarted'; round: number; deadline_unix_ms: number; snapshot: SnapshotDto }
+  | {
+      type: 'RoundStarted';
+      round: number;
+      deadline_unix_ms: number;
+      snapshot: SnapshotDto;
+      events?: SanitizedGameEvent[];
+    }
   | { type: 'OrdersAccepted'; round: number }
   | { type: 'OrderRejected'; round: number; error_code: ProtocolErrorCode; reason: string }
   | { type: 'EarlyResolutionTriggered'; round: number; resolution_unix_ms: number }
@@ -341,6 +415,7 @@ export type ServerMessage =
       snapshot: SnapshotDto;
       state_hash?: string | null;
       total_rounds?: number | null;
+      reason?: VictoryReasonDto | null;
     }
   | { type: 'OpponentStatus'; online: boolean }
   | { type: 'Pong'; client_time_ms: number; server_time_ms: number }

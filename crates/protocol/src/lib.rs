@@ -63,6 +63,44 @@ fn default_level_u32() -> u32 {
     1
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LifeStateDto {
+    Alive,
+    DeadAwaitingRespawn,
+    PermanentlyRemoved,
+}
+
+fn default_life_state_alive() -> LifeStateDto {
+    LifeStateDto::Alive
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BaseZoneDto {
+    pub team: TeamId,
+    pub center: HexDto,
+    pub radius: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObjectiveStatusDto {
+    pub unit_id: UnitId,
+    pub pos: HexDto,
+    pub hp: u32,
+    pub max_hp: u32,
+    pub is_alive: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShopDisabledReasonDto {
+    NotPlanningPhase,
+    HeroDead,
+    OutsideBaseZone,
+    InventoryFull,
+    InsufficientGold,
+}
+
 /// Axial hex coordinate DTO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct HexDto {
@@ -97,7 +135,7 @@ pub struct NeutralCampDto {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitDto {
     pub id: UnitId,
-    pub kind: String, // "Hero", "Minion", "Tower", "Spawner", "NeutralGuardian"
+    pub kind: String, // "Hero", "Minion", "Tower", "Spawner", "NeutralGuardian", "Core", "Objective"
     pub team: TeamId,
     pub pos: HexDto,
     pub hp: u32,
@@ -130,6 +168,12 @@ pub struct UnitDto {
     pub level: u32,
     #[serde(default)]
     pub items: Vec<ItemDefId>,
+    #[serde(default = "default_life_state_alive")]
+    pub life_state: LifeStateDto,
+    #[serde(default)]
+    pub respawn_rounds: Option<u32>,
+    #[serde(default)]
+    pub death_pos: Option<HexDto>,
 }
 
 /// Arena terrain layout.
@@ -197,6 +241,10 @@ pub struct RosterEntryDto {
     pub level: u32,
     #[serde(default)]
     pub items: Vec<ItemDefId>,
+    #[serde(default)]
+    pub life_state: Option<LifeStateDto>,
+    #[serde(default)]
+    pub respawn_rounds: Option<u32>,
 }
 
 /// Team-sanitized game state snapshot.
@@ -232,6 +280,16 @@ pub struct SnapshotDto {
     pub shop_catalog: Vec<ItemDto>,
     #[serde(default)]
     pub can_shop: bool,
+    #[serde(default)]
+    pub victory_mode: Option<String>,
+    #[serde(default)]
+    pub base_zones: Vec<BaseZoneDto>,
+    #[serde(default)]
+    pub shop_disabled_reason: Option<ShopDisabledReasonDto>,
+    #[serde(default, with = "team_map_serde")]
+    pub core_hp: HashMap<TeamId, (u32, u32)>,
+    #[serde(default)]
+    pub objective: Option<ObjectiveStatusDto>,
 }
 
 /// Spell target DTO.
@@ -269,6 +327,21 @@ pub struct OrderDto {
 }
 
 pub type UnitOrderDto = OrderDto;
+
+/// Victory reason declaration for match completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VictoryReasonDto {
+    CoreDestroyed {
+        destroyed_core_id: UnitId,
+        destroyed_team: TeamId,
+        destroyer_team: TeamId,
+    },
+    HeroElimination {
+        eliminated_team: TeamId,
+    },
+}
+
+pub type VictoryReason = VictoryReasonDto;
 
 /// Fog-sanitized event emitted during round resolution.
 /// Ensures coordinates and hidden unit activities in fog are masked or omitted.
@@ -347,6 +420,35 @@ pub enum SanitizedGameEvent {
     UnitWaited {
         unit_id: UnitId,
     },
+    HeroDied {
+        unit_id: UnitId,
+        killed_by: UnitId,
+        respawn_rounds: u32,
+    },
+    HeroRespawned {
+        unit_id: UnitId,
+        team: TeamId,
+        pos: HexDto,
+    },
+    BaseRegenerationApplied {
+        unit_id: UnitId,
+        team: TeamId,
+        amount: u32,
+        new_hp: u32,
+    },
+    ObjectiveDestroyed {
+        objective_id: UnitId,
+        destroyer_team: TeamId,
+        last_attacker_id: UnitId,
+        gold_awarded_per_hero: u32,
+        xp_awarded_per_hero: u32,
+        affected_heroes: Vec<UnitId>,
+    },
+    CoreDestroyed {
+        core_id: UnitId,
+        team: TeamId,
+        destroyed_by: UnitId,
+    },
     RewardGranted {
         unit_id: UnitId,
         gold: u32,
@@ -365,10 +467,13 @@ pub enum SanitizedGameEvent {
     },
     MatchEnded {
         winner: Option<TeamId>,
+        #[serde(default)]
+        reason: Option<VictoryReasonDto>,
     },
 }
 
 pub type GameEventDto = SanitizedGameEvent;
+pub type ServerEventDto = SanitizedGameEvent;
 
 /// Upstream messages sent from browser client to server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -490,6 +595,8 @@ pub enum ServerMessage {
         round: Round,
         deadline_unix_ms: u64,
         snapshot: SnapshotDto,
+        #[serde(default)]
+        events: Vec<SanitizedGameEvent>,
     },
     OrdersAccepted {
         round: Round,
@@ -523,6 +630,8 @@ pub enum ServerMessage {
         state_hash: Option<String>,
         #[serde(default)]
         total_rounds: Option<Round>,
+        #[serde(default)]
+        reason: Option<VictoryReasonDto>,
     },
     OpponentStatus {
         online: bool,
@@ -616,6 +725,13 @@ pub enum ProtocolErrorCode {
     NoSuchItem,
     CannotShopInPhase,
     NotAHero,
+
+    // Phase 7 Macro Error Codes
+    CannotShopOutsideBase,
+    HeroDeadAwaitingRespawn,
+    CannotOrderDeadHero,
+    TargetUntargetable,
+    CoreCannotBeRepaired,
 }
 
 pub use ProtocolErrorCode as ErrorCode;
@@ -680,6 +796,9 @@ mod tests {
                 xp: Some(0),
                 level: 1,
                 items: Vec::new(),
+                life_state: LifeStateDto::Alive,
+                respawn_rounds: None,
+                death_pos: None,
             }],
             visible_hexes: vec![HexDto::new(-4, -1)],
             controlled_units: vec![1],
@@ -693,12 +812,18 @@ mod tests {
             allied_hero_economy: Vec::new(),
             shop_catalog: Vec::new(),
             can_shop: true,
+            victory_mode: None,
+            base_zones: Vec::new(),
+            shop_disabled_reason: None,
+            core_hp: HashMap::new(),
+            objective: None,
         };
 
         let msg = ServerMessage::RoundStarted {
             round: 1,
             deadline_unix_ms: 1700000030000,
             snapshot: snap.clone(),
+            events: Vec::new(),
         };
 
         let json = serde_json::to_string(&msg).expect("Failed to serialize ServerMessage");
@@ -795,6 +920,165 @@ mod tests {
         assert!(json2.contains("\"hero_def_id\":\"berserker\""));
         let decoded2: ClientMessage = serde_json::from_str(&json2).unwrap();
         assert_eq!(select_hero_client, decoded2);
+    }
+
+    #[test]
+    fn test_phase7_macro_dto_serialization() {
+        let mut core_hp = HashMap::new();
+        core_hp.insert(0, (700, 700));
+        core_hp.insert(1, (650, 700));
+
+        let base_zones = vec![
+            BaseZoneDto {
+                team: 0,
+                center: HexDto::new(-7, 0),
+                radius: 2,
+            },
+            BaseZoneDto {
+                team: 1,
+                center: HexDto::new(7, 0),
+                radius: 2,
+            },
+        ];
+
+        let objective = ObjectiveStatusDto {
+            unit_id: 300,
+            pos: HexDto::new(0, 0),
+            hp: 250,
+            max_hp: 250,
+            is_alive: true,
+        };
+
+        let unit = UnitDto {
+            id: 1,
+            kind: "Hero".into(),
+            team: 0,
+            pos: HexDto::new(-6, -2),
+            hp: 100,
+            max_hp: 100,
+            ap: 2,
+            max_ap: 2,
+            energy: 0,
+            max_energy: 0,
+            initiative: 3,
+            attack_damage: 15,
+            attack_range: 1,
+            vision_range: 3,
+            is_stationary: false,
+            cooldowns: HashMap::new(),
+            statuses: Vec::new(),
+            lane_id: None,
+            hero_id: Some("vanguard".into()),
+            gold: Some(50),
+            xp: Some(0),
+            level: 1,
+            items: Vec::new(),
+            life_state: LifeStateDto::DeadAwaitingRespawn,
+            respawn_rounds: Some(3),
+            death_pos: Some(HexDto::new(-6, -2)),
+        };
+
+        let snap = SnapshotDto {
+            match_id: "phase7-test".into(),
+            round: 1,
+            phase: "Planning".into(),
+            winner: None,
+            map: MapDto::default(),
+            units: vec![unit],
+            visible_hexes: vec![HexDto::new(0, 0)],
+            controlled_units: vec![1],
+            deadline_unix_ms: Some(123456789),
+            state_hash: "blake3hash".into(),
+            neutral_camps: Vec::new(),
+            player_team: 0,
+            roster: vec![RosterEntryDto {
+                player_id: Some("p1".into()),
+                display_name: "Player 1".into(),
+                hero_def_id: "vanguard".into(),
+                unit_id: 1,
+                team: 0,
+                connected: true,
+                is_ai: false,
+                orders_submitted: false,
+                alive: false,
+                hp: Some(0),
+                max_hp: 100,
+                level: 1,
+                items: Vec::new(),
+                life_state: Some(LifeStateDto::DeadAwaitingRespawn),
+                respawn_rounds: Some(3),
+            }],
+            match_phase: Some(MatchPhaseDto::Planning),
+            controlled_hero_economy: None,
+            allied_hero_economy: Vec::new(),
+            shop_catalog: Vec::new(),
+            can_shop: false,
+            victory_mode: Some("CoreDestruction".into()),
+            base_zones,
+            shop_disabled_reason: Some(ShopDisabledReasonDto::HeroDead),
+            core_hp,
+            objective: Some(objective),
+        };
+
+        let json = serde_json::to_string(&snap).expect("Failed to serialize Phase 7 SnapshotDto");
+        assert!(json.contains("\"dead_awaiting_respawn\""));
+        assert!(json.contains("\"victory_mode\":\"CoreDestruction\""));
+        assert!(json.contains("\"shop_disabled_reason\":\"hero_dead\""));
+
+        let deserialized: SnapshotDto =
+            serde_json::from_str(&json).expect("Failed to deserialize Phase 7 SnapshotDto");
+        assert_eq!(snap, deserialized);
+    }
+
+    #[test]
+    fn test_phase7_events_and_errors_serialization() {
+        let events = vec![
+            SanitizedGameEvent::HeroDied {
+                unit_id: 1,
+                killed_by: 6,
+                respawn_rounds: 3,
+            },
+            SanitizedGameEvent::HeroRespawned {
+                unit_id: 1,
+                team: 0,
+                pos: HexDto::new(-7, 0),
+            },
+            SanitizedGameEvent::BaseRegenerationApplied {
+                unit_id: 1,
+                team: 0,
+                amount: 15,
+                new_hp: 100,
+            },
+            SanitizedGameEvent::ObjectiveDestroyed {
+                objective_id: 300,
+                destroyer_team: 0,
+                last_attacker_id: 1,
+                gold_awarded_per_hero: 50,
+                xp_awarded_per_hero: 40,
+                affected_heroes: vec![1, 2, 3],
+            },
+            SanitizedGameEvent::CoreDestroyed {
+                core_id: 501,
+                team: 1,
+                destroyed_by: 1,
+            },
+        ];
+
+        let json = serde_json::to_string(&events).expect("Failed to serialize Phase 7 events");
+        let decoded: Vec<SanitizedGameEvent> =
+            serde_json::from_str(&json).expect("Failed to deserialize Phase 7 events");
+        assert_eq!(events, decoded);
+
+        let errors = vec![
+            ProtocolErrorCode::CannotShopOutsideBase,
+            ProtocolErrorCode::HeroDeadAwaitingRespawn,
+            ProtocolErrorCode::CannotOrderDeadHero,
+            ProtocolErrorCode::TargetUntargetable,
+            ProtocolErrorCode::CoreCannotBeRepaired,
+        ];
+        let err_json = serde_json::to_string(&errors).unwrap();
+        let decoded_errs: Vec<ProtocolErrorCode> = serde_json::from_str(&err_json).unwrap();
+        assert_eq!(errors, decoded_errs);
     }
 }
 

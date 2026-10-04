@@ -79,7 +79,14 @@ impl MinionAI {
 
     /// Multi-tier target priority: Minions > Heroes > Structures, with (PriorityClass, dist, hp, unit_id) tie-breaking.
     pub fn select_target<'a>(unit: &Unit, enemies: &[&'a Unit]) -> Option<&'a Unit> {
-        let mut sorted: Vec<&'a Unit> = enemies.to_vec();
+        let mut sorted: Vec<&'a Unit> = enemies
+            .iter()
+            .copied()
+            .filter(|e| {
+                crate::priority::evaluate_minion_target_priority(e)
+                    != crate::priority::PriorityClass::Excluded
+            })
+            .collect();
         sorted.sort_by(|a, b| {
             let prio_a = crate::priority::evaluate_minion_target_priority(a);
             let prio_b = crate::priority::evaluate_minion_target_priority(b);

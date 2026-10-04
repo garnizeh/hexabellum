@@ -21,16 +21,26 @@ pub enum UnitKind {
     Spawner,
     #[serde(alias = "Neutral")]
     NeutralGuardian,
+    Core,
+    Objective,
 }
 
 impl UnitKind {
     #[inline]
     pub fn is_stationary(&self) -> bool {
-        matches!(self, UnitKind::Tower | UnitKind::Spawner)
+        self.is_structure()
     }
 
     #[inline]
     pub fn is_structure(&self) -> bool {
+        matches!(
+            self,
+            UnitKind::Tower | UnitKind::Spawner | UnitKind::Core | UnitKind::Objective
+        )
+    }
+
+    #[inline]
+    pub fn is_repairable(&self) -> bool {
         matches!(self, UnitKind::Tower | UnitKind::Spawner)
     }
 }
@@ -43,8 +53,30 @@ impl std::fmt::Display for UnitKind {
             UnitKind::Tower => write!(f, "Tower"),
             UnitKind::Spawner => write!(f, "Spawner"),
             UnitKind::NeutralGuardian => write!(f, "NeutralGuardian"),
+            UnitKind::Core => write!(f, "Core"),
+            UnitKind::Objective => write!(f, "Objective"),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LifeState {
+    Alive,
+    DeadAwaitingRespawn {
+        rounds_left: u32,
+        death_pos: HexCoord,
+    },
+    PermanentlyRemoved,
+}
+
+impl Default for LifeState {
+    fn default() -> Self {
+        LifeState::Alive
+    }
+}
+
+fn default_life_state() -> LifeState {
+    LifeState::Alive
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +151,14 @@ pub struct Unit {
     pub level: u32,
     #[serde(default)]
     pub items: Vec<String>,
+
+    // Phase 7 Macro Lifecycle fields
+    #[serde(default = "default_life_state")]
+    pub life_state: LifeState,
+    #[serde(default)]
+    pub respawn_rounds: Option<u32>,
+    #[serde(default)]
+    pub death_pos: Option<HexCoord>,
 }
 
 fn default_unit_level() -> u32 {
@@ -164,6 +204,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -202,6 +245,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -240,6 +286,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -278,6 +327,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -316,6 +368,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -354,6 +409,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -389,6 +447,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -424,6 +485,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -459,6 +523,9 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
@@ -494,17 +561,101 @@ impl Unit {
             xp: 0,
             level: 1,
             items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
+        }
+    }
+
+    /// Factory method for the team Core structure.
+    pub fn new_core(id: UnitId, team: TeamId, pos: HexCoord, hp: u32, vision: u32) -> Self {
+        Self {
+            id,
+            kind: UnitKind::Core,
+            team,
+            pos,
+            hp,
+            max_hp: hp,
+            ap: 0,
+            max_ap: 0,
+            initiative: 0,
+            attack_damage: 0,
+            attack_range: 0,
+            vision_range: vision,
+            energy: 0,
+            max_energy: 0,
+            energy_regen: 0,
+            cooldowns: HashMap::new(),
+            statuses: Vec::new(),
+            hero_id: None,
+            lane_id: None,
+            waypoint_index: None,
+            aggro_range: 0,
+            last_attacker: None,
+            spawn_interval: None,
+            spawn_counter: 0,
+            lane_direction: LaneDirection::None,
+            gold: 0,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
+        }
+    }
+
+    /// Factory method for the neutral Objective Vault.
+    pub fn new_vault(id: UnitId, pos: HexCoord, hp: u32) -> Self {
+        Self {
+            id,
+            kind: UnitKind::Objective,
+            team: TEAM_NEUTRAL,
+            pos,
+            hp,
+            max_hp: hp,
+            ap: 0,
+            max_ap: 0,
+            initiative: 0,
+            attack_damage: 0,
+            attack_range: 0,
+            vision_range: 2,
+            energy: 0,
+            max_energy: 0,
+            energy_regen: 0,
+            cooldowns: HashMap::new(),
+            statuses: Vec::new(),
+            hero_id: None,
+            lane_id: None,
+            waypoint_index: None,
+            aggro_range: 0,
+            last_attacker: None,
+            spawn_interval: None,
+            spawn_counter: 0,
+            lane_direction: LaneDirection::None,
+            gold: 0,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
+            life_state: LifeState::Alive,
+            respawn_rounds: None,
+            death_pos: None,
         }
     }
 
     #[inline]
     pub fn is_alive(&self) -> bool {
-        self.hp > 0
+        matches!(self.life_state, LifeState::Alive) && self.hp > 0
+    }
+
+    #[inline]
+    pub fn is_dead_awaiting_respawn(&self) -> bool {
+        matches!(self.life_state, LifeState::DeadAwaitingRespawn { .. })
     }
 
     #[inline]
     pub fn is_structure(&self) -> bool {
-        matches!(self.kind, UnitKind::Tower | UnitKind::Spawner)
+        self.kind.is_structure()
     }
 
     #[inline]

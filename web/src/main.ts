@@ -2,6 +2,7 @@ import * as PIXI from 'pixi.js';
 import './ui/tutorial.css';
 import './ui/phase5.css';
 import './ui/phase6.css';
+import './ui/phase7.css';
 import {
   initGame,
   getPlayerState,
@@ -142,17 +143,36 @@ async function main() {
       const fog = snap.visible_hexes;
 
       renderer.drawMap(hexes, obstacles);
+      if (snap.base_zones) {
+        renderer.drawBaseZones(snap.base_zones);
+      }
       renderer.drawUnits(state);
       renderer.drawFog(fog, hexes);
 
       // Auto-select player's assigned hero in 5v5 if none selected
       const primaryId = session.getPrimaryControlledUnitId();
-      if (primaryId && input.getSelectedUnitId() === null && state.units[primaryId]) {
+      if (
+        primaryId &&
+        input.getSelectedUnitId() === null &&
+        state.units[primaryId] &&
+        state.units[primaryId].hp > 0 &&
+        state.units[primaryId].life_state !== 'dead_awaiting_respawn'
+      ) {
         input.selectUnit(primaryId);
       }
 
       abilityDock.update(input.getSelectedUnit());
       hud.update5v5Rosters(snap, session.getNet().getPlayerId());
+      hud.updateMacroBar(snap);
+
+      // Hero defeated respawn banner check
+      const isDead = session.isHeroDead();
+      if (isDead) {
+        const rounds = session.getHeroRespawnRounds() ?? 3;
+        hud.setHeroDefeated(true, rounds);
+      } else {
+        hud.setHeroDefeated(false, 0);
+      }
 
       if (roundEl) roundEl.textContent = `Round ${state.round}`;
 
@@ -162,11 +182,11 @@ async function main() {
         const isDraw = state.winner === null;
         let resultText = '';
         if (won) {
-          resultText = 'VICTORY — BASE SECURED';
+          resultText = 'VICTORY — ENEMY CORE OBLITERATED';
         } else if (isDraw) {
-          resultText = 'DRAW — MUTUAL ANNIHILATION';
+          resultText = 'DRAW — MUTUAL CORE DESTRUCTION';
         } else {
-          resultText = 'DEFEAT — STRUCTURE DESTROYED';
+          resultText = 'DEFEAT — ALLIED CORE COLLAPSED';
         }
 
         if (statusEl) {
@@ -177,11 +197,29 @@ async function main() {
         if (endTurnBtn) endTurnBtn.disabled = true;
         if (restartBtn) restartBtn.style.display = 'inline-block';
 
-        if (gameOverModal && gameOverTitle) {
-          gameOverTitle.textContent = won ? 'VICTORY' : isDraw ? 'DRAW' : 'DEFEAT';
-          gameOverTitle.className = won ? 'victory' : isDraw ? '' : 'defeat';
-          gameOverModal.style.display = 'flex';
-        }
+        const myHero = session.getMyHero();
+        const controlledEco = session.getControlledHeroEconomy();
+        const coreHp = snap.core_hp;
+        const myCoreHp = coreHp ? coreHp[team]?.[0] ?? 0 : 0;
+        const enemyTeam = team === 0 ? 1 : 0;
+        const enemyCoreHp = coreHp ? coreHp[enemyTeam]?.[0] ?? 0 : 0;
+        const vaultSecured = snap.objective ? !snap.objective.is_alive : false;
+
+        hud.showVictoryCelebrationModal({
+          won,
+          isDraw,
+          round: state.round,
+          stats: {
+            alliedCoreHp: myCoreHp,
+            enemyCoreHp,
+            vaultSecured,
+            totalGold: controlledEco?.gold ?? myHero?.gold ?? 50,
+            items: controlledEco?.items ?? myHero?.items ?? [],
+          },
+          onReturnToLobby: () => {
+            window.location.reload();
+          },
+        });
       }
     } else if (wasmLoaded) {
       const state = getPlayerState(0);
@@ -220,10 +258,20 @@ async function main() {
     }
   };
 
-  let pendingRoundStarted: { round: number; deadlineUnixMs: number; snapshot: SnapshotDto } | null = null;
+  let pendingRoundStarted: {
+    round: number;
+    deadlineUnixMs: number;
+    snapshot: SnapshotDto;
+    events?: SanitizedGameEvent[];
+  } | null = null;
   let pendingMatchEnded: { winner: number | null; snapshot: SnapshotDto } | null = null;
 
-  const applyRoundStarted = (round: number, deadlineUnixMs: number, _snapshot: SnapshotDto) => {
+  const applyRoundStarted = (
+    round: number,
+    deadlineUnixMs: number,
+    _snapshot: SnapshotDto,
+    events?: SanitizedGameEvent[]
+  ) => {
     isOnline = true;
     lobbyScreen.hide();
     heroSelectScreen.hide();
@@ -233,6 +281,10 @@ async function main() {
     shopDrawer.update();
     renderer.setPlayerTeam(session.getCurrentTeam());
     renderCurrentState();
+
+    if (events && events.length > 0) {
+      animator.playEvents(events);
+    }
 
     if (statusEl) {
       statusEl.textContent = 'Planning Phase — Submit orders before timer expires';
@@ -307,7 +359,7 @@ async function main() {
         hud.showToast(`Player ${playerId.slice(0, 6)} reconnected! Control restored.`);
       }
     },
-    onRoundStarted: (round, deadlineUnixMs, snapshot) => {
+    onRoundStarted: (round, deadlineUnixMs, snapshot, events) => {
       isOnline = true;
       lobbyScreen.hide();
       heroSelectScreen.hide();
@@ -316,7 +368,7 @@ async function main() {
       hud.setOpponentStatus(session.getIsPvAI() ? 'ai' : 'ready');
 
       if (input.getIsResolving()) {
-        pendingRoundStarted = { round, deadlineUnixMs, snapshot };
+        pendingRoundStarted = { round, deadlineUnixMs, snapshot, events };
         timer.startWithDeadline(deadlineUnixMs, () => {
           if (endTurnBtn) endTurnBtn.disabled = true;
           if (statusEl) {
@@ -325,7 +377,7 @@ async function main() {
           }
         });
       } else {
-        applyRoundStarted(round, deadlineUnixMs, snapshot);
+        applyRoundStarted(round, deadlineUnixMs, snapshot, events);
       }
     },
     onPurchaseResolved: (_unitId, itemId, success, _goldRemaining, error) => {
@@ -385,6 +437,14 @@ async function main() {
           }
         } else if (ev.type === 'LevelUp') {
           hud.showToast(`⭐ LEVEL UP! Unit #${ev.unit_id} reached Level ${ev.new_level}!`);
+        } else if (ev.type === 'HeroDied') {
+          hud.showToast(`💀 Allied Hero fallen! Respawning at base in ${ev.respawn_rounds} rounds.`);
+        } else if (ev.type === 'HeroRespawned') {
+          hud.showToast(`✨ Hero respawned at Allied Base Sanctuary!`);
+        } else if (ev.type === 'ObjectiveDestroyed') {
+          hud.showToast(`🏛️ ANCIENT VAULT SECURED! Team +50G, +40XP & +5 Attack Damage buff granted!`);
+        } else if (ev.type === 'CoreDestroyed') {
+          hud.showToast(`💥 SOVEREIGN CORE OBLITERATED!`);
         }
       }
 
@@ -394,9 +454,9 @@ async function main() {
           renderCurrentState();
           pendingMatchEnded = null;
         } else if (pendingRoundStarted) {
-          const { round: r, deadlineUnixMs, snapshot: snap } = pendingRoundStarted;
+          const { round: r, deadlineUnixMs, snapshot: snap, events: evs } = pendingRoundStarted;
           pendingRoundStarted = null;
-          applyRoundStarted(r, deadlineUnixMs, snap);
+          applyRoundStarted(r, deadlineUnixMs, snap, evs);
         } else {
           renderCurrentState();
         }
