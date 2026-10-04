@@ -24,6 +24,7 @@ import { AbilityDock } from './ui/AbilityDock';
 import { LobbyScreen } from './ui/LobbyScreen';
 import { HeroSelectScreen } from './ui/HeroSelectScreen';
 import { ShopDrawer } from './ui/ShopDrawer';
+import { TacticalMinimap } from './ui/Minimap';
 
 async function main() {
   // Attempt local WASM init (optional, retained for local offline dev)
@@ -88,6 +89,20 @@ async function main() {
   const shopDrawer = new ShopDrawer();
   shopDrawer.setSession(session);
 
+  const minimap = new TacticalMinimap();
+  minimap.setRenderer(renderer);
+  minimap.setOnPing((ping) => {
+    hud.showToast(`Tactical Ping: ${ping.label}`);
+  });
+
+  input.setOnSkipResolution(() => {
+    animator.skipToEnd();
+  });
+
+  app.ticker.add(() => {
+    minimap.render();
+  });
+
   abilityDock.setOnOpenShop(() => {
     shopDrawer.toggle();
   });
@@ -148,6 +163,7 @@ async function main() {
       }
       renderer.drawUnits(state);
       renderer.drawFog(fog, hexes);
+      minimap.update(snap);
 
       // Auto-select player's assigned hero in 5v5 if none selected
       const primaryId = session.getPrimaryControlledUnitId();
@@ -448,7 +464,24 @@ async function main() {
         }
       }
 
+      // Show resolution playback controls (1.0x/2.0x toggle and Skip button - docs/ui-ux.md §4.14, §8.2)
+      const updatePlaybackUI = () => {
+        abilityDock.showPlaybackControls(
+          animator.getPlaybackSpeed(),
+          () => {
+            const nextSpeed = animator.getPlaybackSpeed() === 1.0 ? 2.0 : 1.0;
+            animator.setPlaybackSpeed(nextSpeed);
+            updatePlaybackUI();
+          },
+          () => {
+            animator.skipToEnd();
+          }
+        );
+      };
+      updatePlaybackUI();
+
       input.handleServerResolved(events, animator, () => {
+        abilityDock.hidePlaybackControls();
         if (pendingMatchEnded) {
           timer.stop();
           renderCurrentState();
@@ -495,7 +528,23 @@ async function main() {
     } else {
       if (statusEl) statusEl.textContent = 'Orders submitted. Awaiting resolution...';
       timer.stop();
+      const updatePlaybackUI = () => {
+        abilityDock.showPlaybackControls(
+          animator.getPlaybackSpeed(),
+          () => {
+            const nextSpeed = animator.getPlaybackSpeed() === 1.0 ? 2.0 : 1.0;
+            animator.setPlaybackSpeed(nextSpeed);
+            updatePlaybackUI();
+          },
+          () => {
+            animator.skipToEnd();
+          }
+        );
+      };
+      updatePlaybackUI();
+
       input.endTurnWithAnimation(animator, () => {
+        abilityDock.hidePlaybackControls();
         renderCurrentState();
       });
     }

@@ -201,7 +201,7 @@ export class HeroSelectScreen {
           <div>
             <h2 style="font-size:24px; font-weight:900; color:#00d2ff; letter-spacing:0.8px;">HERO DRAFT — SELECT YOUR AVATAR</h2>
             <div style="font-size:13px; color:#94a3b8; margin-top:2px;">
-              Team ${myTeam === 0 ? 'Blue Coalition' : 'Red Syndicate'} · Unique picks enforced per team
+              Team ${myTeam === 0 ? 'Azure (Order of the Dawn)' : 'Crimson (Sovereign Pyre)'} · Unique picks enforced per team
             </div>
           </div>
           <div class="hb-draft-timer-box">

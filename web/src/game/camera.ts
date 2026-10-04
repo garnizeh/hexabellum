@@ -180,16 +180,29 @@ export class CameraController {
 
   private setupKeyboardPan(): void {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (targetTag === 'input' || targetTag === 'textarea') return;
 
-      // Spacebar: Center camera on player's controlled hero
-      if (e.code === 'Space') {
+      // [C]: Center camera on player's controlled hero (aligned with docs/ui-ux.md §4.6 & §7.4)
+      if (e.key === 'c' || e.key === 'C') {
         const handled = this.centerOnHero();
         if (handled) {
           e.preventDefault();
           return;
         }
+      }
+
+      // [+] and [-]: Zoom Viewport In / Out (docs/ui-ux.md §7.4)
+      if (e.key === '+' || e.key === '=') {
+        e.preventDefault();
+        this.setZoom(this.zoom * 1.15);
+        return;
+      }
+      if (e.key === '-' || e.key === '_') {
+        e.preventDefault();
+        this.setZoom(this.zoom * 0.85);
+        return;
       }
 
       const key = e.key.toLowerCase();
