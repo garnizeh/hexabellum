@@ -1,17 +1,21 @@
 pub mod ability;
 pub mod ai;
 pub mod controller;
+pub mod economy;
 pub mod event;
 pub mod fog;
 pub mod hero_defs;
 pub mod hex;
+pub mod items;
 pub mod lane;
 pub mod minion_ai;
 pub mod neutral;
 pub mod orders;
 pub mod priority;
+pub mod progression;
 pub mod repair;
 pub mod session;
+pub mod shop;
 pub mod spawner;
 pub mod state;
 pub mod status;
@@ -22,8 +26,12 @@ pub mod unit;
 pub mod vision;
 
 pub use controller::{Controller, ControllerMap, PlayerId};
+pub use economy::EconomyConfig;
 pub use hero_defs::{HeroDef, HeroDefId};
+pub use items::{get_canonical_item_catalog, get_item_def, ItemDef, ItemDefId, StatKind, StatModifier};
+pub use progression::{grant_xp, xp_threshold, MAX_LEVEL};
 pub use session::{build_sanitized_snapshot, BattleConfig, BattleSession};
+pub use shop::execute_purchase;
 pub use tutorial::*;
 
 use crate::hex::{HexCoord, HexMap};

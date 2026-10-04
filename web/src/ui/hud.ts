@@ -180,17 +180,29 @@ export class HudController {
       const aiBadge = ally.is_ai ? '<span style="color:#38bdf8; font-size:10px;">[AI]</span>' : '';
       const dcBadge = !ally.connected && !ally.is_ai ? '<span style="color:#ff1744; font-size:10px;">[DC]</span>' : '';
 
+      const level = ally.level ?? 1;
+      const pipsHtml = [0, 1, 2]
+        .map((idx) => {
+          const hasItem = ally.items && ally.items.length > idx;
+          return `<span class="hb-roster-item-pip ${hasItem ? 'filled' : ''}" title="${hasItem ? ally.items[idx] : 'Empty'}"></span>`;
+        })
+        .join('');
+
       allyHtml += `
         <div class="hb-roster-card ${isSelf || isControlled ? 'self' : ''}" data-unit-id="${ally.unit_id}">
           <div class="hb-roster-card-top">
             <span class="hb-roster-hero-name">
               <span>${this.getHeroIcon(ally.hero_def_id)}</span>
               <span>${ally.hero_def_id.toUpperCase()}</span>
+              <span class="hb-roster-lvl-tag">L${level}</span>
               ${isSelf ? '<span style="color:#00e676; font-size:10px;">[YOU]</span>' : ''}
               ${aiBadge}
               ${dcBadge}
             </span>
-            <span class="hb-roster-status-pip ${statusPipClass}">${statusPipText}</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <div class="hb-roster-item-pips">${pipsHtml}</div>
+              <span class="hb-roster-status-pip ${statusPipClass}">${statusPipText}</span>
+            </div>
           </div>
           <div class="hb-roster-hp-bar">
             <div class="hb-roster-hp-fill" style="width: ${hpRatio * 100}%; background: ${hpColor};"></div>
@@ -223,6 +235,13 @@ export class HudController {
       const isVisibleInFog = enemy.hp !== null && enemy.hp !== undefined;
       const currentHp = isVisibleInFog ? enemy.hp! : enemy.max_hp;
       const hpRatio = isVisibleInFog ? Math.max(0, Math.min(1, currentHp / enemy.max_hp)) : 1;
+      const enemyLevel = enemy.level ?? 1;
+      const enemyPipsHtml = [0, 1, 2]
+        .map((idx) => {
+          const hasItem = isVisibleInFog && enemy.items && enemy.items.length > idx;
+          return `<span class="hb-roster-item-pip ${hasItem ? 'filled' : ''}" title="${hasItem ? enemy.items[idx] : 'Empty'}"></span>`;
+        })
+        .join('');
 
       enemyHtml += `
         <div class="hb-enemy-card ${isVisibleInFog ? '' : 'in-fog'}">
@@ -230,8 +249,12 @@ export class HudController {
             <span class="hb-enemy-hero-name">
               <span>${this.getHeroIcon(enemy.hero_def_id)}</span>
               <span>${enemy.hero_def_id.toUpperCase()}</span>
+              <span class="hb-roster-lvl-tag">${isVisibleInFog ? `L${enemyLevel}` : 'L?'}</span>
             </span>
-            <span class="hb-enemy-fog-tag">${isVisibleInFog ? '👀 SIGHTED' : '🌫️ IN FOG'}</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              ${isVisibleInFog ? `<div class="hb-roster-item-pips">${enemyPipsHtml}</div>` : ''}
+              <span class="hb-enemy-fog-tag">${isVisibleInFog ? '👀 SIGHTED' : '🌫️ IN FOG'}</span>
+            </div>
           </div>
           <div class="hb-roster-hp-bar">
             <div class="hb-roster-hp-fill" style="width: ${isVisibleInFog ? hpRatio * 100 : 100}%; background: ${isVisibleInFog ? '#ff3366' : '#475569'};"></div>

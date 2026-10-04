@@ -9,7 +9,7 @@ use crate::repair::execute_repair;
 use crate::spawner::SpawnerSystem;
 use crate::state::{GameState, Phase};
 use crate::status::StatusInstance;
-use crate::unit::{Unit, UnitId, UnitKind, ATTACK_AP_COST};
+use crate::unit::{TeamId, Unit, UnitId, UnitKind, ATTACK_AP_COST};
 use crate::vision::{compute_team_los_fog, has_line_of_sight};
 use std::collections::{HashMap, HashSet};
 
@@ -443,11 +443,14 @@ impl TurnProcessor {
 
         if target_remaining_hp == 0 && !dead_ids.contains(&target_id) {
             dead_ids.insert(target_id);
+            let target_team = units[target_idx].team;
             events.push(GameEvent::UnitDied {
                 unit_id: target_id,
                 unit_kind: target_kind,
                 killed_by: attacker_id,
             });
+
+            handle_kill_rewards_in_slice(units, target_kind, target_team, attacker_id, events);
 
             if target_kind == UnitKind::NeutralGuardian {
                 for camp in camps.iter_mut() {
@@ -523,11 +526,14 @@ impl TurnProcessor {
 
                                 if other_hp == 0 && !dead_ids.contains(&other_id) {
                                     dead_ids.insert(other_id);
+                                    let other_team = units[i].team;
                                     events.push(GameEvent::UnitDied {
                                         unit_id: other_id,
                                         unit_kind: other_kind,
                                         killed_by: caster_id,
                                     });
+
+                                    handle_kill_rewards_in_slice(units, other_kind, other_team, caster_id, events);
 
                                     if other_kind == UnitKind::NeutralGuardian {
                                         for camp in camps.iter_mut() {
@@ -623,11 +629,14 @@ impl TurnProcessor {
 
                             if target_hp == 0 && !dead_ids.contains(&target_id) {
                                 dead_ids.insert(target_id);
+                                let target_team = units[target_idx].team;
                                 events.push(GameEvent::UnitDied {
                                     unit_id: target_id,
                                     unit_kind: target_kind,
                                     killed_by: caster_id,
                                 });
+
+                                handle_kill_rewards_in_slice(units, target_kind, target_team, caster_id, events);
 
                                 if target_kind == UnitKind::NeutralGuardian {
                                     for camp in camps.iter_mut() {
@@ -1116,11 +1125,11 @@ impl TurnProcessor {
         let attacker_mut = state.get_unit_mut(attacker_id).unwrap();
         attacker_mut.spend_ap(ATTACK_AP_COST);
 
-        let (target_remaining_hp, target_dead, target_kind) = {
+        let (target_remaining_hp, target_dead, target_kind, target_team) = {
             let target_mut = state.get_unit_mut(target_id).unwrap();
             target_mut.hp = target_mut.hp.saturating_sub(damage);
             target_mut.last_attacker = Some(attacker_id);
-            (target_mut.hp, target_mut.hp == 0, target_mut.kind)
+            (target_mut.hp, target_mut.hp == 0, target_mut.kind, target_mut.team)
         };
 
         if is_tower {
@@ -1148,6 +1157,8 @@ impl TurnProcessor {
                 unit_kind: target_kind,
                 killed_by: attacker_id,
             });
+
+            handle_kill_rewards_in_state(state, target_kind, target_team, attacker_id, &mut events);
 
             if target_kind == UnitKind::NeutralGuardian {
                 for camp in state.neutral_camps.iter_mut() {
@@ -1222,11 +1233,11 @@ impl TurnProcessor {
                             .collect();
 
                         for other_id in candidate_ids {
-                            let (dead, kind) = {
+                            let (dead, kind, other_team) = {
                                 let other = state.get_unit_mut(other_id).unwrap();
                                 other.hp = other.hp.saturating_sub(effect.amount);
                                 other.last_attacker = Some(caster_id);
-                                (other.hp == 0, other.kind)
+                                (other.hp == 0, other.kind, other.team)
                             };
 
                             let other_hp = state.get_unit(other_id).map(|u| u.hp).unwrap_or(0);
@@ -1244,6 +1255,8 @@ impl TurnProcessor {
                                     unit_kind: kind,
                                     killed_by: caster_id,
                                 });
+
+                                handle_kill_rewards_in_state(state, kind, other_team, caster_id, events);
 
                                 if kind == UnitKind::NeutralGuardian {
                                     for camp in state.neutral_camps.iter_mut() {
@@ -1341,6 +1354,8 @@ impl TurnProcessor {
                                     killed_by: caster_id,
                                 });
 
+                                handle_kill_rewards_in_state(state, target_kind, target_team, caster_id, events);
+
                                 if target_kind == UnitKind::NeutralGuardian {
                                     for camp in state.neutral_camps.iter_mut() {
                                         if camp.guardian_id == *target_id {
@@ -1427,6 +1442,116 @@ impl TurnProcessor {
             amount,
             target_hp_remaining: target_mut.hp,
         });
+    }
+}
+
+pub fn handle_kill_rewards_in_state(
+    state: &mut GameState,
+    victim_kind: UnitKind,
+    victim_team: TeamId,
+    killer_id: UnitId,
+    events: &mut Vec<GameEvent>,
+) {
+    if victim_kind == UnitKind::Tower || victim_kind == UnitKind::Spawner {
+        let beneficiary_team = 1 - victim_team;
+        let (gold, xp, reason) = if victim_kind == UnitKind::Tower {
+            (25, 20, hexabellum_protocol::RewardReason::TowerDestroyed)
+        } else {
+            (30, 25, hexabellum_protocol::RewardReason::SpawnerDestroyed)
+        };
+
+        let mut living_allies: Vec<UnitId> = state
+            .units
+            .values()
+            .filter(|u| u.team == beneficiary_team && u.is_hero() && u.is_alive())
+            .map(|u| u.id)
+            .collect();
+        living_allies.sort_unstable();
+
+        for ally_id in living_allies {
+            if let Some(hero) = state.units.get_mut(&ally_id) {
+                hero.gold += gold;
+                crate::progression::grant_xp(hero, xp, events);
+                events.push(GameEvent::RewardGranted {
+                    unit_id: ally_id,
+                    gold,
+                    xp,
+                    reason,
+                });
+            }
+        }
+    }
+
+    let (gold, xp, reason) = match victim_kind {
+        UnitKind::Hero => (30, 30, hexabellum_protocol::RewardReason::HeroKill),
+        UnitKind::Minion => (10, 10, hexabellum_protocol::RewardReason::MinionKill),
+        UnitKind::NeutralGuardian => (40, 25, hexabellum_protocol::RewardReason::NeutralKill),
+        _ => (0, 0, hexabellum_protocol::RewardReason::PassiveIncome),
+    };
+
+    if (gold > 0 || xp > 0) && let Some(killer) = state.units.get_mut(&killer_id) {
+        if killer.is_alive() && killer.is_hero() {
+            killer.gold += gold;
+            crate::progression::grant_xp(killer, xp, events);
+            events.push(GameEvent::RewardGranted {
+                unit_id: killer.id,
+                gold,
+                xp,
+                reason,
+            });
+        }
+    }
+}
+
+pub fn handle_kill_rewards_in_slice(
+    units: &mut [Unit],
+    victim_kind: UnitKind,
+    victim_team: TeamId,
+    killer_id: UnitId,
+    events: &mut Vec<GameEvent>,
+) {
+    if victim_kind == UnitKind::Tower || victim_kind == UnitKind::Spawner {
+        let beneficiary_team = 1 - victim_team;
+        let (gold, xp, reason) = if victim_kind == UnitKind::Tower {
+            (25, 20, hexabellum_protocol::RewardReason::TowerDestroyed)
+        } else {
+            (30, 25, hexabellum_protocol::RewardReason::SpawnerDestroyed)
+        };
+
+        for i in 0..units.len() {
+            if units[i].team == beneficiary_team && units[i].is_hero() && units[i].is_alive() {
+                units[i].gold += gold;
+                let uid = units[i].id;
+                crate::progression::grant_xp(&mut units[i], xp, events);
+                events.push(GameEvent::RewardGranted {
+                    unit_id: uid,
+                    gold,
+                    xp,
+                    reason,
+                });
+            }
+        }
+    }
+
+    let (gold, xp, reason) = match victim_kind {
+        UnitKind::Hero => (30, 30, hexabellum_protocol::RewardReason::HeroKill),
+        UnitKind::Minion => (10, 10, hexabellum_protocol::RewardReason::MinionKill),
+        UnitKind::NeutralGuardian => (40, 25, hexabellum_protocol::RewardReason::NeutralKill),
+        _ => (0, 0, hexabellum_protocol::RewardReason::PassiveIncome),
+    };
+
+    if (gold > 0 || xp > 0) && let Some(killer) = units.iter_mut().find(|u| u.id == killer_id) {
+        if killer.is_alive() && killer.is_hero() {
+            killer.gold += gold;
+            let uid = killer.id;
+            crate::progression::grant_xp(killer, xp, events);
+            events.push(GameEvent::RewardGranted {
+                unit_id: uid,
+                gold,
+                xp,
+                reason,
+            });
+        }
     }
 }
 

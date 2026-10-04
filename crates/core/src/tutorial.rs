@@ -107,6 +107,10 @@ impl TutorialScenarioRunner {
                 spawn_interval: None,
                 spawn_counter: 0,
                 lane_direction: LaneDirection::None,
+                gold: 50,
+                xp: 0,
+                level: 1,
+                items: Vec::new(),
             };
             if preset.is_invulnerable {
                 unit.hp = preset.hp.max(100);

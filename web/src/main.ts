@@ -1,6 +1,7 @@
 import * as PIXI from 'pixi.js';
 import './ui/tutorial.css';
 import './ui/phase5.css';
+import './ui/phase6.css';
 import {
   initGame,
   getPlayerState,
@@ -21,6 +22,7 @@ import { ModeSelectModal } from './ui/ModeSelectModal';
 import { AbilityDock } from './ui/AbilityDock';
 import { LobbyScreen } from './ui/LobbyScreen';
 import { HeroSelectScreen } from './ui/HeroSelectScreen';
+import { ShopDrawer } from './ui/ShopDrawer';
 
 async function main() {
   // Attempt local WASM init (optional, retained for local offline dev)
@@ -81,6 +83,13 @@ async function main() {
   const abilityDock = new AbilityDock();
   abilityDock.setInputHandler(input);
   abilityDock.setSession(session);
+
+  const shopDrawer = new ShopDrawer();
+  shopDrawer.setSession(session);
+
+  abilityDock.setOnOpenShop(() => {
+    shopDrawer.toggle();
+  });
 
   input.setOnUnitSelectedChange((unit) => {
     abilityDock.update(unit);
@@ -220,6 +229,8 @@ async function main() {
     heroSelectScreen.hide();
     input.setSession(session);
     abilityDock.setSession(session);
+    shopDrawer.setSession(session);
+    shopDrawer.update();
     renderer.setPlayerTeam(session.getCurrentTeam());
     renderCurrentState();
 
@@ -317,6 +328,33 @@ async function main() {
         applyRoundStarted(round, deadlineUnixMs, snapshot);
       }
     },
+    onPurchaseResolved: (_unitId, itemId, success, _goldRemaining, error) => {
+      shopDrawer.update();
+      abilityDock.update(input.getSelectedUnit());
+      renderCurrentState();
+      if (success) {
+        hud.showToast(`✅ Purchased ${itemId.toUpperCase()}!`);
+      } else {
+        hud.showToast(`❌ Purchase failed: ${error ?? 'Invalid request'}`);
+      }
+    },
+    onEconomyUpdated: (unitId, _gold, _xp, _level, items) => {
+      shopDrawer.update();
+      abilityDock.update(input.getSelectedUnit());
+      renderCurrentState();
+      const myId = session.getPrimaryControlledUnitId();
+      if (myId !== null && unitId !== myId) {
+        const itemBought = items[items.length - 1];
+        if (itemBought) {
+          hud.showToast(`🛡️ Teammate #${unitId} bought ${itemBought.toUpperCase()}`);
+        }
+      }
+    },
+    onLevelUpOccurred: (_unitId, newLevel) => {
+      abilityDock.update(input.getSelectedUnit());
+      renderCurrentState();
+      hud.showToast(`⭐ LEVEL UP! Now Level ${newLevel}`);
+    },
     onOrdersAccepted: (round) => {
       if (statusEl) {
         statusEl.textContent = `Orders locked in for Round ${round}. Awaiting opponent...`;
@@ -333,6 +371,22 @@ async function main() {
       console.debug(
         `[Hexabellum] Round ${round} resolved. Server state hash: ${_snapshot.state_hash}`
       );
+
+      for (const ev of events) {
+        if (ev.type === 'RewardGranted') {
+          if (ev.reason === 'HeroKill') {
+            hud.showToast(`⚔️ Hero eliminated! +${ev.gold}G, +${ev.xp}XP`);
+          } else if (ev.reason === 'TowerDestroyed') {
+            hud.showToast(`🏰 Tower destroyed! Team bounty +${ev.gold}G, +${ev.xp}XP`);
+          } else if (ev.reason === 'SpawnerDestroyed') {
+            hud.showToast(`⚡ Spawner destroyed! Team bounty +${ev.gold}G, +${ev.xp}XP`);
+          } else if (ev.reason === 'NeutralKill') {
+            hud.showToast(`🐺 Neutral Guardian slain! +${ev.gold}G, +${ev.xp}XP`);
+          }
+        } else if (ev.type === 'LevelUp') {
+          hud.showToast(`⭐ LEVEL UP! Unit #${ev.unit_id} reached Level ${ev.new_level}!`);
+        }
+      }
 
       input.handleServerResolved(events, animator, () => {
         if (pendingMatchEnded) {

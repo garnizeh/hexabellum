@@ -11,6 +11,57 @@ pub type UnitId = u64;
 pub type TeamId = u8;
 pub type Round = u32;
 pub type SpellId = String;
+pub type ItemDefId = String;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StatKind {
+    AttackDamage,
+    MaxHealth,
+    VisionRange,
+    EnergyRegen,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatModifierDto {
+    pub stat: StatKind,
+    pub value: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemDto {
+    pub id: ItemDefId,
+    pub name: String,
+    pub cost: u32,
+    pub description: String,
+    pub icon: String,
+    pub modifiers: Vec<StatModifierDto>,
+}
+
+pub type HeroDefId = String;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HeroEconomyDto {
+    pub unit_id: UnitId,
+    pub hero_def_id: HeroDefId,
+    pub gold: u32,
+    pub xp: u32,
+    pub level: u32,
+    pub items: Vec<ItemDefId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RewardReason {
+    PassiveIncome,
+    HeroKill,
+    MinionKill,
+    NeutralKill,
+    TowerDestroyed,
+    SpawnerDestroyed,
+}
+
+fn default_level_u32() -> u32 {
+    1
+}
 
 /// Axial hex coordinate DTO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -71,6 +122,14 @@ pub struct UnitDto {
     pub lane_id: Option<String>,
     #[serde(default)]
     pub hero_id: Option<String>,
+    #[serde(default)]
+    pub gold: Option<u32>,
+    #[serde(default)]
+    pub xp: Option<u32>,
+    #[serde(default = "default_level_u32")]
+    pub level: u32,
+    #[serde(default)]
+    pub items: Vec<ItemDefId>,
 }
 
 /// Arena terrain layout.
@@ -81,7 +140,6 @@ pub struct MapDto {
     pub obstacles: Vec<HexDto>,
 }
 
-pub type HeroDefId = String;
 pub type HexCoordDto = HexDto;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +193,10 @@ pub struct RosterEntryDto {
     /// Exact HP is included for all allies; masked for enemies unless currently in LOS.
     pub hp: Option<u32>,
     pub max_hp: u32,
+    #[serde(default = "default_level_u32")]
+    pub level: u32,
+    #[serde(default)]
+    pub items: Vec<ItemDefId>,
 }
 
 /// Team-sanitized game state snapshot.
@@ -162,6 +224,14 @@ pub struct SnapshotDto {
     pub roster: Vec<RosterEntryDto>,
     #[serde(default)]
     pub match_phase: Option<MatchPhaseDto>,
+    #[serde(default)]
+    pub controlled_hero_economy: Option<HeroEconomyDto>,
+    #[serde(default)]
+    pub allied_hero_economy: Vec<HeroEconomyDto>,
+    #[serde(default)]
+    pub shop_catalog: Vec<ItemDto>,
+    #[serde(default)]
+    pub can_shop: bool,
 }
 
 /// Spell target DTO.
@@ -277,6 +347,19 @@ pub enum SanitizedGameEvent {
     UnitWaited {
         unit_id: UnitId,
     },
+    RewardGranted {
+        unit_id: UnitId,
+        gold: u32,
+        xp: u32,
+        reason: RewardReason,
+    },
+    LevelUp {
+        unit_id: UnitId,
+        new_level: u32,
+        new_max_hp: u32,
+        new_attack_damage: u32,
+        new_max_energy: u32,
+    },
     RoundEnded {
         round: Round,
     },
@@ -323,6 +406,9 @@ pub enum ClientMessage {
     Ping {
         #[serde(alias = "timestamp_ms")]
         client_time_ms: u64,
+    },
+    BuyItem {
+        item_id: ItemDefId,
     },
 }
 
@@ -445,6 +531,28 @@ pub enum ServerMessage {
         client_time_ms: u64,
         server_time_ms: u64,
     },
+    PurchaseResolved {
+        unit_id: UnitId,
+        item_id: ItemDefId,
+        success: bool,
+        gold_remaining: u32,
+        #[serde(default)]
+        error: Option<ProtocolErrorCode>,
+    },
+    EconomyUpdated {
+        unit_id: UnitId,
+        gold: u32,
+        xp: u32,
+        level: u32,
+        items: Vec<ItemDefId>,
+    },
+    LevelUpOccurred {
+        unit_id: UnitId,
+        new_level: u32,
+        new_max_hp: u32,
+        new_attack_damage: u32,
+        new_max_energy: u32,
+    },
     Error {
         #[serde(alias = "code")]
         error_code: ProtocolErrorCode,
@@ -500,6 +608,14 @@ pub enum ProtocolErrorCode {
     InsufficientResources,
     CooldownActive,
     MissingLineOfSight,
+
+    // Phase 6 Economic Error Codes
+    InsufficientGold,
+    InventoryFull,
+    ItemAlreadyOwned,
+    NoSuchItem,
+    CannotShopInPhase,
+    NotAHero,
 }
 
 pub use ProtocolErrorCode as ErrorCode;
@@ -560,6 +676,10 @@ mod tests {
                 statuses: Vec::new(),
                 lane_id: None,
                 hero_id: None,
+                gold: Some(50),
+                xp: Some(0),
+                level: 1,
+                items: Vec::new(),
             }],
             visible_hexes: vec![HexDto::new(-4, -1)],
             controlled_units: vec![1],
@@ -569,6 +689,10 @@ mod tests {
             player_team: 0,
             roster: Vec::new(),
             match_phase: Some(MatchPhaseDto::Planning),
+            controlled_hero_economy: None,
+            allied_hero_economy: Vec::new(),
+            shop_catalog: Vec::new(),
+            can_shop: true,
         };
 
         let msg = ServerMessage::RoundStarted {

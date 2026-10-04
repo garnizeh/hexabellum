@@ -1,6 +1,7 @@
 use crate::ability::SpellTarget;
 use crate::hex::HexCoord;
 use crate::unit::{TeamId, UnitId, UnitKind};
+pub use hexabellum_protocol::RewardReason;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -90,6 +91,21 @@ pub enum GameEvent {
 
     UnitWaited {
         unit_id: UnitId,
+    },
+
+    RewardGranted {
+        unit_id: UnitId,
+        gold: u32,
+        xp: u32,
+        reason: hexabellum_protocol::RewardReason,
+    },
+
+    LevelUp {
+        unit_id: UnitId,
+        new_level: u32,
+        new_max_hp: u32,
+        new_attack_damage: u32,
+        new_max_energy: u32,
     },
 
     FogUpdated {

@@ -139,6 +139,13 @@ async fn handle_socket(
                         })
                         .await;
                     }
+                    ClientMessage::BuyItem { item_id } => {
+                        h.send(MatchCommand::BuyItem {
+                            player_id: p_id.clone(),
+                            item_id,
+                        })
+                        .await;
+                    }
                     ClientMessage::Hello { player_id: hello_pid, reconnect_token: token } => {
                         h.send(MatchCommand::PlayerConnect {
                             player_id: hello_pid,

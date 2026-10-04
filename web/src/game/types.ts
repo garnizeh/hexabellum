@@ -18,6 +18,50 @@ export interface NeutralCampDto {
   guardian_unit_id?: number | null;
 }
 
+export type ItemDefId = string;
+
+export type StatKind =
+  | 'AttackDamage'
+  | 'MaxHealth'
+  | 'MaxHp'
+  | 'VisionRange'
+  | 'EnergyRegen'
+  | 'MaxEnergy'
+  | 'MaxAp'
+  | 'Initiative';
+
+export interface StatModifierDto {
+  stat: StatKind;
+  value: number;
+}
+
+export interface ItemDto {
+  id: ItemDefId;
+  name: string;
+  cost: number;
+  description: string;
+  modifiers: StatModifierDto[];
+}
+
+export interface HeroEconomyDto {
+  unit_id: number;
+  gold: number;
+  xp: number;
+  level: number;
+  items: ItemDefId[];
+}
+
+export type RewardReason =
+  | 'PassiveIncome'
+  | 'HeroKill'
+  | 'MinionKill'
+  | 'NeutralKill'
+  | 'TowerDestroyed'
+  | 'SpawnerDestroyed'
+  | 'TowerKill'
+  | 'SpawnerKill'
+  | 'NeutralCamp';
+
 export interface UnitDto {
   id: number;
   kind: string; // "Hero" | "Minion" | "Tower" | "Spawner" | "NeutralGuardian"
@@ -38,6 +82,10 @@ export interface UnitDto {
   statuses: StatusDto[];
   lane_id?: string | null;
   hero_id?: string | null;
+  gold?: number | null;
+  xp?: number | null;
+  level: number;
+  items: ItemDefId[];
 }
 
 export interface MapDto {
@@ -92,6 +140,8 @@ export interface RosterEntryDto {
   alive: boolean;
   hp: number | null;
   max_hp: number;
+  level: number;
+  items: ItemDefId[];
 }
 
 export interface SnapshotDto {
@@ -109,6 +159,10 @@ export interface SnapshotDto {
   player_team: number;
   roster: RosterEntryDto[];
   match_phase?: MatchPhaseDto | null;
+  controlled_hero_economy?: HeroEconomyDto | null;
+  allied_hero_economy: HeroEconomyDto[];
+  shop_catalog: ItemDto[];
+  can_shop: boolean;
 }
 
 export type SpellTargetDto =
@@ -141,6 +195,15 @@ export type SanitizedGameEvent =
   | { type: 'StatusExpired'; unit_id: number; status_id: string }
   | { type: 'NeutralCampCleared'; camp_id: string; killer_team: number }
   | { type: 'TeamBuffApplied'; team: number; buff_id: string; duration_rounds: number }
+  | { type: 'RewardGranted'; unit_id: number; gold: number; xp: number; reason: RewardReason }
+  | {
+      type: 'LevelUp';
+      unit_id: number;
+      new_level: number;
+      new_max_hp: number;
+      new_attack_damage: number;
+      new_max_energy: number;
+    }
   | { type: 'UnitDied'; unit_id: number; unit_kind: string; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'RoundEnded'; round: number }
@@ -160,6 +223,7 @@ export type ClientMessage =
   | { type: 'SetReady'; ready: boolean }
   | { type: 'SubmitOrders'; round: number; orders: OrderDto[] }
   | { type: 'CancelOrders'; round: number }
+  | { type: 'BuyItem'; item_id: ItemDefId }
   | { type: 'Ping'; client_time_ms: number };
 
 export type ProtocolErrorCode =
@@ -207,7 +271,15 @@ export type ProtocolErrorCode =
   | 'InternalError'
   | 'InsufficientResources'
   | 'CooldownActive'
-  | 'MissingLineOfSight';
+  | 'MissingLineOfSight'
+
+  // Phase 6 Economic Error Codes
+  | 'InsufficientGold'
+  | 'InventoryFull'
+  | 'ItemAlreadyOwned'
+  | 'NoSuchItem'
+  | 'CannotShopInPhase'
+  | 'NotAHero';
 
 export type ServerMessage =
   | { type: 'HelloAck'; player_id: string; reconnect_token: string }
@@ -238,6 +310,30 @@ export type ServerMessage =
       player_id: string;
       connected: boolean;
       is_ai_controlled: boolean;
+    }
+  | {
+      type: 'PurchaseResolved';
+      unit_id: number;
+      item_id: ItemDefId;
+      success: boolean;
+      gold_remaining: number;
+      error?: ProtocolErrorCode | null;
+    }
+  | {
+      type: 'EconomyUpdated';
+      unit_id: number;
+      gold: number;
+      xp: number;
+      level: number;
+      items: ItemDefId[];
+    }
+  | {
+      type: 'LevelUpOccurred';
+      unit_id: number;
+      new_level: number;
+      new_max_hp: number;
+      new_attack_damage: number;
+      new_max_energy: number;
     }
   | {
       type: 'MatchEnded';

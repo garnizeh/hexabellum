@@ -101,6 +101,10 @@ fn test_repair_mechanics_and_ap_consumption() {
         spawn_interval: None,
         spawn_counter: 0,
         lane_direction: LaneDirection::None,
+        gold: 0,
+        xp: 0,
+        level: 1,
+        items: Vec::new(),
     };
 
     let mut units = vec![hero, damaged_tower];
@@ -189,6 +193,10 @@ fn test_lane_waypoint_minion_navigation() {
         spawn_interval: None,
         spawn_counter: 0,
         lane_direction: LaneDirection::None,
+        gold: 0,
+        xp: 0,
+        level: 1,
+        items: Vec::new(),
     };
 
     // Minion at (-5, 0) is at waypoint 0. Should advance index to 1

@@ -85,58 +85,58 @@ Phase 6 gives players the strategic reason to farm, fight, conquer neutral objec
 ## Definition of Done (DoD)
 
 ### 1. Core Simulation (`crates/core`)
-- [ ] `Unit` struct expanded with `gold: u32`, `xp: u32`, `level: u32`, `items: Vec<ItemDefId>`, and `last_attacker: Option<UnitId>`.
-- [ ] `EconomyConfig` defined with configurable starting gold (50), passive income (6), kill bounties, objective payouts, and max level (5).
-- [ ] Passive gold income (+6G) awarded to all living heroes at the start of each planning round.
-- [ ] `LastAttacker` tracker correctly attributes fatal blows during basic attacks, abilities, and structure strikes.
-- [ ] Kill rewards awarded deterministically: Minion (10G/10XP), Hero (30G/30XP), Neutral Guardian (40G/25XP).
-- [ ] Objective structure destruction awards team rewards to all living allied heroes: Tower (25G/20XP), Spawner (30G/25XP).
-- [ ] Experience threshold engine correctly handles level progression from Level 1 to Level 5.
-- [ ] Multi-level jumps in a single resolution round (e.g., from massive double-kill XP) correctly trigger sequential level-up bonuses.
-- [ ] Level-up bonuses correctly applied: +12 Max HP, +12 instant HP heal (capped at max), +3 Attack Damage, +1 Max Energy.
-- [ ] `ItemDef` and `ItemCatalog` implemented with the 4 canonical items (`longblade`, `plate_armor`, `scout_lens`, `focus_charm`).
-- [ ] Inventory constraints enforced: maximum 3 items, no duplicate items, no selling in Phase 6.
-- [ ] Item stat modifiers correctly applied upon purchase (including Plate Armor's +35 Max HP and instant +35 HP heal).
-- [ ] Deterministic AI shopping evaluates bot heroes in sorted `UnitId` order at round start.
+- [x] `Unit` struct expanded with `gold: u32`, `xp: u32`, `level: u32`, `items: Vec<ItemDefId>`, and `last_attacker: Option<UnitId>`.
+- [x] `EconomyConfig` defined with configurable starting gold (50), passive income (6), kill bounties, objective payouts, and max level (5).
+- [x] Passive gold income (+6G) awarded to all living heroes at the start of each planning round.
+- [x] `LastAttacker` tracker correctly attributes fatal blows during basic attacks, abilities, and structure strikes.
+- [x] Kill rewards awarded deterministically: Minion (10G/10XP), Hero (30G/30XP), Neutral Guardian (40G/25XP).
+- [x] Objective structure destruction awards team rewards to all living allied heroes: Tower (25G/20XP), Spawner (30G/25XP).
+- [x] Experience threshold engine correctly handles level progression from Level 1 to Level 5.
+- [x] Multi-level jumps in a single resolution round (e.g., from massive double-kill XP) correctly trigger sequential level-up bonuses.
+- [x] Level-up bonuses correctly applied: +12 Max HP, +12 instant HP heal (capped at max), +3 Attack Damage, +1 Max Energy.
+- [x] `ItemDef` and `ItemCatalog` implemented with the 4 canonical items (`longblade`, `plate_armor`, `scout_lens`, `focus_charm`).
+- [x] Inventory constraints enforced: maximum 3 items, no duplicate items, no selling in Phase 6.
+- [x] Item stat modifiers correctly applied upon purchase (including Plate Armor's +35 Max HP and instant +35 HP heal).
+- [x] Deterministic AI shopping evaluates bot heroes in sorted `UnitId` order at round start.
 
 ### 2. Protocol & Wire Models (`crates/protocol`)
-- [ ] Client message added: `ClientMessage::BuyItem { item_id: ItemDefId }`.
-- [ ] Server messages added: `ServerMessage::PurchaseResolved`, `ServerMessage::EconomyUpdated`, `ServerMessage::LevelUpOccurred`.
-- [ ] `HeroEconomyDto` defined with `unit_id`, `hero_def_id`, `gold`, `xp`, `level`, and `items`.
-- [ ] `ItemDto` defined with `id`, `name`, `cost`, `description`, `icon`, and `modifiers`.
-- [ ] `SnapshotDto` extended with `controlled_hero_economy`, `allied_hero_economy`, `shop_catalog`, and `can_shop`.
-- [ ] `RosterEntryDto` extended with `level: u32` and `items: Vec<ItemDefId>`.
-- [ ] `ErrorCode` expanded with `InsufficientGold`, `InventoryFull`, `ItemAlreadyOwned`, `NoSuchItem`, `CannotShopInPhase`, `UnitDead`.
-- [ ] Serde serialization and deserialization unit tests verify schema round-trips.
+- [x] Client message added: `ClientMessage::BuyItem { item_id: ItemDefId }`.
+- [x] Server messages added: `ServerMessage::PurchaseResolved`, `ServerMessage::EconomyUpdated`, `ServerMessage::LevelUpOccurred`.
+- [x] `HeroEconomyDto` defined with `unit_id`, `hero_def_id`, `gold`, `xp`, `level`, and `items`.
+- [x] `ItemDto` defined with `id`, `name`, `cost`, `description`, `icon`, and `modifiers`.
+- [x] `SnapshotDto` extended with `controlled_hero_economy`, `allied_hero_economy`, `shop_catalog`, and `can_shop`.
+- [x] `RosterEntryDto` extended with `level: u32` and `items: Vec<ItemDefId>`.
+- [x] `ErrorCode` expanded with `InsufficientGold`, `InventoryFull`, `ItemAlreadyOwned`, `NoSuchItem`, `CannotShopInPhase`, `UnitDead`.
+- [x] Serde serialization and deserialization unit tests verify schema round-trips.
 
 ### 3. Server Authority & Actor Engine (`crates/server`)
-- [ ] `MatchActor` validates `BuyItem` strictly during `MatchState::Planning`. Rejects commands in all other states.
-- [ ] Ingestion authentication verifies the requesting player owns the targeted hero via `ControllerMap`.
-- [ ] Atomic purchase handler verifies funds, inventory slots, living status, and item existence before mutating session state.
-- [ ] Server broadcasts `PurchaseResolved` directly to the purchaser and `EconomyUpdated` to all teammates.
-- [ ] Passive gold distribution executed synchronously on round transition before broadcasting `RoundStarted`.
-- [ ] AI heroes and disconnected backfill bots execute automated shopping at round start prior to human snapshot emission.
-- [ ] Reconnecting players seamlessly inherit current gold, XP, level, and items purchased by AI backfill during their absence.
-- [ ] Fog-of-War sanitizer completely redacts enemy gold and XP from all client snapshots; redacts enemy items and levels for unsighted enemies.
+- [x] `MatchActor` validates `BuyItem` strictly during `MatchState::Planning`. Rejects commands in all other states.
+- [x] Ingestion authentication verifies the requesting player owns the targeted hero via `ControllerMap`.
+- [x] Atomic purchase handler verifies funds, inventory slots, living status, and item existence before mutating session state.
+- [x] Server broadcasts `PurchaseResolved` directly to the purchaser and `EconomyUpdated` to all teammates.
+- [x] Passive gold distribution executed synchronously on round transition before broadcasting `RoundStarted`.
+- [x] AI heroes and disconnected backfill bots execute automated shopping at round start prior to human snapshot emission.
+- [x] Reconnecting players seamlessly inherit current gold, XP, level, and items purchased by AI backfill during their absence.
+- [x] Fog-of-War sanitizer completely redacts enemy gold and XP from all client snapshots; redacts enemy items and levels for unsighted enemies.
 
 ### 4. Browser Client & UI/UX (`web/`)
-- [ ] Hero Status Dock displays golden coin badge (`🪙 50 G`), Level shield badge (`LVL 1`), and animated XP progress bar (`xp / next_xp`).
-- [ ] 3-slot inventory dock rendered on the HUD showing item icons, empty slot frames, and hover tooltips detailing stat bonuses.
-- [ ] Glassmorphic Field Shop drawer toggled via dedicated HUD button or `[B]` keybinding.
-- [ ] Shop drawer displays 4 item cards with name, icon, cost, stat boost, player gold comparison, and responsive BUY button.
-- [ ] Quick-buy keyboard shortcuts (`1`, `2`, `3`, `4`) buy corresponding items while the shop drawer is open.
-- [ ] Dynamic BUY button states: `Buy` (emerald), `Too Expensive` (dimmed with gold deficit), `Owned` (blue), `Full (3/3)` (amber).
-- [ ] Allied team roster sidebar updated with hero level badges and mini 3-dot item racks.
-- [ ] Sighted enemy roster displays level and items when visible; obscures them when concealed in fog of war.
-- [ ] Floating combat text particle engine displays `+10G`, `+30 XP`, and radiant `LEVEL UP!` burst over hero sprites.
-- [ ] Combat log panel displays economy events (`Vanguard purchased Longblade`, `Ranger defeated Minion (+10G, +10XP)`).
+- [x] Hero Status Dock displays golden coin badge (`🪙 50 G`), Level shield badge (`LVL 1`), and animated XP progress bar (`xp / next_xp`).
+- [x] 3-slot inventory dock rendered on the HUD showing item icons, empty slot frames, and hover tooltips detailing stat bonuses.
+- [x] Glassmorphic Field Shop drawer toggled via dedicated HUD button or `[B]` keybinding.
+- [x] Shop drawer displays 4 item cards with name, icon, cost, stat boost, player gold comparison, and responsive BUY button.
+- [x] Quick-buy keyboard shortcuts (`1`, `2`, `3`, `4`) buy corresponding items while the shop drawer is open.
+- [x] Dynamic BUY button states: `Buy` (emerald), `Too Expensive` (dimmed with gold deficit), `Owned` (blue), `Full (3/3)` (amber).
+- [x] Allied team roster sidebar updated with hero level badges and mini 3-dot item racks.
+- [x] Sighted enemy roster displays level and items when visible; obscures them when concealed in fog of war.
+- [x] Floating combat text particle engine displays `+10G`, `+30 XP`, and radiant `LEVEL UP!` burst over hero sprites.
+- [x] Combat log panel displays economy events (`Vanguard purchased Longblade`, `Ranger defeated Minion (+10G, +10XP)`).
 
 ### 5. Verification & Determinism Harness
-- [ ] Core unit tests verify passive income, kill attribution, team bounties, XP thresholds, level scaling, and purchase constraints.
-- [ ] Protocol unit tests verify JSON serialization, error code handling, and wire DTO representations.
-- [ ] Server integration tests verify WebSocket `BuyItem` transactions, concurrency, and dynamic AI bot shopping.
-- [ ] Snapshot privacy audit verifies zero leakage of enemy gold, XP, or fog-concealed inventory in client payloads.
-- [ ] 100-round 5v5 headless simulation runs without panic and achieves 100% bitwise BLAKE3 state determinism across identical seeds.
+- [x] Core unit tests verify passive income, kill attribution, team bounties, XP thresholds, level scaling, and purchase constraints.
+- [x] Protocol unit tests verify JSON serialization, error code handling, and wire DTO representations.
+- [x] Server integration tests verify WebSocket `BuyItem` transactions, concurrency, and dynamic AI bot shopping.
+- [x] Snapshot privacy audit verifies zero leakage of enemy gold, XP, or fog-concealed inventory in client payloads.
+- [x] 100-round 5v5 headless simulation runs without panic and achieves 100% bitwise BLAKE3 state determinism across identical seeds.
 
 ---
 

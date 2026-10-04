@@ -109,6 +109,20 @@ pub struct Unit {
     pub spawn_counter: u32,
     #[serde(default = "default_lane_direction")]
     pub lane_direction: LaneDirection,
+
+    // Phase 6 Economy & Progression fields
+    #[serde(default)]
+    pub gold: u32,
+    #[serde(default)]
+    pub xp: u32,
+    #[serde(default = "default_unit_level")]
+    pub level: u32,
+    #[serde(default)]
+    pub items: Vec<String>,
+}
+
+fn default_unit_level() -> u32 {
+    1
 }
 
 fn default_lane_direction() -> LaneDirection {
@@ -146,6 +160,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 50,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -180,6 +198,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 50,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -214,6 +236,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 50,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -248,6 +274,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 50,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -282,6 +312,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 50,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -316,6 +350,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 50,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -347,6 +385,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 0,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -378,6 +420,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::TowardEnemy,
+            gold: 0,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -409,6 +455,10 @@ impl Unit {
             spawn_interval: None,
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 0,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 
@@ -440,6 +490,10 @@ impl Unit {
             spawn_interval: Some(spawn_interval),
             spawn_counter: 0,
             lane_direction: LaneDirection::None,
+            gold: 0,
+            xp: 0,
+            level: 1,
+            items: Vec::new(),
         }
     }
 

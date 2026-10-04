@@ -5,7 +5,7 @@ use hexabellum_core::hero_defs::get_all_hero_defs;
 use hexabellum_core::session::{BattleConfig, BattleSession};
 use hexabellum_protocol::{
     ErrorCode, HeroDefId, HeroDto, MatchPhaseDto, OrderDto, PlayerId,
-    ProtocolErrorCode, ReconnectToken, Round, ServerMessage, TeamId,
+    ProtocolErrorCode, ReconnectToken, Round, ServerMessage, TeamId, UnitId,
 };
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -43,6 +43,10 @@ pub enum MatchCommand {
     CancelOrders {
         player_id: PlayerId,
         round: Round,
+    },
+    BuyItem {
+        player_id: PlayerId,
+        item_id: String,
     },
     HeroSelectTimerFired,
     TurnTimerFired {
@@ -259,6 +263,9 @@ impl MatchActor {
                         self.grace_timer_active = false;
                         self.grace_period_seq += 1;
                     }
+                }
+                MatchCommand::BuyItem { player_id, item_id } => {
+                    self.handle_buy_item(&player_id, &item_id).await;
                 }
                 MatchCommand::HeroSelectTimerFired => {
                     if self.phase == MatchPhaseDto::HeroSelect {
@@ -766,7 +773,7 @@ impl MatchActor {
         Ok(())
     }
 
-    async fn start_planning_phase(&mut self) {
+    pub async fn start_planning_phase(&mut self) {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -780,6 +787,10 @@ impl MatchActor {
             Some(s) => s,
             None => return,
         };
+
+        // Distribute passive income to living heroes and trigger greedy AI shopping
+        session.distribute_passive_income();
+        session.execute_ai_bot_shopping();
 
         let round = session.state.round;
 
@@ -886,9 +897,147 @@ impl MatchActor {
         pools
     }
 
+    pub fn send_to_player(&self, player_id: &str, msg: ServerMessage) {
+        if let Some(conn) = self.players.get(player_id) {
+            conn.send(msg);
+        }
+    }
+
+    pub fn broadcast_to_team(&self, team: TeamId, msg: ServerMessage) {
+        for conn in self.players.values().filter(|p| p.team == team) {
+            conn.send(msg.clone());
+        }
+    }
+
     pub fn broadcast(&self, msg: ServerMessage) {
         for conn in self.players.values() {
             conn.send(msg.clone());
+        }
+    }
+
+    pub async fn handle_buy_item(&mut self, player_id: &str, item_id: &str) {
+        if self.phase != MatchPhaseDto::Planning {
+            self.send_to_player(
+                player_id,
+                ServerMessage::Error {
+                    error_code: ProtocolErrorCode::CannotShopInPhase,
+                    message: "Shopping is only allowed during Planning phase".to_string(),
+                },
+            );
+            return;
+        }
+
+        let session = match self.session.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let conn = match self.players.get(player_id) {
+            Some(c) => c,
+            None => return,
+        };
+
+        let unit_id = if let Some(uid) = conn.hero_unit_id {
+            Some(uid)
+        } else if let Some(uid) = session
+            .controllers
+            .get_units_for_player(&player_id.to_string())
+            .into_iter()
+            .next()
+        {
+            Some(uid)
+        } else {
+            let team_heroes: Vec<UnitId> = session
+                .state
+                .units
+                .values()
+                .filter(|u| u.team == conn.team && u.is_hero())
+                .map(|u| u.id)
+                .collect();
+            if team_heroes.len() == 1 {
+                team_heroes.first().copied()
+            } else {
+                None
+            }
+        };
+
+        let Some(unit_id) = unit_id else {
+            self.send_to_player(
+                player_id,
+                ServerMessage::Error {
+                    error_code: ProtocolErrorCode::NotYourUnit,
+                    message: "No hero assigned to player".to_string(),
+                },
+            );
+            return;
+        };
+
+        let item_catalog = hexabellum_core::items::get_canonical_item_catalog();
+        let Some(item) = item_catalog.iter().find(|i| i.id == item_id) else {
+            let gold = session.state.units.get(&unit_id).map_or(0, |u| u.gold);
+            self.send_to_player(
+                player_id,
+                ServerMessage::PurchaseResolved {
+                    unit_id,
+                    item_id: item_id.to_string(),
+                    success: false,
+                    gold_remaining: gold,
+                    error: Some(ProtocolErrorCode::NoSuchItem),
+                },
+            );
+            return;
+        };
+
+        let max_slots = session.config.economy.max_item_slots;
+        let allow_duplicates = session.config.economy.allow_duplicate_items;
+        let unit = match session.state.units.get_mut(&unit_id) {
+            Some(u) => u,
+            None => return,
+        };
+
+        match hexabellum_core::shop::execute_purchase(unit, item, max_slots, allow_duplicates) {
+            Ok(()) => {
+                let gold_remaining = unit.gold;
+                let items_cloned = unit.items.clone();
+                let xp = unit.xp;
+                let level = unit.level;
+                let team = unit.team;
+
+                self.send_to_player(
+                    player_id,
+                    ServerMessage::PurchaseResolved {
+                        unit_id,
+                        item_id: item_id.to_string(),
+                        success: true,
+                        gold_remaining,
+                        error: None,
+                    },
+                );
+
+                self.broadcast_to_team(
+                    team,
+                    ServerMessage::EconomyUpdated {
+                        unit_id,
+                        gold: gold_remaining,
+                        xp,
+                        level,
+                        items: items_cloned,
+                    },
+                );
+            }
+            Err(err) => {
+                let gold_remaining = unit.gold;
+                self.send_to_player(
+                    player_id,
+                    ServerMessage::PurchaseResolved {
+                        unit_id,
+                        item_id: item_id.to_string(),
+                        success: false,
+                        gold_remaining,
+                        error: Some(err),
+                    },
+                );
+            }
         }
     }
 

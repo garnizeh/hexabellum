@@ -11,6 +11,8 @@ import {
   HeroDto,
   RosterEntryDto,
   HeroDefId,
+  ItemDto,
+  HeroEconomyDto,
 } from './types';
 import { GameState, UnitData, HexCoord, UnitKind } from './bridge';
 import {
@@ -44,6 +46,11 @@ export function snapshotToGameState(snapshot: SnapshotDto): GameState {
       cooldowns: u.cooldowns ?? {},
       statuses: u.statuses ?? [],
       lane_id: u.lane_id,
+      hero_id: u.hero_id,
+      gold: u.gold ?? undefined,
+      xp: u.xp ?? undefined,
+      level: u.level ?? 1,
+      items: u.items ?? [],
     };
   }
 
@@ -89,6 +96,27 @@ export interface ClientSessionEvents {
   onPlayerConnectionUpdated: (playerId: string, connected: boolean, isAiControlled: boolean) => void;
   onMatchEnded: (winner: number | null, snapshot: SnapshotDto, stateHash?: string | null) => void;
   onOpponentStatus?: (online: boolean) => void;
+  onPurchaseResolved?: (
+    unitId: number,
+    itemId: string,
+    success: boolean,
+    goldRemaining: number,
+    error?: ProtocolErrorCode | null
+  ) => void;
+  onEconomyUpdated?: (
+    unitId: number,
+    gold: number,
+    xp: number,
+    level: number,
+    items: string[]
+  ) => void;
+  onLevelUpOccurred?: (
+    unitId: number,
+    newLevel: number,
+    newMaxHp: number,
+    newAttackDamage: number,
+    newMaxEnergy: number
+  ) => void;
   onError: (msg: string) => void;
 }
 
@@ -528,9 +556,143 @@ export class ClientSession {
       onOpponentStatus: (online) => {
         this.events.onOpponentStatus?.(online);
       },
+      onPurchaseResolved: (unitId, itemId, success, goldRemaining, error) => {
+        if (this.currentSnapshot) {
+          if (
+            this.currentSnapshot.controlled_hero_economy &&
+            this.currentSnapshot.controlled_hero_economy.unit_id === unitId
+          ) {
+            this.currentSnapshot.controlled_hero_economy.gold = goldRemaining;
+            if (
+              success &&
+              !this.currentSnapshot.controlled_hero_economy.items.includes(itemId)
+            ) {
+              this.currentSnapshot.controlled_hero_economy.items.push(itemId);
+            }
+          }
+          const heroUnit = this.currentSnapshot.units.find((u) => u.id === unitId);
+          if (heroUnit) {
+            heroUnit.gold = goldRemaining;
+            if (success && !heroUnit.items.includes(itemId)) {
+              heroUnit.items.push(itemId);
+              if (itemId === 'plate_armor') {
+                heroUnit.max_hp += 35;
+                heroUnit.hp = Math.min(heroUnit.hp + 35, heroUnit.max_hp);
+              } else if (itemId === 'longblade') {
+                heroUnit.attack_damage += 6;
+              } else if (itemId === 'scout_lens') {
+                heroUnit.vision_range += 1;
+              }
+            }
+          }
+          const rosterEntry = this.currentSnapshot.roster.find(
+            (r) => r.unit_id === unitId
+          );
+          if (rosterEntry && success && !rosterEntry.items.includes(itemId)) {
+            rosterEntry.items.push(itemId);
+            if (itemId === 'plate_armor') {
+              rosterEntry.max_hp += 35;
+              if (rosterEntry.hp !== null) {
+                rosterEntry.hp = Math.min(rosterEntry.hp + 35, rosterEntry.max_hp);
+              }
+            }
+          }
+        }
+        this.events.onPurchaseResolved?.(unitId, itemId, success, goldRemaining, error);
+      },
+      onEconomyUpdated: (unitId, gold, xp, level, items) => {
+        if (this.currentSnapshot) {
+          if (
+            this.currentSnapshot.controlled_hero_economy &&
+            this.currentSnapshot.controlled_hero_economy.unit_id === unitId
+          ) {
+            this.currentSnapshot.controlled_hero_economy.gold = gold;
+            this.currentSnapshot.controlled_hero_economy.xp = xp;
+            this.currentSnapshot.controlled_hero_economy.level = level;
+            this.currentSnapshot.controlled_hero_economy.items = items;
+          }
+          const heroUnit = this.currentSnapshot.units.find((u) => u.id === unitId);
+          if (heroUnit) {
+            heroUnit.gold = gold;
+            heroUnit.xp = xp;
+            heroUnit.level = level;
+            heroUnit.items = items;
+          }
+          const rosterEntry = this.currentSnapshot.roster.find(
+            (r) => r.unit_id === unitId
+          );
+          if (rosterEntry) {
+            rosterEntry.level = level;
+            rosterEntry.items = items;
+          }
+        }
+        this.events.onEconomyUpdated?.(unitId, gold, xp, level, items);
+      },
+      onLevelUpOccurred: (
+        unitId,
+        newLevel,
+        newMaxHp,
+        newAttackDamage,
+        newMaxEnergy
+      ) => {
+        if (this.currentSnapshot) {
+          const heroUnit = this.currentSnapshot.units.find((u) => u.id === unitId);
+          if (heroUnit) {
+            heroUnit.level = newLevel;
+            heroUnit.max_hp = newMaxHp;
+            heroUnit.hp = Math.min(heroUnit.hp + 12, newMaxHp);
+            heroUnit.attack_damage = newAttackDamage;
+            heroUnit.max_energy = newMaxEnergy;
+          }
+          const rosterEntry = this.currentSnapshot.roster.find(
+            (r) => r.unit_id === unitId
+          );
+          if (rosterEntry) {
+            rosterEntry.level = newLevel;
+            rosterEntry.max_hp = newMaxHp;
+            if (rosterEntry.hp !== null) {
+              rosterEntry.hp = Math.min(rosterEntry.hp + 12, newMaxHp);
+            }
+          }
+        }
+        this.events.onLevelUpOccurred?.(
+          unitId,
+          newLevel,
+          newMaxHp,
+          newAttackDamage,
+          newMaxEnergy
+        );
+      },
       onError: (msg) => {
         this.events.onError?.(msg);
       },
     });
+  }
+
+  buyItem(itemId: string): void {
+    this.net.buyItem(itemId);
+  }
+
+  getShopCatalog(): ItemDto[] {
+    return this.currentSnapshot?.shop_catalog ?? [];
+  }
+
+  getControlledHeroEconomy(): HeroEconomyDto | null {
+    return this.currentSnapshot?.controlled_hero_economy ?? null;
+  }
+
+  getAlliedHeroEconomy(): HeroEconomyDto[] {
+    return this.currentSnapshot?.allied_hero_economy ?? [];
+  }
+
+  getPhase(): string {
+    return this.getGameState()?.phase ?? (this.currentSnapshot?.phase ?? 'Planning');
+  }
+
+  canShop(): boolean {
+    return (
+      (this.currentSnapshot?.can_shop ?? false) &&
+      this.getPhase() === 'Planning'
+    );
   }
 }

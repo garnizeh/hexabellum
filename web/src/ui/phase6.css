@@ -1,0 +1,479 @@
+/* Hexabellum Phase 6 — Field Shop & Sovereign Economy Glassmorphic System */
+
+:root {
+  --hb-gold: #ffd700;
+  --hb-gold-glow: rgba(255, 215, 0, 0.45);
+  --hb-xp-purple: #a855f7;
+  --hb-xp-glow: rgba(168, 85, 247, 0.4);
+}
+
+/* ========================================================
+   FIELD SHOP DRAWER (Right Slide-Out Glassmorphic Drawer)
+   ======================================================== */
+.hb-shop-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 7, 15, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 120;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.hb-shop-drawer-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hb-shop-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  max-width: 92vw;
+  background: linear-gradient(180deg, rgba(12, 18, 36, 0.95) 0%, rgba(7, 10, 22, 0.98) 100%);
+  border-left: 1px solid rgba(0, 210, 255, 0.3);
+  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.8), -2px 0 15px rgba(0, 210, 255, 0.15);
+  backdrop-filter: blur(20px);
+  z-index: 125;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+  overflow: hidden;
+}
+
+.hb-shop-drawer.open {
+  transform: translateX(0);
+}
+
+.hb-shop-header {
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid rgba(0, 210, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(16, 24, 48, 0.6);
+}
+
+.hb-shop-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hb-shop-title {
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hb-shop-title span.badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 210, 255, 0.18);
+  border: 1px solid rgba(0, 210, 255, 0.4);
+  color: #00d2ff;
+}
+
+.hb-shop-gold-display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: rgba(255, 215, 0, 0.12);
+  border: 1px solid rgba(255, 215, 0, 0.4);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--hb-gold);
+  text-shadow: 0 0 10px var(--hb-gold-glow);
+}
+
+.hb-shop-close-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #94a3b8;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hb-shop-close-btn:hover {
+  background: rgba(255, 23, 68, 0.25);
+  border-color: #ff1744;
+  color: #fff;
+}
+
+.hb-shop-body {
+  flex: 1;
+  padding: 20px 24px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hb-shop-item-card {
+  background: rgba(16, 24, 46, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.hb-shop-item-card:hover {
+  border-color: rgba(0, 210, 255, 0.4);
+  background: rgba(20, 30, 58, 0.85);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 0 16px rgba(0, 210, 255, 0.15);
+}
+
+.hb-shop-item-card.owned-card {
+  border-color: rgba(0, 230, 118, 0.3);
+  background: rgba(12, 28, 30, 0.6);
+}
+
+.hb-shop-item-card-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hb-shop-item-icon-frame {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.hb-shop-item-meta {
+  flex: 1;
+}
+
+.hb-shop-item-name {
+  font-size: 16px;
+  font-weight: 800;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hb-shop-item-cost {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--hb-gold);
+  margin-top: 2px;
+}
+
+.hb-shop-item-desc {
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.45;
+}
+
+.hb-shop-item-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hb-shop-stat-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 210, 255, 0.12);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  color: #38bdf8;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.hb-shop-buy-btn {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hb-shop-buy-btn.can-buy {
+  background: linear-gradient(135deg, #00d2ff, #0088cc);
+  color: #070913;
+  box-shadow: 0 4px 15px rgba(0, 210, 255, 0.35);
+}
+
+.hb-shop-buy-btn.can-buy:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(0, 210, 255, 0.55);
+  background: linear-gradient(135deg, #38bdf8, #00b4d8);
+}
+
+.hb-shop-buy-btn.owned {
+  background: rgba(0, 230, 118, 0.15);
+  border: 1px solid rgba(0, 230, 118, 0.35);
+  color: #00e676;
+  cursor: default;
+}
+
+.hb-shop-buy-btn.cant-afford {
+  background: rgba(255, 215, 0, 0.08);
+  border: 1px solid rgba(255, 215, 0, 0.25);
+  color: #ffd600;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.hb-shop-buy-btn.inventory-full {
+  background: rgba(255, 23, 68, 0.1);
+  border: 1px solid rgba(255, 23, 68, 0.3);
+  color: #ff3366;
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.hb-shop-buy-btn.phase-locked {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #64748b;
+  cursor: not-allowed;
+}
+
+.hb-shop-hotkey-pip {
+  font-size: 10px;
+  font-weight: 900;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.hb-shop-footer {
+  padding: 16px 24px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(10, 14, 28, 0.7);
+  font-size: 12px;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* ========================================================
+   HUD PROGRESSION & SOVEREIGN HERO ECONOMY DOCK
+   ======================================================== */
+.hb-hero-economy-dock {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 14px;
+  border-radius: 12px;
+  background: rgba(14, 20, 40, 0.85);
+  border: 1px solid rgba(0, 210, 255, 0.22);
+  backdrop-filter: blur(12px);
+}
+
+.hb-gold-counter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--hb-gold);
+  text-shadow: 0 0 8px var(--hb-gold-glow);
+}
+
+.hb-level-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  font-weight: 900;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(99, 102, 241, 0.3));
+  border: 1px solid rgba(168, 85, 247, 0.5);
+  color: #e9d5ff;
+  letter-spacing: 0.5px;
+}
+
+.hb-xp-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 90px;
+}
+
+.hb-xp-bar {
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.hb-xp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a855f7, #00d2ff);
+  border-radius: 3px;
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.6);
+}
+
+.hb-xp-text {
+  font-size: 9.5px;
+  font-family: 'JetBrains Mono', monospace;
+  color: #c084fc;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* 3-Slot Inventory Dock */
+.hb-inventory-rack {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hb-inventory-slot {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(16, 24, 48, 0.7);
+  border: 1px dashed rgba(0, 210, 255, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hb-inventory-slot.occupied {
+  border-style: solid;
+  border-color: rgba(0, 210, 255, 0.6);
+  background: rgba(20, 32, 60, 0.9);
+  box-shadow: 0 2px 8px rgba(0, 210, 255, 0.25);
+}
+
+.hb-inventory-slot.occupied:hover {
+  transform: translateY(-2px);
+  border-color: #00d2ff;
+  box-shadow: 0 4px 12px rgba(0, 210, 255, 0.45);
+}
+
+.hb-inventory-slot .tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(8, 12, 24, 0.95);
+  border: 1px solid rgba(0, 210, 255, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 50;
+}
+
+.hb-inventory-slot:hover .tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.hb-open-shop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(255, 170, 0, 0.2));
+  border: 1px solid rgba(255, 215, 0, 0.45);
+  color: #fff;
+  font-weight: 800;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hb-open-shop-btn:hover {
+  background: linear-gradient(135deg, rgba(255, 215, 0, 0.35), rgba(255, 170, 0, 0.35));
+  border-color: #ffd700;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 215, 0, 0.3);
+}
+
+/* Roster Mini Item Pips */
+.hb-roster-item-pips {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.hb-roster-item-pip {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.hb-roster-item-pip.filled {
+  background: #00d2ff;
+  border-color: #38bdf8;
+  box-shadow: 0 0 5px rgba(0, 210, 255, 0.6);
+}
+
+.hb-roster-lvl-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(168, 85, 247, 0.2);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  color: #e9d5ff;
+}

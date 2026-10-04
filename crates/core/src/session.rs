@@ -46,6 +46,8 @@ pub struct BattleConfig {
     pub enable_ai_team_1: bool,
     #[serde(default)]
     pub skip_draft: bool,
+    #[serde(default)]
+    pub economy: crate::economy::EconomyConfig,
 }
 
 impl Default for BattleConfig {
@@ -60,6 +62,7 @@ impl Default for BattleConfig {
             fill_empty_slots_with_ai: true,
             enable_ai_team_1: false,
             skip_draft: false,
+            economy: crate::economy::EconomyConfig::default(),
         }
     }
 }
@@ -76,6 +79,7 @@ impl BattleConfig {
             fill_empty_slots_with_ai: false,
             enable_ai_team_1: false,
             skip_draft: true,
+            economy: crate::economy::EconomyConfig::default(),
         }
     }
 }
@@ -298,6 +302,12 @@ impl BattleSession {
 
         // Initialize vision
         state.update_fog();
+
+        for unit in state.units.values_mut() {
+            if unit.is_hero() {
+                unit.gold = config.economy.starting_gold;
+            }
+        }
 
         let mut unit_registry = HashMap::new();
         for unit in state.units.values() {
@@ -974,6 +984,41 @@ impl BattleSession {
                         duration_rounds: *duration_rounds,
                     });
                 }
+                GameEvent::RewardGranted {
+                    unit_id,
+                    gold,
+                    xp,
+                    reason,
+                } => {
+                    let is_ally = get_unit_meta(unit_id).map_or(false, |m| m.0 == team);
+                    if is_ally {
+                        sanitized.push(SanitizedGameEvent::RewardGranted {
+                            unit_id: *unit_id,
+                            gold: *gold,
+                            xp: *xp,
+                            reason: *reason,
+                        });
+                    }
+                }
+                GameEvent::LevelUp {
+                    unit_id,
+                    new_level,
+                    new_max_hp,
+                    new_attack_damage,
+                    new_max_energy,
+                } => {
+                    let meta = get_unit_meta(unit_id);
+                    let is_vis = meta.map_or(false, |m| m.0 == team || visible_hexes.contains(&m.2));
+                    if is_vis {
+                        sanitized.push(SanitizedGameEvent::LevelUp {
+                            unit_id: *unit_id,
+                            new_level: *new_level,
+                            new_max_hp: *new_max_hp,
+                            new_attack_damage: *new_attack_damage,
+                            new_max_energy: *new_max_energy,
+                        });
+                    }
+                }
                 _ => {}
             }
         }
@@ -1041,6 +1086,8 @@ impl BattleSession {
                 alive: hero.is_alive(),
                 hp: if is_visible { Some(hero.hp) } else { None },
                 max_hp: hero.max_hp,
+                level: if is_visible { hero.level } else { 1 },
+                items: if is_visible { hero.items.clone() } else { Vec::new() },
             });
         }
 
@@ -1068,39 +1115,47 @@ impl BattleSession {
             .iter()
             .filter_map(|id| self.state.get_unit(*id))
             .filter(|unit| unit.team == team || visible_hexes.contains(&unit.pos))
-            .map(|u| UnitDto {
-                id: u.id,
-                kind: u.kind.to_string(),
-                team: u.team,
-                pos: HexDto::new(u.pos.q, u.pos.r),
-                hp: u.hp,
-                max_hp: u.max_hp,
-                ap: u.ap,
-                max_ap: u.max_ap,
-                energy: u.energy,
-                max_energy: u.max_energy,
-                initiative: u.initiative,
-                attack_damage: u.attack_damage,
-                attack_range: u.attack_range,
-                vision_range: u.vision_range,
-                is_stationary: u.kind.is_stationary(),
-                cooldowns: u.cooldowns.clone(),
-                statuses: u
-                    .statuses
-                    .iter()
-                    .map(|s| hexabellum_protocol::StatusDto {
-                        id: s.def_id.clone(),
-                        remaining_rounds: s.remaining_rounds,
-                        attack_damage_mod: s
-                            .modifiers
-                            .iter()
-                            .filter(|m| m.stat == crate::status::StatKind::AttackDamage)
-                            .map(|m| m.value)
-                            .sum(),
-                    })
-                    .collect(),
-                lane_id: u.lane_id.clone(),
-                hero_id: u.hero_id.clone(),
+            .map(|u| {
+                let is_ally = u.team == team;
+                let is_sighted = is_ally || visible_hexes.contains(&u.pos);
+                UnitDto {
+                    id: u.id,
+                    kind: u.kind.to_string(),
+                    team: u.team,
+                    pos: HexDto::new(u.pos.q, u.pos.r),
+                    hp: u.hp,
+                    max_hp: u.max_hp,
+                    ap: u.ap,
+                    max_ap: u.max_ap,
+                    energy: u.energy,
+                    max_energy: u.max_energy,
+                    initiative: u.initiative,
+                    attack_damage: u.attack_damage,
+                    attack_range: u.attack_range,
+                    vision_range: u.vision_range,
+                    is_stationary: u.kind.is_stationary(),
+                    cooldowns: u.cooldowns.clone(),
+                    statuses: u
+                        .statuses
+                        .iter()
+                        .map(|s| hexabellum_protocol::StatusDto {
+                            id: s.def_id.clone(),
+                            remaining_rounds: s.remaining_rounds,
+                            attack_damage_mod: s
+                                .modifiers
+                                .iter()
+                                .filter(|m| m.stat == crate::status::StatKind::AttackDamage)
+                                .map(|m| m.value)
+                                .sum(),
+                        })
+                        .collect(),
+                    lane_id: u.lane_id.clone(),
+                    hero_id: u.hero_id.clone(),
+                    gold: if is_ally { Some(u.gold) } else { None },
+                    xp: if is_ally { Some(u.xp) } else { None },
+                    level: if is_sighted { u.level } else { 1 },
+                    items: if is_sighted { u.items.clone() } else { Vec::new() },
+                }
             })
             .collect();
 
@@ -1172,6 +1227,68 @@ impl BattleSession {
             Phase::MatchEnd => MatchPhaseDto::MatchEnd,
         });
 
+        let controlled_hero_economy = {
+            let primary_unit_id = if let Some(pid) = player_id {
+                self.controllers.get_units_for_player(pid).into_iter().next()
+            } else {
+                controlled_units.first().copied()
+            };
+            primary_unit_id.and_then(|uid| self.state.get_unit(uid)).and_then(|u| {
+                if u.is_hero() {
+                    Some(hexabellum_protocol::HeroEconomyDto {
+                        unit_id: u.id,
+                        hero_def_id: u.hero_id.clone().unwrap_or_else(|| "hero".to_string()),
+                        gold: u.gold,
+                        xp: u.xp,
+                        level: u.level,
+                        items: u.items.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+        };
+
+        let allied_hero_economy: Vec<hexabellum_protocol::HeroEconomyDto> = sorted_unit_ids
+            .iter()
+            .filter_map(|id| self.state.get_unit(*id))
+            .filter(|u| u.team == team && u.is_hero())
+            .map(|u| hexabellum_protocol::HeroEconomyDto {
+                unit_id: u.id,
+                hero_def_id: u.hero_id.clone().unwrap_or_else(|| "hero".to_string()),
+                gold: u.gold,
+                xp: u.xp,
+                level: u.level,
+                items: u.items.clone(),
+            })
+            .collect();
+
+        let shop_catalog: Vec<hexabellum_protocol::ItemDto> = crate::items::get_canonical_item_catalog()
+            .into_iter()
+            .map(|item| hexabellum_protocol::ItemDto {
+                id: item.id,
+                name: item.name,
+                cost: item.cost,
+                description: item.description,
+                icon: item.icon,
+                modifiers: item
+                    .modifiers
+                    .into_iter()
+                    .map(|m| hexabellum_protocol::StatModifierDto {
+                        stat: match m.stat {
+                            crate::items::StatKind::AttackDamage => hexabellum_protocol::StatKind::AttackDamage,
+                            crate::items::StatKind::MaxHealth => hexabellum_protocol::StatKind::MaxHealth,
+                            crate::items::StatKind::VisionRange => hexabellum_protocol::StatKind::VisionRange,
+                            crate::items::StatKind::EnergyRegen => hexabellum_protocol::StatKind::EnergyRegen,
+                        },
+                        value: m.value,
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        let can_shop = self.state.phase == Phase::Planning;
+
         SnapshotDto {
             match_id: self.match_id.clone(),
             round: self.state.round,
@@ -1191,6 +1308,10 @@ impl BattleSession {
             player_team: team,
             roster,
             match_phase,
+            controlled_hero_economy,
+            allied_hero_economy,
+            shop_catalog,
+            can_shop,
         }
     }
 
@@ -1207,6 +1328,8 @@ pub fn build_sanitized_snapshot(session: &BattleSession, team: u8, player_id: &s
 impl BattleSession {
 
     pub fn resolve_ai_round(&mut self) -> Vec<GameEvent> {
+        self.distribute_passive_income();
+        self.execute_ai_bot_shopping();
         self.resolve_round()
     }
 
@@ -1249,10 +1372,163 @@ impl BattleSession {
                     hasher.update(s.def_id.as_bytes());
                     hasher.update(&s.remaining_rounds.to_le_bytes());
                 }
+
+                hasher.update(&unit.gold.to_le_bytes());
+                hasher.update(&unit.xp.to_le_bytes());
+                hasher.update(&unit.level.to_le_bytes());
+                for it in &unit.items {
+                    hasher.update(it.as_bytes());
+                }
             }
         }
 
         hasher.finalize().to_hex().to_string()
+    }
+
+    pub fn get_unit(&self, id: UnitId) -> Option<&Unit> {
+        self.state.get_unit(id)
+    }
+
+    pub fn get_unit_mut(&mut self, id: UnitId) -> Option<&mut Unit> {
+        self.state.get_unit_mut(id)
+    }
+
+    pub fn get_hero(&self, id: UnitId) -> &Unit {
+        self.state.get_unit(id).expect("Hero not found")
+    }
+
+    pub fn get_living_heroes_for_team(&self, team: TeamId) -> Vec<&Unit> {
+        let mut heroes: Vec<&Unit> = self
+            .state
+            .units
+            .values()
+            .filter(|u| u.team == team && u.is_hero() && u.is_alive())
+            .collect();
+        heroes.sort_by_key(|u| u.id);
+        heroes
+    }
+
+    pub fn distribute_passive_income(&mut self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+        let amount = self.config.economy.passive_income_per_round;
+        let mut sorted_hero_ids: Vec<UnitId> = self
+            .state
+            .units
+            .values()
+            .filter(|u| u.is_hero() && u.is_alive())
+            .map(|u| u.id)
+            .collect();
+        sorted_hero_ids.sort_unstable();
+
+        for id in sorted_hero_ids {
+            if let Some(hero) = self.state.units.get_mut(&id) {
+                hero.gold += amount;
+                events.push(GameEvent::RewardGranted {
+                    unit_id: id,
+                    gold: amount,
+                    xp: 0,
+                    reason: hexabellum_protocol::RewardReason::PassiveIncome,
+                });
+            }
+        }
+        events
+    }
+
+    pub fn execute_ai_bot_shopping(&mut self) {
+        let catalog = crate::items::get_canonical_item_catalog();
+        let max_slots = self.config.economy.max_item_slots;
+        let allow_duplicates = self.config.economy.allow_duplicate_items;
+
+        let mut bot_hero_ids: Vec<UnitId> = self
+            .state
+            .units
+            .values()
+            .filter(|u| {
+                u.is_hero()
+                    && u.is_alive()
+                    && matches!(
+                        self.controllers.get(u.id),
+                        Some(Controller::Ai) | Some(Controller::Automatic)
+                    )
+            })
+            .map(|u| u.id)
+            .collect();
+        bot_hero_ids.sort_unstable();
+
+        for unit_id in bot_hero_ids {
+            loop {
+                let Some(unit) = self.state.units.get_mut(&unit_id) else {
+                    break;
+                };
+                if unit.items.len() >= max_slots {
+                    break;
+                }
+                let item_to_buy = if unit.gold >= 120 && !unit.items.contains(&"plate_armor".to_string()) {
+                    catalog.iter().find(|i| i.id == "plate_armor")
+                } else if unit.gold >= 100 && !unit.items.contains(&"longblade".to_string()) {
+                    catalog.iter().find(|i| i.id == "longblade")
+                } else if unit.gold >= 100 && !unit.items.contains(&"focus_charm".to_string()) {
+                    catalog.iter().find(|i| i.id == "focus_charm")
+                } else if unit.gold >= 80 && !unit.items.contains(&"scout_lens".to_string()) {
+                    catalog.iter().find(|i| i.id == "scout_lens")
+                } else {
+                    None
+                };
+
+                if let Some(item) = item_to_buy {
+                    if crate::shop::execute_purchase(unit, item, max_slots, allow_duplicates).is_err() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    pub fn apply_damage(&mut self, target_id: UnitId, damage: u32, attacker_id: UnitId) {
+        if let Some(target) = self.state.get_unit_mut(target_id) {
+            target.hp = target.hp.saturating_sub(damage);
+            target.last_attacker = Some(attacker_id);
+        }
+    }
+
+    pub fn resolve_fatalities(&mut self) -> Vec<GameEvent> {
+        let mut events = Vec::new();
+        let dead_units: Vec<(UnitId, UnitKind, TeamId, Option<UnitId>)> = self
+            .state
+            .units
+            .values()
+            .filter(|u| !u.is_alive())
+            .map(|u| (u.id, u.kind, u.team, u.last_attacker))
+            .collect();
+
+        for (victim_id, victim_kind, victim_team, last_attacker) in dead_units {
+            self.state.units.remove(&victim_id);
+            let killed_by = last_attacker.unwrap_or(0);
+            events.push(GameEvent::UnitDied {
+                unit_id: victim_id,
+                unit_kind: victim_kind,
+                killed_by,
+            });
+
+            crate::turn::handle_kill_rewards_in_state(
+                &mut self.state,
+                victim_kind,
+                victim_team,
+                killed_by,
+                &mut events,
+            );
+        }
+
+        events
+    }
+
+    pub fn destroy_structure(&mut self, structure_id: UnitId) -> Vec<GameEvent> {
+        if let Some(s) = self.state.get_unit_mut(structure_id) {
+            s.hp = 0;
+        }
+        self.resolve_fatalities()
     }
 }
 

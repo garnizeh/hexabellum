@@ -44,6 +44,27 @@ export interface NetworkCallbacks {
   ) => void;
   onOpponentStatus?: (online: boolean) => void;
   onLatency?: (latencyMs: number) => void;
+  onPurchaseResolved?: (
+    unitId: number,
+    itemId: string,
+    success: boolean,
+    goldRemaining: number,
+    error?: ProtocolErrorCode | null
+  ) => void;
+  onEconomyUpdated?: (
+    unitId: number,
+    gold: number,
+    xp: number,
+    level: number,
+    items: string[]
+  ) => void;
+  onLevelUpOccurred?: (
+    unitId: number,
+    newLevel: number,
+    newMaxHp: number,
+    newAttackDamage: number,
+    newMaxEnergy: number
+  ) => void;
   onError: (message: string) => void;
 }
 
@@ -180,6 +201,13 @@ export class NetworkBridge {
     });
   }
 
+  buyItem(itemId: string): void {
+    this.send({
+      type: 'BuyItem',
+      item_id: itemId,
+    });
+  }
+
   sendPing(): void {
     this.send({
       type: 'Ping',
@@ -269,6 +297,36 @@ export class NetworkBridge {
 
       case 'OpponentStatus':
         this.callbacks.onOpponentStatus?.(msg.online);
+        break;
+
+      case 'PurchaseResolved':
+        this.callbacks.onPurchaseResolved?.(
+          msg.unit_id,
+          msg.item_id,
+          msg.success,
+          msg.gold_remaining,
+          msg.error
+        );
+        break;
+
+      case 'EconomyUpdated':
+        this.callbacks.onEconomyUpdated?.(
+          msg.unit_id,
+          msg.gold,
+          msg.xp,
+          msg.level,
+          msg.items
+        );
+        break;
+
+      case 'LevelUpOccurred':
+        this.callbacks.onLevelUpOccurred?.(
+          msg.unit_id,
+          msg.new_level,
+          msg.new_max_hp,
+          msg.new_attack_damage,
+          msg.new_max_energy
+        );
         break;
 
       case 'Pong': {

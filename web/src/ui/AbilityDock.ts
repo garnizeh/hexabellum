@@ -1,6 +1,7 @@
 import { UnitData } from '../game/bridge';
 import { ClientSession } from '../game/client_session';
 import { InputHandler } from '../game/input';
+import { ItemDto } from '../game/types';
 
 export class AbilityDock {
   private dockEl: HTMLElement | null;
@@ -17,9 +18,19 @@ export class AbilityDock {
   private waitBtn: HTMLButtonElement | null;
   private centerBtn: HTMLButtonElement | null;
 
+  // Phase 6 Economy & Progression UI
+  private ecoBarEl: HTMLElement | null = null;
+  private goldValEl: HTMLElement | null = null;
+  private levelBadgeEl: HTMLElement | null = null;
+  private xpFillEl: HTMLElement | null = null;
+  private xpTextEl: HTMLElement | null = null;
+  private inventoryRackEl: HTMLElement | null = null;
+  private shopBtn: HTMLButtonElement | null = null;
+
   private input: InputHandler | null = null;
   private session: ClientSession | null = null;
   private onCenterHeroRequest: (() => void) | null = null;
+  private onOpenShopRequest: (() => void) | null = null;
 
   constructor() {
     this.dockEl = document.getElementById('ability-dock');
@@ -36,6 +47,7 @@ export class AbilityDock {
     this.waitBtn = document.getElementById('btn-wait-space') as HTMLButtonElement;
     this.centerBtn = document.getElementById('btn-center-hero') as HTMLButtonElement;
 
+    this.createEconomyBar();
     this.setupListeners();
   }
 
@@ -49,6 +61,63 @@ export class AbilityDock {
 
   setOnCenterHero(cb: () => void): void {
     this.onCenterHeroRequest = cb;
+  }
+
+  setOnOpenShop(cb: () => void): void {
+    this.onOpenShopRequest = cb;
+  }
+
+  private createEconomyBar(): void {
+    if (!this.dockEl || document.getElementById('hb-ability-dock-eco')) return;
+
+    const ecoBar = document.createElement('div');
+    ecoBar.id = 'hb-ability-dock-eco';
+    ecoBar.className = 'hb-hero-economy-dock';
+    ecoBar.style.marginBottom = '8px';
+    ecoBar.style.justifyContent = 'space-between';
+
+    ecoBar.innerHTML = `
+      <div style="display:flex; align-items:center; gap:12px;">
+        <div id="hb-dock-level" class="hb-level-badge">LVL 1</div>
+        <div class="hb-xp-container">
+          <div class="hb-xp-bar">
+            <div id="hb-dock-xp-fill" class="hb-xp-fill" style="width: 0%;"></div>
+          </div>
+          <div class="hb-xp-text">
+            <span>XP</span>
+            <span id="hb-dock-xp-text">0 / 50</span>
+          </div>
+        </div>
+        <div id="hb-dock-gold" class="hb-gold-counter">🪙 50 G</div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div id="hb-dock-inventory" class="hb-inventory-rack">
+          <div class="hb-inventory-slot" data-slot="0"><span class="empty-icon">+</span></div>
+          <div class="hb-inventory-slot" data-slot="1"><span class="empty-icon">+</span></div>
+          <div class="hb-inventory-slot" data-slot="2"><span class="empty-icon">+</span></div>
+        </div>
+        <button id="btn-dock-shop" class="hb-open-shop-btn" title="Toggle Field Shop [B]">
+          <span>🛡️ SHOP</span>
+          <span style="font-size:10px; opacity:0.8; font-family:'JetBrains Mono',monospace;">[B]</span>
+        </button>
+      </div>
+    `;
+
+    // Insert as first child of dockEl
+    this.dockEl.insertBefore(ecoBar, this.dockEl.firstChild);
+
+    this.ecoBarEl = ecoBar;
+    this.goldValEl = ecoBar.querySelector('#hb-dock-gold');
+    this.levelBadgeEl = ecoBar.querySelector('#hb-dock-level');
+    this.xpFillEl = ecoBar.querySelector('#hb-dock-xp-fill');
+    this.xpTextEl = ecoBar.querySelector('#hb-dock-xp-text');
+    this.inventoryRackEl = ecoBar.querySelector('#hb-dock-inventory');
+    this.shopBtn = ecoBar.querySelector('#btn-dock-shop') as HTMLButtonElement;
+
+    this.shopBtn?.addEventListener('click', () => {
+      this.onOpenShopRequest?.();
+    });
   }
 
   private setupListeners(): void {
@@ -85,8 +154,11 @@ export class AbilityDock {
       if (this.attackBtn) this.attackBtn.disabled = true;
       if (this.waitBtn) this.waitBtn.disabled = true;
       if (this.abilityCdOverlay) this.abilityCdOverlay.style.display = 'none';
+      if (this.ecoBarEl) this.ecoBarEl.style.display = 'none';
       return;
     }
+
+    if (this.ecoBarEl) this.ecoBarEl.style.display = 'flex';
 
     const heroSpell = this.getHeroSpell(unit);
     if (this.heroTitleEl) {
@@ -141,6 +213,97 @@ export class AbilityDock {
     if (this.waitBtn) {
       this.waitBtn.disabled = false;
     }
+
+    // Update Phase 6 Economy & Progression
+    this.updateEconomyElements(unit);
+  }
+
+  private updateEconomyElements(unit: UnitData): void {
+    const controlledEco = this.session?.getControlledHeroEconomy();
+    const gold = controlledEco?.gold ?? (unit as any).gold ?? 50;
+    const xp = controlledEco?.xp ?? (unit as any).xp ?? 0;
+    const level = controlledEco?.level ?? (unit as any).level ?? 1;
+    const items: string[] = controlledEco?.items ?? (unit as any).items ?? [];
+
+    if (this.goldValEl) {
+      this.goldValEl.textContent = `🪙 ${gold} G`;
+    }
+
+    if (this.levelBadgeEl) {
+      this.levelBadgeEl.textContent = `LVL ${level}`;
+      if (level >= 5) {
+        this.levelBadgeEl.style.borderColor = '#ffd700';
+        this.levelBadgeEl.style.color = '#ffd700';
+      }
+    }
+
+    // Level XP Thresholds: L1=0, L2=50, L3=120, L4=220, L5=350
+    const thresholds = [0, 50, 120, 220, 350];
+    const prevThreshold = thresholds[Math.min(level - 1, 4)];
+    const nextThreshold = level >= 5 ? 350 : thresholds[level];
+
+    if (this.xpFillEl && this.xpTextEl) {
+      if (level >= 5) {
+        this.xpFillEl.style.width = '100%';
+        this.xpTextEl.textContent = `${xp} (MAX)`;
+      } else {
+        const progressXp = Math.max(0, xp - prevThreshold);
+        const neededXp = Math.max(1, nextThreshold - prevThreshold);
+        const percent = Math.min(100, Math.round((progressXp / neededXp) * 100));
+        this.xpFillEl.style.width = `${percent}%`;
+        this.xpTextEl.textContent = `${xp} / ${nextThreshold}`;
+      }
+    }
+
+    // Update 3 inventory slots
+    if (this.inventoryRackEl) {
+      let slotsHtml = '';
+      for (let i = 0; i < 3; i++) {
+        if (i < items.length) {
+          const itemId = items[i];
+          const info = this.getItemDisplayInfo(itemId);
+          slotsHtml += `
+            <div class="hb-inventory-slot occupied" title="${info.name}">
+              <span>${info.icon}</span>
+              <div class="tooltip">
+                <strong>${info.name}</strong><br>
+                <span style="color:#38bdf8;">${info.stat}</span>
+              </div>
+            </div>
+          `;
+        } else {
+          slotsHtml += `
+            <div class="hb-inventory-slot" title="Empty Slot">
+              <span style="color:#64748b; font-size:14px;">+</span>
+            </div>
+          `;
+        }
+      }
+      this.inventoryRackEl.innerHTML = slotsHtml;
+
+      // Clicking any slot opens the shop drawer
+      const slots = this.inventoryRackEl.querySelectorAll('.hb-inventory-slot');
+      slots.forEach((s) => {
+        s.addEventListener('click', () => {
+          this.onOpenShopRequest?.();
+        });
+      });
+    }
+  }
+
+  private getItemDisplayInfo(itemId: string): { name: string; icon: string; stat: string } {
+    switch (itemId) {
+      case 'longblade':
+        return { name: 'Longblade', icon: '⚔️', stat: '+6 Attack Damage' };
+      case 'plate_armor':
+        return { name: 'Plate Armor', icon: '🛡️', stat: '+35 Max HP & Instant Heal' };
+      case 'scout_lens':
+        return { name: 'Scout Lens', icon: '👁️', stat: '+1 Vision Range' };
+      case 'focus_charm':
+        return { name: 'Focus Charm', icon: '🔮', stat: '+1 Energy Regen' };
+      default:
+        return { name: itemId, icon: '📦', stat: 'Equipped Item' };
+    }
   }
 
   private getHeroSpell(unit: UnitData): {
@@ -150,7 +313,8 @@ export class AbilityDock {
     spellName: string;
     energyCost: number;
   } {
-    if (unit.max_hp === 140 || unit.cooldowns?.cleave !== undefined) {
+    const hid = (unit.hero_id ?? '').toLowerCase();
+    if (hid === 'vanguard' || unit.cooldowns?.cleave !== undefined || unit.max_hp === 140) {
       return {
         heroClass: 'VANGUARD',
         role: 'Frontline Cleaver',
@@ -159,7 +323,7 @@ export class AbilityDock {
         energyCost: 3,
       };
     }
-    if (unit.cooldowns?.longshot !== undefined || unit.attack_range >= 3 || unit.max_hp === 80) {
+    if (hid === 'sniper' || unit.cooldowns?.longshot !== undefined || unit.attack_range >= 3 || unit.max_hp === 80) {
       return {
         heroClass: 'SNIPER',
         role: 'Artillery Marksman',
@@ -168,7 +332,7 @@ export class AbilityDock {
         energyCost: 3,
       };
     }
-    if (unit.cooldowns?.fury !== undefined || (unit.max_hp === 120 && unit.attack_range === 1)) {
+    if (hid === 'berserker' || unit.cooldowns?.fury !== undefined || (unit.max_hp === 120 && unit.attack_range === 1)) {
       return {
         heroClass: 'BERSERKER',
         role: 'Melee Rage Bruiser',
@@ -177,7 +341,7 @@ export class AbilityDock {
         energyCost: 2,
       };
     }
-    if (unit.attack_range >= 2 || unit.cooldowns?.bolt !== undefined) {
+    if (hid === 'ranger' || unit.cooldowns?.bolt !== undefined || (unit.attack_range >= 2 && unit.attack_range < 3)) {
       return {
         heroClass: 'RANGER',
         role: 'Ranged Sniper',
@@ -186,7 +350,7 @@ export class AbilityDock {
         energyCost: 2,
       };
     }
-    if (unit.max_energy === 6 || unit.cooldowns?.mend !== undefined) {
+    if (hid === 'warden' || unit.cooldowns?.mend !== undefined || unit.max_energy === 6) {
       return {
         heroClass: 'WARDEN',
         role: 'Combat Medic',

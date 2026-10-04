@@ -50,6 +50,12 @@ export class Animator {
       case 'NeutralCampCleared':
         this.animateCampCleared(event, () => this.playNext());
         break;
+      case 'RewardGranted':
+        this.animateReward(event, () => this.playNext());
+        break;
+      case 'LevelUp':
+        this.animateLevelUp(event, () => this.playNext());
+        break;
       case 'UnitDied':
         this.animateDeath(event, () => this.playNext());
         break;
@@ -449,6 +455,76 @@ export class Animator {
         requestAnimationFrame(animate);
       } else {
         this.renderer.getFxLayer().removeChild(text);
+      }
+    };
+
+    requestAnimationFrame(animate);
+  }
+
+  private animateReward(
+    data: { unit_id: number; gold: number; xp: number; reason: string },
+    onDone: () => void
+  ): void {
+    const sprite = this.renderer.getUnitSprite(data.unit_id);
+    if (!sprite) {
+      onDone();
+      return;
+    }
+
+    let text = '';
+    if (data.gold > 0 && data.xp > 0) {
+      text = `+${data.gold}G  +${data.xp}XP`;
+    } else if (data.gold > 0) {
+      text = `+${data.gold}G`;
+    } else if (data.xp > 0) {
+      text = `+${data.xp}XP`;
+    }
+
+    if (text) {
+      this.showFloatingText(sprite.x, sprite.y, text, 0xffd700);
+    }
+    setTimeout(onDone, 120);
+  }
+
+  private animateLevelUp(
+    data: { unit_id: number; new_level: number },
+    onDone: () => void
+  ): void {
+    const sprite = this.renderer.getUnitSprite(data.unit_id);
+    if (!sprite) {
+      onDone();
+      return;
+    }
+
+    this.showFloatingText(
+      sprite.x,
+      sprite.y - 15,
+      `★ LEVEL UP! LVL ${data.new_level} ★`,
+      0xa855f7
+    );
+
+    const ring = new PIXI.Graphics();
+    ring.circle(0, 0, 15);
+    ring.stroke({ color: 0xffd700, width: 3 });
+    ring.x = sprite.x;
+    ring.y = sprite.y;
+    this.renderer.getFxLayer().addChild(ring);
+
+    const startTime = performance.now();
+    const duration = 600;
+
+    const animate = () => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      ring.scale.set(1 + progress * 2.5);
+      ring.alpha = 1 - progress;
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        this.renderer.getFxLayer().removeChild(ring);
+        onDone();
       }
     };
 

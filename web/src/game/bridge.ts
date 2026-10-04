@@ -33,6 +33,11 @@ export interface UnitData {
   lane_id?: string | null;
   spawn_interval?: number;
   spawn_counter: number;
+  hero_id?: string | null;
+  gold?: number;
+  xp?: number;
+  level?: number;
+  items?: string[];
 }
 
 export interface GameState {
@@ -55,6 +60,15 @@ export type GameEvent =
   | { type: 'StatusExpired'; unit_id: number; status_id: string }
   | { type: 'NeutralCampCleared'; camp_id: string; killer_team: number }
   | { type: 'TeamBuffApplied'; team: number; buff_id: string; duration_rounds: number }
+  | { type: 'RewardGranted'; unit_id: number; gold: number; xp: number; reason: string }
+  | {
+      type: 'LevelUp';
+      unit_id: number;
+      new_level: number;
+      new_max_hp: number;
+      new_attack_damage: number;
+      new_max_energy: number;
+    }
   | { type: 'UnitDied'; unit_id: number; unit_kind: UnitKind; killed_by: number }
   | { type: 'UnitWaited'; unit_id: number }
   | { type: 'FogUpdated'; team: number; visible_hexes: HexCoord[] }
