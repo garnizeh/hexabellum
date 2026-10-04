@@ -401,6 +401,35 @@ export class ClientSession {
     this.stagedOrders.delete(unitId);
   }
 
+  undoOrder(unitId: number): boolean {
+    const existing = this.stagedOrders.get(unitId);
+    if (!existing) return false;
+
+    // If unit has an action (Attack/Cast/Repair), revert action to Wait (preserving move_target)
+    if (existing.action.type !== 'Wait') {
+      existing.action = { type: 'Wait' };
+      return true;
+    }
+
+    // If unit only has move_target, clear move and delete order
+    if (existing.move_target) {
+      existing.move_target = null;
+      this.stagedOrders.delete(unitId);
+      return true;
+    }
+
+    this.stagedOrders.delete(unitId);
+    return true;
+  }
+
+  getStagedOrder(unitId: number): OrderDto | undefined {
+    return this.stagedOrders.get(unitId);
+  }
+
+  getStagedOrdersList(): OrderDto[] {
+    return Array.from(this.stagedOrders.values());
+  }
+
   submitOrders(): void {
     if (!this.currentSnapshot) return;
     const orders: OrderDto[] = Array.from(this.stagedOrders.values());

@@ -579,7 +579,14 @@
     <div class="stat-row"><span class="stat-label">Range:</span><span class="stat-val" id="insp-range">-</span></div>
   </div>
 
-  <!-- Bottom Center Tactical Ability Dock -->
+  <!-- Floating Resolution Playback Controls (docs/ui-ux.md §4.14) -->
+  <div id="hb-playback-controls" class="hb-playback-controls" style="display: none;">
+    <span class="hb-playback-label">🎬 RESOLUTION PLAYBACK:</span>
+    <button id="btn-speed-toggle" class="hb-playback-btn speed" title="Toggle Playback Speed (1.0x / 2.0x)">⚡ 1.0x</button>
+    <button id="btn-skip-resolution" class="hb-playback-btn skip" title="[Space] Skip to End of Resolution">⏭ SKIP [Space]</button>
+  </div>
+
+  <!-- Bottom Center Tactical Ability Dock & Order Drafter (docs/ui-ux.md §4.7.3) -->
   <div id="ability-dock" class="ability-dock">
     <div class="dock-hero-header">
       <div id="dock-hero-title" class="dock-hero-title">NO HERO SELECTED</div>
@@ -588,22 +595,26 @@
         <div id="dock-energy-display" class="resource-badge energy-badge">⚡ Energy: - / -</div>
       </div>
     </div>
-    <div class="dock-actions">
-      <!-- Q: Hero Ability -->
-      <button id="btn-ability-q" class="dock-btn ability-btn" disabled title="[Q] Cast Unique Hero Ability (Vanguard: Cleave, Ranger: Bolt, Warden: Mend)">
-        <span class="btn-hotkey">Q</span>
-        <span id="btn-ability-name" class="btn-name">ABILITY</span>
-        <span id="btn-ability-cost" class="btn-cost">⚡-</span>
-        <div id="btn-ability-cd-overlay" class="cd-overlay" style="display: none;">
-          <span id="btn-ability-cd-text" class="cd-text">0</span>
-        </div>
-      </button>
 
-      <!-- F: Structure Repair -->
-      <button id="btn-repair-f" class="dock-btn repair-btn" disabled title="[F] Repair Adjacent Allied Tower/Spawner (+20 HP, 1 AP)">
-        <span class="btn-hotkey">F</span>
-        <span class="btn-name">REPAIR</span>
-        <span class="btn-cost">1 AP</span>
+    <!-- Order Queue & AP Budget Inspector -->
+    <div id="dock-order-queue" class="dock-order-queue" style="display:flex; justify-content:space-between; align-items:center; font-size:11px; font-family:'JetBrains Mono',monospace; color:#94a3b8; padding:3px 2px; border-bottom:1px solid rgba(0, 210, 255, 0.12);">
+      <div id="dock-order-list" style="display:flex; align-items:center; gap:8px;">
+        <span style="color:#64748b;">No orders drafted</span>
+      </div>
+      <div id="dock-ap-budget-pips" style="display:flex; align-items:center; gap:5px;" title="AP Budget: 3 AP per round">
+        <span style="font-size:10px; color:#ffd600; font-weight:700;">BUDGET:</span>
+        <span id="ap-pip-0" class="ap-pip filled" style="color:#ffd600;">●</span>
+        <span id="ap-pip-1" class="ap-pip filled" style="color:#ffd600;">●</span>
+        <span id="ap-pip-2" class="ap-pip filled" style="color:#ffd600;">●</span>
+      </div>
+    </div>
+
+    <div class="dock-actions">
+      <!-- M: Move Mode -->
+      <button id="btn-move-m" class="dock-btn move-btn" title="[M] Toggle Movement Mode (1 AP/hex)">
+        <span class="btn-hotkey">M</span>
+        <span class="btn-name">MOVE</span>
+        <span class="btn-cost">1 AP/hex</span>
       </button>
 
       <!-- A: Basic Attack -->
@@ -613,16 +624,40 @@
         <span class="btn-cost">1 AP</span>
       </button>
 
-      <!-- Space: Wait / Hold Position -->
-      <button id="btn-wait-space" class="dock-btn wait-btn" disabled title="[Space] Wait / Hold Position (Queue Pass)">
-        <span class="btn-hotkey">Space</span>
-        <span class="btn-name">WAIT</span>
-        <span class="btn-cost">Pass</span>
+      <!-- Q: Hero Ability -->
+      <button id="btn-ability-q" class="dock-btn ability-btn" disabled title="[Q] Cast Unique Hero Ability">
+        <span class="btn-hotkey">Q</span>
+        <span id="btn-ability-name" class="btn-name">ABILITY</span>
+        <span id="btn-ability-cost" class="btn-cost">⚡-</span>
+        <div id="btn-ability-cd-overlay" class="cd-overlay" style="display: none;">
+          <span id="btn-ability-cd-text" class="cd-text">0</span>
+        </div>
       </button>
 
-      <!-- Center My Hero -->
-      <button id="btn-center-hero" class="dock-btn center-btn" title="[Space] Snap Camera to My Hero">
-        <span class="btn-hotkey">CAM</span>
+      <!-- R: Structure Repair -->
+      <button id="btn-repair-r" class="dock-btn repair-btn" disabled title="[R] Repair Adjacent Allied Tower/Spawner (+20 HP, 1 AP)">
+        <span class="btn-hotkey">R</span>
+        <span class="btn-name">REPAIR</span>
+        <span class="btn-cost">1 AP</span>
+      </button>
+
+      <!-- W: Wait / Hold Position -->
+      <button id="btn-wait-w" class="dock-btn wait-btn" disabled title="[W] Wait / Hold Position (0 AP)">
+        <span class="btn-hotkey">W</span>
+        <span class="btn-name">WAIT</span>
+        <span class="btn-cost">0 AP</span>
+      </button>
+
+      <!-- Z: Undo Order -->
+      <button id="btn-undo-z" class="dock-btn undo-btn" title="[Z] Undo Last Drafted Order">
+        <span class="btn-hotkey">Z</span>
+        <span class="btn-name">UNDO</span>
+        <span class="btn-cost">Revert</span>
+      </button>
+
+      <!-- C: Center My Hero -->
+      <button id="btn-center-hero" class="dock-btn center-btn" title="[C] Snap Camera to My Hero">
+        <span class="btn-hotkey">C</span>
         <span class="btn-name">CENTER</span>
         <span class="btn-cost">Hero</span>
       </button>

@@ -111,8 +111,8 @@ export class LobbyScreen {
         </div>
 
         <div class="hb-lobby-teams-grid">
-          ${renderSlots(team0Players, 'Blue Coalition (Team 0)', 'blue')}
-          ${renderSlots(team1Players, 'Red Syndicate (Team 1)', 'red')}
+          ${renderSlots(team0Players, 'Team Azure (Order of the Dawn)', 'blue')}
+          ${renderSlots(team1Players, 'Team Crimson (Sovereign Pyre)', 'red')}
         </div>
 
         <div class="hb-lobby-footer">

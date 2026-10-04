@@ -148,41 +148,116 @@ export class InputHandler {
     });
   }
 
+  private onSkipResolutionRequest: (() => void) | null = null;
+
+  setOnSkipResolution(cb: () => void): void {
+    this.onSkipResolutionRequest = cb;
+  }
+
   private setupKeyBindings(): void {
     window.addEventListener('keydown', (e: KeyboardEvent) => {
-      if (this.isResolving) return;
       const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (targetTag === 'input' || targetTag === 'textarea') return;
 
+      // During resolution: [SPACE] skips resolution playback to end (docs/ui-ux.md §4.14, §8.2)
+      if (this.isResolving) {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          this.onSkipResolutionRequest?.();
+        }
+        return;
+      }
+
+      // Hotkey bindings aligned with docs/ui-ux.md §7.4
       if (e.key === 'q' || e.key === 'Q') {
         this.triggerAbility();
-      } else if (e.key === 'f' || e.key === 'F') {
+      } else if (e.key === 'r' || e.key === 'R' || e.key === 'f' || e.key === 'F') {
         this.triggerRepair();
       } else if (e.key === 'a' || e.key === 'A') {
-        this.triggerAttackMode();
-      } else if (e.code === 'Space') {
         e.preventDefault();
+        this.triggerAttackMode();
+      } else if (e.key === 'm' || e.key === 'M') {
+        e.preventDefault();
+        this.triggerMoveMode();
+      } else if (e.key === 'w' || e.key === 'W') {
         if (this.selectedUnit !== null) {
-          if (this.session) {
-            this.session.stageWaitOrder(this.selectedUnit);
-          } else {
-            setWaitOrder(this.selectedUnit);
-          }
-          this.showToast(`Hero #${this.selectedUnit} holding position (Wait queued)`);
-          this.selectedUnit = null;
-          this.renderer.clearOverlays();
-          this.updateInspector(null);
-          this.onUnitSelectedChange?.(null);
-        } else {
-          const endBtn = document.getElementById('end-turn-btn') as HTMLButtonElement;
-          if (endBtn && !endBtn.disabled) {
-            endBtn.click();
-          }
+          e.preventDefault();
+          this.triggerWaitOrder();
         }
+      } else if (e.key === 'z' || e.key === 'Z') {
+        this.undoLastOrder();
+      } else if (e.code === 'Space' || e.key === 'Enter') {
+        e.preventDefault();
+        this.submitOrdersFromHotkey();
       } else if (e.key === 'Escape') {
         this.cancelTargeting();
+      } else if (['1', '2', '3', '4', '5'].includes(e.key)) {
+        this.selectHeroByIndex(parseInt(e.key, 10) - 1);
       }
     });
+  }
+
+  private submitOrdersFromHotkey(): void {
+    const endBtn = document.getElementById('end-turn-btn') as HTMLButtonElement;
+    if (endBtn && !endBtn.disabled) {
+      endBtn.click();
+    }
+  }
+
+  selectHeroByIndex(index: number): void {
+    const snap = this.session?.getSnapshot();
+    if (snap && snap.roster) {
+      const myTeam = this.getPlayerTeam();
+      const allies = snap.roster.filter(r => r.team === myTeam);
+      if (index >= 0 && index < allies.length) {
+        const ally = allies[index];
+        const state = this.getState();
+        if (state.units[ally.unit_id]) {
+          this.selectUnit(ally.unit_id);
+          this.renderer.centerOnHex(state.units[ally.unit_id].pos.q, state.units[ally.unit_id].pos.r);
+        }
+      }
+    }
+  }
+
+  triggerMoveMode(): void {
+    if (this.selectedUnit === null) {
+      this.showToast('Select a hero first to move!');
+      return;
+    }
+    this.inputMode = 'normal';
+    const state = this.getState();
+    this.renderNormalOverlays(this.selectedUnit, state);
+    this.renderer.highlightUnit(this.selectedUnit);
+    this.showToast('Movement Mode [M]: Click reachable hex (1 AP/hex)');
+  }
+
+  undoLastOrder(): void {
+    const heroId = this.selectedUnit ?? this.session?.getPrimaryControlledUnitId() ?? null;
+    if (heroId === null) return;
+
+    if (this.session) {
+      const undone = this.session.undoOrder(heroId);
+      if (undone) {
+        const stagedOrder = this.session.getStagedOrder(heroId);
+        if (!stagedOrder || !stagedOrder.move_target) {
+          this.stagedMoves.delete(heroId);
+          this.renderer.clearGhost();
+        }
+        const state = this.getState();
+        this.renderNormalOverlays(heroId, state);
+        this.showToast('Order undone [Z]');
+        this.onUnitSelectedChange?.(state.units[heroId]);
+      } else {
+        this.showToast('No orders to undo.');
+      }
+    } else {
+      this.stagedMoves.delete(heroId);
+      this.renderer.clearGhost();
+      const state = this.getState();
+      this.renderNormalOverlays(heroId, state);
+      this.showToast('Move order cleared.');
+    }
   }
 
   private handlePointerMove(x: number, y: number): void {
@@ -394,21 +469,20 @@ export class InputHandler {
           if (!isSelf) {
             const path = this.computePath(selected.pos.q, selected.pos.r, hex.q, hex.r);
             this.renderer.drawPath(path);
+            this.renderer.drawGhostHero(selected, hex);
           }
           if (postMoveAttacks.length > 0) {
             this.renderer.drawAttackTargets(postMoveAttacks, state);
-            this.renderer.highlightUnit(this.selectedUnit);
-          } else {
-            this.selectedUnit = null;
-            this.updateInspector(null);
-            this.onUnitSelectedChange?.(null);
           }
+          this.renderer.highlightUnit(this.selectedUnit);
+          this.onUnitSelectedChange?.(selected);
           return;
         }
       }
 
       this.selectedUnit = null;
       this.renderer.clearOverlays();
+      this.renderer.clearGhost();
       this.updateInspector(null);
       this.onUnitSelectedChange?.(null);
     }
@@ -436,6 +510,7 @@ export class InputHandler {
     if (staged && (staged.q !== state.units[unitId].pos.q || staged.r !== state.units[unitId].pos.r)) {
       const path = this.computePath(state.units[unitId].pos.q, state.units[unitId].pos.r, staged.q, staged.r);
       this.renderer.drawPath(path);
+      this.renderer.drawGhostHero(state.units[unitId], staged);
     }
   }
 

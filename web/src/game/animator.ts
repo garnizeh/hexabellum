@@ -1,20 +1,101 @@
 import * as PIXI from 'pixi.js';
 import { HexRenderer, HEX_SIZE } from './renderer';
 import { GameEvent, HexCoord } from './bridge';
+import { SanitizedGameEvent } from './types';
 
 export class Animator {
   private renderer: HexRenderer;
-  private queue: GameEvent[] = [];
+  private queue: (GameEvent | SanitizedGameEvent)[] = [];
   private isPlaying: boolean = false;
   private onComplete: (() => void) | null = null;
+  private playbackSpeed: number = 1.0;
 
   constructor(renderer: HexRenderer) {
     this.renderer = renderer;
   }
 
-  playEvents(events: GameEvent[], onComplete: () => void): void {
+  getPlaybackSpeed(): number {
+    return this.playbackSpeed;
+  }
+
+  setPlaybackSpeed(speed: number): void {
+    this.playbackSpeed = Math.max(0.5, Math.min(3.0, speed));
+  }
+
+  getIsPlaying(): boolean {
+    return this.isPlaying;
+  }
+
+  skipToEnd(): void {
+    if (!this.isPlaying) return;
+
+    // Instantly apply all remaining events in the resolution queue (docs/ui-ux.md §4.14 & §8.2)
+    while (this.queue.length > 0) {
+      const event = this.queue.shift()!;
+      this.applyEventInstantly(event);
+    }
+
+    this.isPlaying = false;
+    this.onComplete?.();
+  }
+
+  private applyEventInstantly(event: any): void {
+    switch (event.type) {
+      case 'UnitMoved': {
+        const sprite = this.renderer.getUnitSprite(event.unit_id);
+        if (sprite && event.path && event.path.length > 0) {
+          const last = event.path[event.path.length - 1];
+          const pos = this.renderer.hexToPixel(last.q, last.r);
+          sprite.x = pos.x;
+          sprite.y = pos.y;
+        }
+        break;
+      }
+      case 'UnitAttacked':
+      case 'TowerAttacked': {
+        if (event.target_hp_remaining !== undefined) {
+          this.renderer.updateUnitHp(event.target_id, event.target_hp_remaining);
+        }
+        break;
+      }
+      case 'HealApplied':
+      case 'StructureRepaired': {
+        if (event.target_hp_remaining !== undefined) {
+          this.renderer.updateUnitHp(event.target_id, event.target_hp_remaining);
+        }
+        break;
+      }
+      case 'BaseRegenerationApplied': {
+        if (event.new_hp !== undefined) {
+          this.renderer.updateUnitHp(event.unit_id, event.new_hp);
+        }
+        break;
+      }
+      case 'UnitDied': {
+        this.renderer.removeUnitSprite(event.unit_id);
+        break;
+      }
+      case 'CoreDestroyed': {
+        this.renderer.removeUnitSprite(event.core_id);
+        break;
+      }
+      case 'HeroRespawned': {
+        const sprite = this.renderer.getUnitSprite(event.unit_id);
+        if (sprite && event.pos) {
+          const p = this.renderer.hexToPixel(event.pos.q, event.pos.r);
+          sprite.x = p.x;
+          sprite.y = p.y;
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  playEvents(events: (GameEvent | SanitizedGameEvent)[], onComplete?: () => void): void {
     this.queue = [...events];
-    this.onComplete = onComplete;
+    this.onComplete = onComplete ?? null;
     this.isPlaying = true;
     this.playNext();
   }
@@ -92,7 +173,7 @@ export class Animator {
     }
 
     const points = data.path.map(hex => this.renderer.hexToPixel(hex.q, hex.r));
-    const duration = 250 * (points.length - 1);
+    const duration = (250 * (points.length - 1)) / this.playbackSpeed;
     const startTime = performance.now();
 
     const animate = () => {

@@ -383,7 +383,7 @@ AP BUDGET METER:  [●] [●] [○]  (2 AP Committed, 1 AP Free)
 | **MOVE** | `[M]` / `Left-Click Hex` | 1 AP / Hex | Path $\le$ remaining AP; destination unblocked | Draws animated dashed spline to target; previews ghost hero at destination. |
 | **ATTACK** | `[A]` / `Right-Click Unit` | 1 AP | Target within hero range; Line of Sight confirmed | Highlights valid target in red reticle; previews estimated damage number. |
 | **SIGNATURE ABILITY** | `[Q]` Key | 1 AP | Energy $\ge$ cost; Cooldown $= 0$; valid target in range | Activates ability targeting overlay (AoE cone, ranged beam, self-buff, or ally heal). |
-| **REPAIR** | `[R]` Key | 1 AP | Adjacent to allied Tower or Spawner (Range 1) | Restores $+25\text{ HP}$ to damaged allied structure (clamped to max HP). |
+| **REPAIR** | `[R]` Key | 1 AP | Adjacent to allied Tower or Spawner (Range 1) | Restores $+20\text{ HP}$ to damaged allied structure (clamped to max HP). |
 | **WAIT / PASS** | `[W]` Key | 0 AP | Always available | Preserves hero position without spending AP; holds position. |
 | **BASE SHOP** | `[B]` Key | 0 AP | Hero located inside allied Base Zone (19 hexes) | Opens the Base Shop modal drawer to purchase passive items. |
 | **SUBMIT ORDERS** | `[SPACE]` / `[ENTER]` | — | Valid order sequence drafted | Confirms drafted orders with server; turns button green. Can be unlocked until timer ends. |
@@ -534,8 +534,8 @@ The HUD provides dedicated visual treatment for all sovereign and neutral struct
 | Structure | Grid Location | HP & Defense | Visual Representation & HUD Indicators |
 |---|---|---|---|
 | **Sovereign Core** | Azure: `(-7, 0)`<br/>Crimson: `(7, 0)` | **700 HP**<br/>Non-Repairable | Massive glowing crystal spire. Generates True Sight (5 hexes). Core health is permanently anchored in the Top Bar. Below 30% HP, emits red emergency warning beams and sirens. |
-| **Defensive Towers** | Azure: `(-4, ±1)`<br/>Crimson: `(4, ±1)` | **100 HP**<br/>Repairable (+25 HP / 1 AP) | Automated bastion turret. Highlights target with red tracking laser. Shows floating repair icon `[🔧]` when damaged and an allied hero is adjacent. |
-| **Minion Spawners** | Azure: `(-6, ±1)`<br/>Crimson: `(6, ±1)` | **150 HP**<br/>Repairable (+25 HP / 1 AP) | Heavy runic portal. Shows floating wave countdown badge (`Wave in: 1 rnd`). Spawns 2 clockwork minions every 2 rounds until destroyed. |
+| **Defensive Towers** | Azure: `(-4, ±1)`<br/>Crimson: `(4, ±1)` | **100 HP**<br/>Repairable (+20 HP / 1 AP) | Automated bastion turret. Highlights target with red tracking laser. Shows floating repair icon `[🔧]` when damaged and an allied hero is adjacent. |
+| **Minion Spawners** | Azure: `(-6, ±1)`<br/>Crimson: `(6, ±1)` | **150 HP**<br/>Repairable (+20 HP / 1 AP) | Heavy runic portal. Shows floating wave countdown badge (`Wave in: 1 rnd`). Spawns 2 clockwork minions every 2 rounds until destroyed. |
 | **The Ancient Vault** | Neutral Center: `(0, 0)` | **250 HP**<br/>Non-Repairable | Ancient hexagonal reliquary. Neutral health bar visible to all players. Contested last-hit triggers golden shockwave, team banner reveal, and $+5\text{ AD}$ combat buff aura. |
 | **Guardian Sentinels** | Neutral Jungle: `(0, -4)` / `(0, 4)` | **60 HP**<br/>Leash: 2 Hexes | Golem construct sleeping in alcove. Approaching unit displays faint amber leash circle. Defeat grants $+40\text{G} / +25\text{XP}$ to the killer. |
 

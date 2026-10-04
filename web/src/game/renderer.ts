@@ -8,14 +8,23 @@ export const HEX_SIZE = 30;
 export class HexRenderer {
   private app: PIXI.Application;
   private worldContainer = new PIXI.Container();
-  private hexLayer = new PIXI.Container();
-  private baseZoneLayer = new PIXI.Container();
-  private obstacleLayer = new PIXI.Container();
-  private overlayLayer = new PIXI.Container();
-  private pathLayer = new PIXI.Container();
-  private unitLayer = new PIXI.Container();
-  private fogLayer = new PIXI.Container();
-  private fxLayer = new PIXI.Container();
+
+  // 11-Layer WebGL Rendering Hierarchy (aligned with docs/ui-ux.md §4.6)
+  private voidLayer = new PIXI.Container();          // Layer 1: Arena Void Canvas
+  private hexLayer = new PIXI.Container();           // Layer 2: Base Hex Grid
+  private baseZoneLayer = new PIXI.Container();      // Layer 3: Base Zone Sanctuaries
+  private obstacleLayer = new PIXI.Container();      // Layer 4: Terrain Obstacles & Line-of-Sight Walls
+  private fogLayer = new PIXI.Container();           // Layer 5: Fog of War Shroud
+  private overlayLayer = new PIXI.Container();       // Layer 6: Targeting & Range Highlights
+  private pathLayer = new PIXI.Container();          // Layer 7: Order Splines
+  private ghostLayer = new PIXI.Container();         // Layer 7: Ghost Projections
+  private unitLayer = new PIXI.Container();          // Layer 8: Dynamic Entities
+  private entityOverlayLayer = new PIXI.Container(); // Layer 9: Entity Overlays
+  private vfxLayer = new PIXI.Container();           // Layer 10: VFX & Particles
+  private fctLayer = new PIXI.Container();           // Layer 11: UI Reticles & Combat Floating Text
+
+  // Backward compatibility alias
+  public get fxLayer(): PIXI.Container { return this.vfxLayer; }
 
   private unitSprites = new Map<number, PIXI.Container>();
   private selectionRing = new PIXI.Graphics();
@@ -28,14 +37,20 @@ export class HexRenderer {
 
     // Attach world container to stage to allow unified pan/zoom
     this.app.stage.addChild(this.worldContainer);
+
+    // Structure 11 layers in strict z-index order
+    this.worldContainer.addChild(this.voidLayer);
     this.worldContainer.addChild(this.hexLayer);
     this.worldContainer.addChild(this.baseZoneLayer);
     this.worldContainer.addChild(this.obstacleLayer);
+    this.worldContainer.addChild(this.fogLayer);
     this.worldContainer.addChild(this.overlayLayer);
     this.worldContainer.addChild(this.pathLayer);
+    this.worldContainer.addChild(this.ghostLayer);
     this.worldContainer.addChild(this.unitLayer);
-    this.worldContainer.addChild(this.fogLayer);
-    this.worldContainer.addChild(this.fxLayer);
+    this.worldContainer.addChild(this.entityOverlayLayer);
+    this.worldContainer.addChild(this.vfxLayer);
+    this.worldContainer.addChild(this.fctLayer);
 
     this.overlayLayer.addChild(this.selectionRing);
     this.overlayLayer.addChild(this.raycastLine);
@@ -128,6 +143,23 @@ export class HexRenderer {
   drawMap(hexes: HexCoord[], obstacles: HexCoord[]): void {
     this.hexLayer.removeChildren();
     this.obstacleLayer.removeChildren();
+    this.voidLayer.removeChildren();
+
+    // Layer 1: Arena Void Canvas (starry nebula backdrop & boundary per docs/ui-ux.md §4.6)
+    const voidG = new PIXI.Graphics();
+    const arenaRadius = HEX_SIZE * 8 * 1.75;
+    voidG.circle(0, 0, arenaRadius + 60);
+    voidG.fill({ color: 0x070a13, alpha: 0.98 });
+    voidG.stroke({ color: 0x1e293b, width: 2, alpha: 0.6 });
+    for (let i = 0; i < 70; i++) {
+      const angle = (i * 137.5 * Math.PI) / 180;
+      const dist = (arenaRadius * 0.25) + ((i * 37) % (arenaRadius * 0.9));
+      const sx = dist * Math.cos(angle);
+      const sy = dist * Math.sin(angle);
+      voidG.circle(sx, sy, (i % 3 === 0) ? 1.5 : 1);
+      voidG.fill({ color: 0xffffff, alpha: (i % 2 === 0) ? 0.35 : 0.18 });
+    }
+    this.voidLayer.addChild(voidG);
     const obstacleSet = new Set(obstacles.map(h => `${h.q},${h.r}`));
 
     // Known terrain positions (Radius 8 arena features)
@@ -725,8 +757,107 @@ export class HexRenderer {
       const pt = this.hexToPixel(path[i].q, path[i].r);
       g.lineTo(pt.x, pt.y);
     }
-    g.stroke({ color: 0xffd600, width: 3, alpha: 0.8 });
+    g.stroke({ color: 0x38bdf8, width: 2.5, alpha: 0.85 });
     this.pathLayer.addChild(g);
+  }
+
+  /**
+   * Draws a semi-transparent Ghost Hero projection at the drafted destination tile
+   * with a directional connecting spline (aligned with docs/ui-ux.md §4.8 & §4.9).
+   */
+  drawGhostHero(unit: UnitData, destination: HexCoord): void {
+    this.clearGhost();
+
+    const destPixel = this.hexToPixel(destination.q, destination.r);
+    const startPixel = this.hexToPixel(unit.pos.q, unit.pos.r);
+
+    const ghostContainer = new PIXI.Container();
+    ghostContainer.x = destPixel.x;
+    ghostContainer.y = destPixel.y;
+    ghostContainer.alpha = 0.65;
+
+    const isFriendly = unit.team === this.playerTeam;
+    const glowColor = isFriendly ? 0x38bdf8 : 0xf87171;
+
+    const g = new PIXI.Graphics();
+    // Destination pulse ring
+    g.circle(0, 0, HEX_SIZE * 0.68);
+    g.stroke({ color: glowColor, width: 2, alpha: 0.9 });
+    g.circle(0, 0, HEX_SIZE * 0.54);
+    g.fill({ color: glowColor, alpha: 0.35 });
+    g.stroke({ color: 0xffffff, width: 1.5, alpha: 0.8 });
+
+    // Archetype silhouette icon inside ghost
+    if (unit.max_hp === 140 || unit.cooldowns?.cleave !== undefined) {
+      // Vanguard shield
+      g.poly([0, -7, 6, -3, 4, 5, 0, 8, -4, 5, -6, -3]);
+      g.fill({ color: 0xffffff, alpha: 0.9 });
+    } else if (unit.cooldowns?.longshot !== undefined || unit.attack_range >= 3 || unit.max_hp === 80) {
+      // Sniper crosshair
+      g.circle(0, 0, 6);
+      g.stroke({ color: 0xffffff, width: 1.2 });
+      g.moveTo(-8, 0); g.lineTo(8, 0); g.stroke({ color: 0xffffff, width: 1.2 });
+      g.moveTo(0, -8); g.lineTo(0, 8); g.stroke({ color: 0xffffff, width: 1.2 });
+    } else if (unit.cooldowns?.fury !== undefined || (unit.max_hp === 120 && unit.attack_range === 1)) {
+      // Berserker rage blades
+      g.poly([-5, -6, -3, -7, 5, 6, 3, 7]); g.fill({ color: 0xffffff });
+      g.poly([5, -6, 3, -7, -5, 6, -3, 7]); g.fill({ color: 0xffffff });
+    } else if (unit.attack_range >= 2 || unit.cooldowns?.bolt !== undefined) {
+      // Ranger bow/crosshair
+      g.circle(0, 0, 6);
+      g.stroke({ color: 0xffffff, width: 1.5 });
+      g.circle(0, 0, 1.8);
+      g.fill({ color: 0xffffff });
+    } else if (unit.max_energy === 6 || unit.cooldowns?.mend !== undefined) {
+      // Warden medic cross
+      g.rect(-2, -6, 4, 12);
+      g.rect(-6, -2, 12, 4);
+      g.fill({ color: 0xffffff, alpha: 0.9 });
+    }
+
+    // Ghost label
+    const label = new PIXI.Text({
+      text: 'GHOST',
+      style: {
+        fontSize: 8,
+        fill: 0xffffff,
+        fontFamily: 'JetBrains Mono, monospace',
+        fontWeight: 'bold',
+      },
+    });
+    label.anchor.set(0.5);
+    label.y = HEX_SIZE * 0.75;
+    ghostContainer.addChild(g);
+    ghostContainer.addChild(label);
+    this.ghostLayer.addChild(ghostContainer);
+
+    // Directional dashed spline connecting start to ghost destination
+    const spline = new PIXI.Graphics();
+    spline.moveTo(startPixel.x, startPixel.y);
+    spline.lineTo(destPixel.x, destPixel.y);
+    spline.stroke({ color: glowColor, width: 2, alpha: 0.8 });
+
+    // Arrow pointer at destination
+    const angle = Math.atan2(destPixel.y - startPixel.y, destPixel.x - startPixel.x);
+    const arrowLen = 8;
+    const arrowX = destPixel.x - Math.cos(angle) * (HEX_SIZE * 0.65);
+    const arrowY = destPixel.y - Math.sin(angle) * (HEX_SIZE * 0.65);
+    spline.moveTo(arrowX, arrowY);
+    spline.lineTo(
+      arrowX - arrowLen * Math.cos(angle - Math.PI / 6),
+      arrowY - arrowLen * Math.sin(angle - Math.PI / 6)
+    );
+    spline.moveTo(arrowX, arrowY);
+    spline.lineTo(
+      arrowX - arrowLen * Math.cos(angle + Math.PI / 6),
+      arrowY - arrowLen * Math.sin(angle + Math.PI / 6)
+    );
+    spline.stroke({ color: 0xffffff, width: 2, alpha: 0.9 });
+    this.ghostLayer.addChild(spline);
+  }
+
+  clearGhost(): void {
+    this.ghostLayer.removeChildren();
   }
 
   highlightUnit(unitId: number | null): void {
@@ -749,6 +880,7 @@ export class HexRenderer {
     this.selectionRing.clear();
     this.raycastLine.clear();
     this.pathLayer.removeChildren();
+    this.clearGhost();
   }
 
   getUnitSprite(unitId: number): PIXI.Container | undefined {

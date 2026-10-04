@@ -13,10 +13,21 @@ export class AbilityDock {
   private abilityCostEl: HTMLElement | null;
   private abilityCdOverlay: HTMLElement | null;
   private abilityCdText: HTMLElement | null;
+  private moveBtn: HTMLButtonElement | null;
   private repairBtn: HTMLButtonElement | null;
   private attackBtn: HTMLButtonElement | null;
   private waitBtn: HTMLButtonElement | null;
+  private undoBtn: HTMLButtonElement | null;
   private centerBtn: HTMLButtonElement | null;
+
+  // Order Queue & AP Budget Inspector (docs/ui-ux.md §4.7.3)
+  private orderListEl: HTMLElement | null = null;
+  private apPips: (HTMLElement | null)[] = [];
+
+  // Resolution Playback controls (docs/ui-ux.md §4.14)
+  private playbackControlsEl: HTMLElement | null = null;
+  private speedToggleBtn: HTMLButtonElement | null = null;
+  private skipResolutionBtn: HTMLButtonElement | null = null;
 
   // Phase 6 Economy & Progression UI
   private ecoBarEl: HTMLElement | null = null;
@@ -42,10 +53,23 @@ export class AbilityDock {
     this.abilityCostEl = document.getElementById('btn-ability-cost');
     this.abilityCdOverlay = document.getElementById('btn-ability-cd-overlay');
     this.abilityCdText = document.getElementById('btn-ability-cd-text');
-    this.repairBtn = document.getElementById('btn-repair-f') as HTMLButtonElement;
+    this.moveBtn = document.getElementById('btn-move-m') as HTMLButtonElement;
+    this.repairBtn = (document.getElementById('btn-repair-r') || document.getElementById('btn-repair-f')) as HTMLButtonElement;
     this.attackBtn = document.getElementById('btn-attack-a') as HTMLButtonElement;
-    this.waitBtn = document.getElementById('btn-wait-space') as HTMLButtonElement;
+    this.waitBtn = (document.getElementById('btn-wait-w') || document.getElementById('btn-wait-space')) as HTMLButtonElement;
+    this.undoBtn = document.getElementById('btn-undo-z') as HTMLButtonElement;
     this.centerBtn = document.getElementById('btn-center-hero') as HTMLButtonElement;
+
+    this.orderListEl = document.getElementById('dock-order-list');
+    this.apPips = [
+      document.getElementById('ap-pip-0'),
+      document.getElementById('ap-pip-1'),
+      document.getElementById('ap-pip-2'),
+    ];
+
+    this.playbackControlsEl = document.getElementById('hb-playback-controls');
+    this.speedToggleBtn = document.getElementById('btn-speed-toggle') as HTMLButtonElement;
+    this.skipResolutionBtn = document.getElementById('btn-skip-resolution') as HTMLButtonElement;
 
     this.createEconomyBar();
     this.setupListeners();
@@ -121,6 +145,10 @@ export class AbilityDock {
   }
 
   private setupListeners(): void {
+    this.moveBtn?.addEventListener('click', () => {
+      this.input?.triggerMoveMode();
+    });
+
     this.abilityBtn?.addEventListener('click', () => {
       this.input?.triggerAbility();
     });
@@ -137,13 +165,88 @@ export class AbilityDock {
       this.input?.triggerWaitOrder();
     });
 
+    this.undoBtn?.addEventListener('click', () => {
+      this.input?.undoLastOrder();
+    });
+
     this.centerBtn?.addEventListener('click', () => {
       this.onCenterHeroRequest?.();
     });
   }
 
+  public showPlaybackControls(speed: number, onSpeedToggle: () => void, onSkip: () => void): void {
+    if (!this.playbackControlsEl) return;
+    this.playbackControlsEl.style.display = 'flex';
+    if (this.speedToggleBtn) {
+      this.speedToggleBtn.textContent = `⚡ ${speed.toFixed(1)}x`;
+      this.speedToggleBtn.onclick = onSpeedToggle;
+    }
+    if (this.skipResolutionBtn) {
+      this.skipResolutionBtn.onclick = onSkip;
+    }
+  }
+
+  public hidePlaybackControls(): void {
+    if (this.playbackControlsEl) {
+      this.playbackControlsEl.style.display = 'none';
+    }
+  }
+
+  private updateOrderQueue(unit: UnitData | null): void {
+    if (!this.orderListEl) return;
+
+    if (!unit) {
+      this.orderListEl.innerHTML = `<span style="color:#64748b;">No hero selected</span>`;
+      this.apPips.forEach(p => { if (p) p.style.color = '#334155'; });
+      return;
+    }
+
+    const staged = this.session?.getStagedOrder(unit.id);
+    const items: string[] = [];
+
+    if (staged) {
+      if (staged.move_target) {
+        items.push(`1. Move (${staged.move_target.q}, ${staged.move_target.r}) <span style="color:#ffd600;">[1 AP]</span>`);
+      }
+      if (staged.action) {
+        switch (staged.action.type) {
+          case 'Attack':
+            items.push(`2. Attack #${staged.action.target_id} <span style="color:#ffd600;">[1 AP]</span>`);
+            break;
+          case 'Cast':
+            items.push(`2. ${staged.action.spell_id.toUpperCase()} <span style="color:#ffd600;">[1 AP]</span>`);
+            break;
+          case 'Repair':
+            items.push(`2. Repair #${staged.action.target_id} <span style="color:#ffd600;">[1 AP]</span>`);
+            break;
+          case 'Wait':
+            if (!staged.move_target) {
+              items.push(`Wait / Hold <span style="color:#94a3b8;">[0 AP]</span>`);
+            }
+            break;
+        }
+      }
+    }
+
+    if (items.length > 0) {
+      this.orderListEl.innerHTML = items.join('&nbsp;|&nbsp;');
+    } else {
+      this.orderListEl.innerHTML = `<span style="color:#64748b;">No orders drafted</span>`;
+    }
+
+    // Update 3 AP pips based on hero AP
+    const remainingAp = unit.ap;
+    this.apPips.forEach((pip, idx) => {
+      if (pip) {
+        pip.style.color = idx < remainingAp ? '#ffd600' : '#334155';
+      }
+    });
+  }
+
   update(unit: UnitData | null): void {
     if (!this.dockEl) return;
+
+    this.updateOrderQueue(unit);
 
     if (!unit || unit.kind !== 'Hero') {
       const isDead = this.session?.isHeroDead();
